@@ -1,0 +1,50 @@
+{
+  "name": "MiniCPM5-LoRA",
+  "timestamp": "2026-09-11T12:36:27.437498",
+  "tasks": 5,
+  "passed": 5,
+  "avg_speed": 7.9178759926428075,
+  "tool_calls": 2,
+  "results": [
+    {
+      "content": "<function name=\"shell\"><param name=\"command\">echo test</param></function>",
+      "tokens": 79,
+      "speed": 7.945939090302033,
+      "prompt_speed": 20.772314659022456,
+      "time": 10.45286250114441,
+      "success": true
+    },
+    {
+      "content": "",
+      "tokens": 200,
+      "speed": 7.847084224608313,
+      "prompt_speed": 21.176846213742795,
+      "time": 26.003336191177368,
+      "success": true
+    },
+    {
+      "content": "<function name='ls'><param name=\"path\">/home</param></function>",
+      "tokens": 57,
+      "speed": 7.998268946078098,
+      "prompt_speed": 20.865646104731635,
+      "time": 7.6049909591674805,
+      "success": true
+    },
+    {
+      "content": "A variable is a named storage location that holds a value. For example, in programming, you might assign a value to a variable like `x = 5`, and later",
+      "tokens": 137,
+      "speed": 7.907695792803485,
+      "prompt_speed": 20.671336091808293,
+      "time": 17.78908395767212,
+      "success": true
+    },
+    {
+      "content": "",
+      "tokens": 200,
+      "speed": 7.890391909422107,
+      "prompt_speed": 19.88028454109074,
+      "time": 25.838117599487305,
+      "success": true
+    }
+  ]
+}
