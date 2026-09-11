@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-09-11T14:09:50.876073",
+  "tasks_total": 3,
+  "tasks_passed": 0,
+  "results": [
+    {
+      "task_id": "BM-001",
+      "task_name": "system-info",
+      "success": false,
+      "message": "Failed to extract command",
+      "model_time": 60.07775807380676,
+      "command": "",
+      "output": "ERROR: HTTPConnectionPool(host='localhost', port=1235): Read timed out. (read timeout=60)"
+    },
+    {
+      "task_id": "BM-003",
+      "task_name": "python-automation",
+      "success": false,
+      "message": "Failed to extract command",
+      "model_time": 60.064831256866455,
+      "command": "",
+      "output": "ERROR: HTTPConnectionPool(host='localhost', port=1235): Read timed out. (read timeout=60)"
+    },
+    {
+      "task_id": "BM-011",
+      "task_name": "python-data-processing",
+      "success": false,
+      "message": "Failed to extract command",
+      "model_time": 60.0622296333313,
+      "command": "",
+      "output": "ERROR: HTTPConnectionPool(host='localhost', port=1235): Read timed out. (read timeout=60)"
+    }
+  ]
+}

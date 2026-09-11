@@ -1,0 +1,270 @@
+{
+  "metadata": {
+    "name": "baremetal-benchmark-v1",
+    "description": "Real-world terminal tasks for baremetal evaluation",
+    "version": "1.0",
+    "created": "2026-09-11"
+  },
+  "tasks": [
+    {
+      "id": "BM-001",
+      "name": "system-info",
+      "instruction": "Gather system information: CPU model, memory size, disk usage for /home, and running processes sorted by memory. Save results to /tmp/system_info.txt",
+      "category": "system-admin",
+      "difficulty": "easy",
+      "timeout_sec": 60,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/system_info.txt",
+        "min_size_bytes": 100
+      }
+    },
+    {
+      "id": "BM-002",
+      "name": "log-analysis",
+      "instruction": "Analyze the system log at /var/log/syslog (or /var/log/syslog.1 if current is empty). Find the 10 most common error messages and save them to /tmp/log_errors.txt with counts.",
+      "category": "system-admin",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/log_errors.txt",
+        "min_size_bytes": 50
+      }
+    },
+    {
+      "id": "BM-003",
+      "name": "python-automation",
+      "instruction": "Write a Python script at /tmp/cleanup.py that finds all .tmp files older than 7 days in /tmp and moves them to /tmp/archive/. Create the archive directory if it doesn't exist. Then run the script.",
+      "category": "automation",
+      "difficulty": "easy",
+      "timeout_sec": 60,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/cleanup.py",
+        "min_size_bytes": 100
+      }
+    },
+    {
+      "id": "BM-004",
+      "name": "network-diag",
+      "instruction": "Diagnose network connectivity: check DNS resolution for google.com, test connectivity to 8.8.8.8, list all listening ports, and identify any failed network services. Save report to /tmp/network_report.txt",
+      "category": "networking",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/network_report.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-005",
+      "name": "process-monitor",
+      "instruction": "Create a bash script at /tmp/monitor.sh that captures a snapshot of system state: top 5 CPU processes, top 5 memory processes, disk I/O stats, and network connections. Run it and save output to /tmp/monitor_output.txt",
+      "category": "monitoring",
+      "difficulty": "easy",
+      "timeout_sec": 60,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/monitor_output.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-006",
+      "name": "file-organizer",
+      "instruction": "Write a Python script at /tmp/organize.py that organizes files in ~/Downloads by extension: .txt and .md to docs/, .py and .js to code/, .png and .jpg to images/, everything else to other/. Create subdirectories as needed. Run it on ~/Downloads.",
+      "category": "automation",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/organize.py",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-007",
+      "name": "git-analysis",
+      "instruction": "Analyze the git repository at ~/knowledge: find the top 5 contributors by commit count, list files changed most often, and identify the largest files by size. Save analysis to /tmp/git_analysis.txt",
+      "category": "development",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/git_analysis.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-008",
+      "name": "disk-cleanup",
+      "instruction": "Find the 20 largest files on the system (excluding /proc, /sys, /dev) and create a cleanup report at /tmp/cleanup_report.txt with file paths, sizes, and recommendations for which can be safely deleted.",
+      "category": "system-admin",
+      "difficulty": "medium",
+      "timeout_sec": 180,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/cleanup_report.txt",
+        "min_size_bytes": 300
+      }
+    },
+    {
+      "id": "BM-009",
+      "name": "service-status",
+      "instruction": "Check the status of all systemd services: find failed services, services that restarted recently, and services using the most resources. Save report to /tmp/service_report.txt",
+      "category": "system-admin",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/service_report.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-010",
+      "name": "backup-script",
+      "instruction": "Create a backup script at /tmp/backup.sh that: 1) Creates a tar.gz archive of ~/git/agent-harness, 2) Names it with timestamp, 3) Keeps only the last 5 backups in /tmp/backups/. Run it to create the first backup.",
+      "category": "automation",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/backup.sh",
+        "min_size_bytes": 150
+      }
+    },
+    {
+      "id": "BM-011",
+      "name": "python-data-processing",
+      "instruction": "Write a Python script at /tmp/process_data.py that: 1) Reads /etc/passwd, 2) Extracts username, UID, and home directory for all users with UID >= 1000, 3) Saves as CSV to /tmp/users.csv",
+      "category": "development",
+      "difficulty": "easy",
+      "timeout_sec": 60,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/users.csv",
+        "min_size_bytes": 50
+      }
+    },
+    {
+      "id": "BM-012",
+      "name": "security-audit",
+      "instruction": "Perform a basic security audit: 1) Find world-writable files in /etc, 2) Check for users with empty passwords, 3) List SUID binaries, 4) Check listening ports for unexpected services. Save findings to /tmp/security_audit.txt",
+      "category": "security",
+      "difficulty": "hard",
+      "timeout_sec": 180,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/security_audit.txt",
+        "min_size_bytes": 300
+      }
+    },
+    {
+      "id": "BM-013",
+      "name": "web-scraping",
+      "instruction": "Write a Python script at /tmp/scrape.py that fetches the README.md from https://github.com/scottjoyner/knowledge and extracts all section headers (lines starting with #). Save headers to /tmp/headers.txt",
+      "category": "development",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/headers.txt",
+        "min_size_bytes": 50
+      }
+    },
+    {
+      "id": "BM-014",
+      "name": "performance-test",
+      "instruction": "Run performance benchmarks: 1) CPU benchmark using Python (calculate prime numbers up to 100000), 2) Disk I/O test (write/read 100MB), 3) Memory allocation test (allocate/free 100MB). Save results to /tmp/perf_results.txt",
+      "category": "performance",
+      "difficulty": "hard",
+      "timeout_sec": 300,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/perf_results.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-015",
+      "name": "docker-check",
+      "instruction": "Check if Docker is installed and running. If not, document the installation steps needed. If yes, list all containers (running and stopped), images, and volumes. Save report to /tmp/docker_report.txt",
+      "category": "system-admin",
+      "difficulty": "easy",
+      "timeout_sec": 60,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/docker_report.txt",
+        "min_size_bytes": 100
+      }
+    },
+    {
+      "id": "BM-016",
+      "name": "log-rotation",
+      "instruction": "Create a log rotation script at /tmp/logrotate.sh that: 1) Finds .log files older than 30 days in /var/log, 2) Compresses them, 3) Deletes compressed logs older than 90 days. Create a cron entry to run daily.",
+      "category": "automation",
+      "difficulty": "hard",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/logrotate.sh",
+        "min_size_bytes": 150
+      }
+    },
+    {
+      "id": "BM-017",
+      "name": "database-query",
+      "instruction": "If sqlite3 is installed, create a SQLite database at /tmp/test.db with a users table (id, name, email, created_at). Insert 10 sample users. Query and display all users created in the last 7 days.",
+      "category": "development",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/test.db",
+        "min_size_bytes": 1000
+      }
+    },
+    {
+      "id": "BM-018",
+      "name": "api-test",
+      "instruction": "Write a Python script at /tmp/api_test.py that: 1) Tests connectivity to httpbin.org/get, 2) Tests DNS lookup time, 3) Measures HTTP response time, 4) Saves results as JSON to /tmp/api_results.json",
+      "category": "networking",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/api_results.json",
+        "min_size_bytes": 100
+      }
+    },
+    {
+      "id": "BM-019",
+      "name": "code-review",
+      "instruction": "Analyze the Python file at ~/git/agent-harness/synergistic_harness.py: find all functions, count lines of code, identify potential issues (unused imports, long functions, missing docstrings). Save report to /tmp/code_review.txt",
+      "category": "development",
+      "difficulty": "medium",
+      "timeout_sec": 120,
+      "verification": {
+        "type": "file_exists",
+        "path": "/tmp/code_review.txt",
+        "min_size_bytes": 200
+      }
+    },
+    {
+      "id": "BM-020",
+      "name": "automation-pipeline",
+      "instruction": "Create a complete automation pipeline: 1) Write a Python script that generates a system report, 2) Write a bash script that runs it and emails results (just print the email), 3) Create a cron job to run weekly. Save all files to /tmp/pipeline/",
+      "category": "automation",
+      "difficulty": "hard",
+      "timeout_sec": 180,
+      "verification": {
+        "type": "directory_exists",
+        "path": "/tmp/pipeline",
+        "min_files": 2
+      }
+    }
+  ]
+}
