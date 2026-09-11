@@ -1,0 +1,53 @@
+{
+  "model": "toolcall-v5-3b-combined-r2",
+  "timestamp": "2026-09-11T14:25:47.070705",
+  "tasks_total": 5,
+  "tasks_passed": 0,
+  "results": [
+    {
+      "task_id": "BM-001",
+      "task_name": "system-info",
+      "success": false,
+      "message": "File /tmp/system_info.txt does not exist",
+      "model_time": 3.728107452392578,
+      "command": "# Check CPU model\necho \"=== CPU ===\"\nuname -r\necho \"=== RAM ===\"\nmeminfo | grep -iE \"mem|free\" || free -h\necho \"=== Disk ===\"\ndf -h / |\n# Check running processes sorted by memory (top, but only show t",
+      "output": "=== CPU ===\n7.0.0-31-generic\n=== RAM ===\n               total        used        free      shared  buff/cache   available\nMem:           7.7Gi       4.7Gi       187Mi       100Mi       3.1Gi       2.9Gi\nSwap:          4.0Gi       2.2Gi       1.8Gi\n=== Disk ===\nUSER         PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND\nscott     536324 22.8 24.5 4134052 1966812 ?     Ssl  10:52  48:37 /home/scott/.lmstudio/extensions/backends/llama.cpp-linux-x86_64-avx2-2.30.0/llama-server -m /hom"
+    },
+    {
+      "task_id": "BM-003",
+      "task_name": "python-automation",
+      "success": false,
+      "message": "No command extracted",
+      "model_time": 7.320350170135498,
+      "command": "",
+      "output": "**Planning file creation**\n<tool_call name=\"write_file\" call_id=\"call_02a543f8169c4b7e6d6a0a499f9868579684488574645499478684854\">\n{\n}\n\\u276E\n<tool_call name=\"bash\" call_id=\"call_13c9e6b0d8a8f879499999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "task_id": "BM-005",
+      "task_name": "process-monitor",
+      "success": false,
+      "message": "No command extracted",
+      "model_time": 7.387532711029053,
+      "command": "",
+      "output": "<tool_call name=\"bash\" call_id=\"call_01f8679432a9d44b4c4e0b458898419970988098728888470944544899888438\">\n{\n  \"command\": \"# Create the script\\ncat << 'EOF'\\n#!/usr/bin/bash\\n# System monitor: CPU, memory, disk I/O, network snapshot\\n\\n\\nMONITOR=126\\necho \\\"=== System State Snapshot ===\\\"\\necho \\\"---\\\" | tee -a /tmp/monitor_output.txt\\n\\n\\n# CPU top 5 processes (using grep to find PID of top processes)\\nif command -v ps &>/dev/null; then\\n    ps aux | grep -E 'cpu|proc' | sort -rn | head -10 | whil"
+    },
+    {
+      "task_id": "BM-011",
+      "task_name": "python-data-processing",
+      "success": false,
+      "message": "No command extracted",
+      "model_time": 7.312925577163696,
+      "command": "",
+      "output": "<tool_call name=\"bash\" call_id=\"call_9e678f54c5b6a524d48788488888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888888"
+    },
+    {
+      "task_id": "BM-015",
+      "task_name": "docker-check",
+      "success": false,
+      "message": "No command extracted",
+      "model_time": 7.395410537719727,
+      "command": "",
+      "output": "<tool_call name=\"bash\" call_id=\"call_0985276413b2f4a7e0d070c4779988094786486470a3499758094546a4a908440\">\n{\n  \"command\": \"docker --version 2>/dev/null || echo \\\"Docker not found\\\"; docker ps -q --format \\\"table {{.Names}}\\\\t{{.Status}}\\\\t{{.Image}}\\\\t{{.Ports}}\\\" 2>/dev/null | head -30\"\n}\n\\u276E\n<tool_call name=\"bash\" call_id=\"call_98541d1f0c3b0a0e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ]
+}

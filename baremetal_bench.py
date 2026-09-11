@@ -13,22 +13,23 @@ import requests
 from datetime import datetime
 from pathlib import Path
 
-# Model endpoints
-MINICPM5_URL = "http://localhost:1235/v1/chat/completions"
-VIBETHINKER_URL = "http://localhost:1234/v1/chat/completions"
+# Model endpoints on x1-370 (Tailscale: 100.64.43.123)
+X1_370_URL = "http://100.64.43.123:1234/v1/chat/completions"
+MINICPM5_URL = X1_370_URL  # minicpm5-2b (base FP16)
+VIBETHINKER_URL = X1_370_URL  # toolcall-v5-3b-combined-r2 (latest finetune)
 
-SYSTEM_PROMPT = """You are a helpful assistant that executes terminal commands.
+# Model names
+MINICPM5_MODEL = "minicpm5-2b"
+VIBETHINKER_MODEL = "toolcall-v5-3b-combined-r2"
 
-When given an instruction, respond with a single function call in this exact format:
-<function name="bash"><param name="command">COMMAND_HERE</param></function>
+SYSTEM_PROMPT = """You are a bash coding agent. Respond with a single bash command in this exact format:
+<function name="bash"><param name="command">COMMAND</param></function>
 
 Rules:
-- Use bash for all commands
-- Chain multiple commands with && or ;
-- Use standard Linux tools (grep, find, awk, etc.)
-- For Python scripts, use cat << 'EOF' > script.py
-- Keep responses concise
-- Always complete the task in one function call"""
+- One command only
+- Chain with && or ;
+- Use cat << 'EOF' for scripts
+- No explanation"""
 
 def load_tasks():
     """Load tasks from JSON file."""
@@ -37,18 +38,18 @@ def load_tasks():
         data = json.load(f)
     return data["tasks"]
 
-def call_model(instruction, timeout=60):
-    """Call MiniCPM5 LoRA model."""
+def call_model(instruction, timeout=120):
+    """Call MiniCPM5 model (local Q4 or remote FP16)."""
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": instruction}
     ]
     
     payload = {
-        "model": "minicpm5",
+        "model": "minicpm5-2b",
         "messages": messages,
         "temperature": 0.1,
-        "max_tokens": 1024,
+        "max_tokens": 300,
         "stream": False
     }
     
@@ -57,10 +58,18 @@ def call_model(instruction, timeout=60):
         response.raise_for_status()
         data = response.json()
         content = data["choices"][0]["message"]["content"]
-        # Also check reasoning_content if present
-        if not content:
-            content = data["choices"][0]["message"].get("reasoning_content", "")
-        return content
+        reasoning = data["choices"][0]["message"].get("reasoning_content", "")
+        
+        # The FP16 model puts reasoning in content sometimes
+        # Check both for commands
+        for text in [content, reasoning]:
+            if text:
+                cmd = extract_command(text)
+                if cmd:
+                    return f"EXTRACTED:{cmd}"
+        
+        # Return combined for debugging
+        return f"CONTENT:{content}\nREASONING:{reasoning[:200]}"
     except Exception as e:
         return f"ERROR: {e}"
 
@@ -68,7 +77,10 @@ def extract_command(response):
     """Extract bash command from model response."""
     import re
     
-    # Try CDATA format
+    if not response or response.startswith("ERROR"):
+        return None
+    
+    # Try CDATA format (most reliable)
     cdata_match = re.search(r'<!\[CDATA\[(.*?)\]\]>', response, re.DOTALL)
     if cdata_match:
         return cdata_match.group(1).strip()
@@ -83,29 +95,30 @@ def extract_command(response):
     if code_match:
         return code_match.group(1).strip()
     
+    # Try to find command after common prefixes
+    for prefix in ['Run:', 'Execute:', 'Command:', '$ ', 'Use: ']:
+        if prefix in response:
+            idx = response.index(prefix) + len(prefix)
+            cmd = response[idx:].split('\n')[0].strip()
+            if cmd and len(cmd) > 3:
+                return cmd
+    
+    # Look for lines that look like commands
+    lines = response.split('\n')
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith('#') or line.startswith('<') or line.startswith('```'):
+            continue
+        # Check if it looks like a command
+        if any(line.startswith(p) for p in ['echo', 'cat', 'ls', 'find', 'grep', 'python', 'pip', 'sudo', 'cd', 'mkdir', 'rm', 'cp', 'mv', 'curl', 'wget', 'git', 'chmod', 'touch', 'head', 'tail', 'wc', 'sort', 'uniq']):
+            return line
+    
     # Try inline code
     inline_match = re.search(r'`([^`]+)`', response)
     if inline_match:
         cmd = inline_match.group(1)
         if any(cmd.startswith(p) for p in ['echo', 'cat', 'ls', 'find', 'grep', 'python', 'pip', 'sudo', 'cd', 'mkdir', 'rm', 'cp', 'mv']):
             return cmd
-    
-    # Try to find command after common prefixes
-    for prefix in ['Run:', 'Execute:', 'Command:', '$ ']:
-        if prefix in response:
-            idx = response.index(prefix) + len(prefix)
-            cmd = response[idx:].split('\n')[0].strip()
-            if cmd:
-                return cmd
-    
-    # Last resort: look for lines that look like commands
-    lines = response.split('\n')
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith('#') and not line.startswith('<') and not line.startswith('```'):
-            # Check if it looks like a command
-            if any(line.startswith(p) for p in ['echo', 'cat', 'ls', 'find', 'grep', 'python', 'pip', 'sudo', 'cd', 'mkdir', 'rm', 'cp', 'mv', 'curl', 'wget', 'git']):
-                return line
     
     return None
 
