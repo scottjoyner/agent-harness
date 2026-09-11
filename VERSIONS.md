@@ -46,23 +46,31 @@
 
 ## Roadmap
 
-### v1.2.0 (Planned)
+### v1.2.0 (Planned - Immediate)
+- [ ] KV Cache Sharing Optimization
+  - Token streaming bridge between models
+  - KV cache pre-processor
+  - Synergy-aware scheduler
+  - Target: 83% prompt processing reduction
+- [ ] Baremetal benchmark suite (20 tasks)
+- [ ] Fix model response parsing
+- [ ] Improve command extraction
+
+### v1.3.0 (Planned)
 - [ ] Multi-turn conversation support
 - [ ] Conversation history sharing
 - [ ] Dynamic load balancing
 - [ ] Memory optimization
-
-### v1.3.0 (Planned)
 - [ ] Task-specific LoRAs
 - [ ] Automatic fine-tuning from traces
-- [ ] Fleet distribution
-- [ ] Production error handling
 
 ### v2.0.0 (Future)
 - [ ] Multi-node execution
 - [ ] Self-improvement loop
 - [ ] Specialized model routing
 - [ ] Real-time adaptation
+- [ ] Hardware-accelerated KV cache
+- [ ] Distributed KV cache pool
 
 ---
 
