@@ -22,7 +22,7 @@
     {
       "id": "BM-002",
       "name": "log-analysis",
-      "instruction": "Analyze the system log at /var/log/syslog (or /var/log/syslog.1 if current is empty). Find the 10 most common error messages and save them to /tmp/log_errors.txt with counts.",
+       "instruction": "Analyze the system log at /var/log/syslog (fall back to /var/log/syslog.1 if the current log has no matches). Find the 10 most common error/warning/failure messages (match case-insensitively for error, fail, warn, denied, timeout, refused) and save them with counts to /tmp/log_errors.txt. If no matches exist anywhere, write a one-line summary stating that.",
       "category": "system-admin",
       "difficulty": "medium",
       "timeout_sec": 120,

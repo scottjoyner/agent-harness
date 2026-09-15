@@ -1,0 +1,50 @@
+{
+  "ts": "2026-09-13T11:34:19.506320",
+  "passed": 0,
+  "results": [
+    {
+      "id": "BM-007",
+      "verdict": false,
+      "tokens": 213,
+      "time": 88.2,
+      "filecheck": {
+        "exists": false,
+        "size": 0,
+        "ok": false
+      }
+    },
+    {
+      "id": "BM-008",
+      "verdict": false,
+      "tokens": 164,
+      "time": 30.9,
+      "filecheck": {
+        "exists": false,
+        "size": 0,
+        "ok": false
+      }
+    },
+    {
+      "id": "BM-014",
+      "verdict": true,
+      "tokens": 300,
+      "time": 48.4,
+      "filecheck": {
+        "exists": false,
+        "size": 0,
+        "ok": false
+      }
+    },
+    {
+      "id": "BM-018",
+      "verdict": true,
+      "tokens": 243,
+      "time": 37.2,
+      "filecheck": {
+        "exists": true,
+        "size": 91,
+        "ok": false
+      }
+    }
+  ]
+}
