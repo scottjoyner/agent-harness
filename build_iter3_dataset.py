@@ -98,6 +98,13 @@ rows.append(ex("Tool result (rc=1): Traceback: socket.gethostbyaddr('example.com
                write("/tmp/api_test.py", "import socket, time, json, urllib.request\nout={}\nt=time.time(); out[\"dns_ip\"]=socket.gethostbyname('httpbin.org'); out[\"dns_time\"]=round(time.time()-t,3)\nt=time.time(); r=urllib.request.urlopen('https://httpbin.org/get',timeout=15); body=r.read(); out[\"http_time\"]=round(time.time()-t,3)\nout[\"connect\"]=r.status; out[\"bytes\"]=len(body); out[\"url\"]='https://httpbin.org/get'\njson.dump(out, open('/tmp/api_results.json','w'), indent=2)\nprint('done')")))
 rows.append(ex("Empty tool call rejected. Emit a real command. Task: Show disk usage for /home",
                bash("df -h /home > /tmp/disk.txt && cat /tmp/disk.txt")))
+# 6b. iter7: BM-017 decomposed into create -> insert -> query steps
+rows.append(ex("Create a SQLite database at /tmp/test.db with a users table (id, name, email, created_at). Step 1: create the table.",
+               bash("sqlite3 /tmp/test.db \"CREATE TABLE IF NOT EXISTS users(id INTEGER PRIMARY KEY, name TEXT, email TEXT, created_at TEXT);\" && echo table-ready")))
+rows.append(ex("Result rc=0: table-ready\nStep 2: insert 10 sample users with recent dates.",
+               bash("sqlite3 /tmp/test.db \"WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM c WHERE n<10) INSERT INTO users(name,email,created_at) SELECT 'user'||n, 'user'||n||'@x.com', date('now') FROM c;\" && echo rows-inserted")))
+rows.append(ex("Result rc=0: rows-inserted\nStep 3: query users created in the last 7 days.",
+               bash("sqlite3 /tmp/test.db \"SELECT * FROM users WHERE created_at >= date('now','-7 days');\"")))
 # 6. iter5: complex multi-part task -> script-first pattern (BM-007 lesson)
 rows.append(ex("Tool result (rc=2): /bin/sh: 1: Syntax error: end of file unexpected\nYour one-liner was truncated. Rewrite as a script file first, then run it.",
                write("/tmp/git_analysis.sh", "#!/bin/bash\ncd ~/knowledge || exit 1\n{\necho \"== top contributors ==\"\ngit shortlog -sne --all | head -5\necho \"== most-changed files ==\"\ngit log --all --pretty=format: --name-only | sort | uniq -c | sort -rn | head -10\necho \"== largest files ==\"\nfind . -type f -printf '%s %p\\n' 2>/dev/null | sort -rn | head -10\necho \"== recent ==\"\ngit log --oneline -8\n} > /tmp/git_analysis.txt 2>&1")))
