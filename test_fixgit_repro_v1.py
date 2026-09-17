@@ -133,10 +133,44 @@ class RecoveryTests(unittest.TestCase):
             per_turn_task=True,
         )
         self.assertEqual(status, 0)
-        goal = requests[1]["messages"][-1]["content"]
+        messages = requests[1]["messages"]
+        self.assertEqual([m["role"] for m in messages],
+                         ["user", "assistant", "tool", "user"])
+        call = messages[1]["tool_calls"][0]
+        feedback = messages[2]
+        self.assertEqual(feedback["tool_call_id"], call["id"])
+        self.assertIn("Tool result rc=0", feedback["content"])
+        self.assertIn("commit: Feature work", feedback["content"])
+        goal = messages[-1]["content"]
         self.assertIn("recovery-branch", goal)
         self.assertIn("merge", goal)
-        self.assertIn("Tool result rc=0", goal)
+        self.assertNotIn("Tool result rc=0", goal)
+        self.assertEqual(json.loads(trace[1])["request"], requests[1])
+
+    def test_per_turn_error_results_keep_native_linkage(self):
+        original = harness.run_process
+
+        def timeout_command(command, deadline, **kwargs):
+            if command == ["bash", "-lc", "timeout-marker"]:
+                raise subprocess.TimeoutExpired(command, 0.01, output="partial",
+                                                stderr="interrupted")
+            return original(command, deadline, **kwargs)
+
+        for command, code, detail in [("exit 7", 7, ""),
+                                       ("timeout-marker", 124, "interrupted")]:
+            with self.subTest(command=command), \
+                    patch.object(harness, "run_process", side_effect=timeout_command):
+                status, result, requests, trace, _ = self.run_scripted_recovery(
+                    [command, "git status"], per_turn_task=True)
+            self.assertEqual(status, 1)
+            messages = requests[1]["messages"]
+            self.assertEqual([m["role"] for m in messages],
+                             ["user", "assistant", "tool", "user"])
+            self.assertEqual(messages[2]["tool_call_id"],
+                             messages[1]["tool_calls"][0]["id"])
+            self.assertIn(f"rc={code}", messages[2]["content"])
+            self.assertIn(detail, messages[2]["content"])
+            self.assertEqual(json.loads(trace[0])["tool_result"]["returncode"], code)
 
     def test_extra_task_is_appended_to_user_task(self):
         status, result, requests, trace, _ = self.run_scripted_recovery(

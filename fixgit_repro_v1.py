@@ -302,13 +302,11 @@ def run_scenario(a, stage_root, out_p, deadline):
             if a.tool_mode == "native":
                 msgs.append({"role": "assistant", "content": msg.get("content") or "",
                              "tool_calls": ntc})
-                feedback = f"Tool result rc={r.returncode}: {tool_out}"
+                msgs.append({"role": "tool", "tool_call_id": ntc[0]["id"],
+                             "content": feedback})
                 if a.per_turn_task:
-                    msgs.append({"role": "user", "content": task + "\n\n" + feedback +
+                    msgs.append({"role": "user", "content": task +
                                  "\nReply with exactly one bash tool call to continue recovery."})
-                else:
-                    msgs.append({"role": "tool", "tool_call_id": ntc[0]["id"],
-                                 "content": feedback})
             else:
                 msgs += [{"role": "assistant", "content": cont},
                          {"role": "user", "content": feedback +
