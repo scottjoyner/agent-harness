@@ -99,13 +99,39 @@ def recovery_state(stage_root, lost, deadline, git_env):
     def git(*args):
         return run_process(["git", *args], deadline, cwd=str(stage_root), env=git_env)
 
-    branch_exists = git("show-ref", "--verify", "--quiet",
-                        "refs/heads/recovery-branch").returncode == 0
-    master_contains = git("merge-base", "--is-ancestor", lost, "master").returncode == 0
-    branch_contains = branch_exists and git(
-        "merge-base", "--is-ancestor", lost, "refs/heads/recovery-branch"
-    ).returncode == 0
-    return branch_exists, master_contains, branch_contains
+    branch_run = git("show-ref", "--verify", "--quiet",
+                     "refs/heads/recovery-branch")
+    master_run = git("merge-base", "--is-ancestor", lost, "master")
+    branch_run_contains = None
+    if branch_run.returncode == 0:
+        branch_run_contains = git("merge-base", "--is-ancestor", lost,
+                                  "refs/heads/recovery-branch")
+    checks = [branch_run, master_run] + (
+        [branch_run_contains] if branch_run_contains is not None else [])
+    verifier_errors = [r.stderr.strip() for r in checks
+                       if r.returncode not in (0, 1) and r.stderr.strip()]
+    return {
+        "recovery_branch_exists": branch_run.returncode == 0,
+        "master_contains_lost": master_run.returncode == 0,
+        "recovery_branch_contains_lost": branch_run_contains is not None
+        and branch_run_contains.returncode == 0,
+        "verifier_errors": verifier_errors,
+    }
+
+
+def harness_revision():
+    try:
+        src = Path(__file__).resolve().parent
+        rev = subprocess.run(["git", "-C", str(src), "rev-parse", "--short", "HEAD"],
+                             capture_output=True, text=True, timeout=5)
+        if rev.returncode != 0:
+            return None
+        dirty = subprocess.run(["git", "-C", str(src), "status", "--porcelain",
+                                "--", Path(__file__).name],
+                               capture_output=True, text=True, timeout=5)
+        return rev.stdout.strip() + ("+dirty" if dirty.stdout.strip() else "")
+    except Exception:
+        return None
 
 
 def main():
@@ -128,6 +154,12 @@ def main():
                     help="restate the task with each tool result, as the official bridge does")
     ap.add_argument("--extra-task", default=None,
                     help="text appended to the task in the user turn (and per-turn restatement)")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature sent in every chat request")
+    ap.add_argument("--seed", type=int, default=13,
+                    help="seed sent in every chat request")
+    ap.add_argument("--max-tokens", type=int, default=1024,
+                    help="generation token budget per chat request")
     a = ap.parse_args()
     if not math.isfinite(a.timeout_s) or a.timeout_s <= 0:
         ap.error("--timeout-s must be positive and finite")
@@ -147,6 +179,8 @@ def main():
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "model": a.model,
             "endpoint": a.endpoint,
+            "tool_mode": a.tool_mode,
+            "harness_revision": harness_revision(),
             "passed": False,
             "elapsed_s": round(time.monotonic() - started, 1),
             "deadline_exceeded": time.monotonic() >= deadline,
@@ -208,12 +242,15 @@ def run_scenario(a, stage_root, out_p, deadline):
     tool_calls = 0
     tool_timeouts = 0
     branch_exists = master_contains = branch_contains = False
+    verification = {"recovery_branch_exists": False, "master_contains_lost": False,
+                    "recovery_branch_contains_lost": False, "verifier_errors": []}
     t0 = deadline - a.timeout_s
     try:
         import urllib.request
         step = 0
         while time.monotonic() < deadline and step < a.max_steps:
-            body = {"model": a.model, "messages": msgs, "max_tokens": 512}
+            body = {"model": a.model, "messages": msgs, "max_tokens": a.max_tokens,
+                    "temperature": a.temperature, "seed": a.seed}
             if a.tool_mode == "native":
                 body["tools"] = [{
                     "type": "function",
@@ -312,13 +349,15 @@ def run_scenario(a, stage_root, out_p, deadline):
                          {"role": "user", "content": feedback +
                           "\nContinue until recovery-branch exists and master contains the lost commit."}]
             step += 1
-            branch_exists, master_contains, branch_contains = recovery_state(
-                stage_root, lost, deadline, git_env
-            )
+            verification = recovery_state(stage_root, lost, deadline, git_env)
+            branch_exists = verification["recovery_branch_exists"]
+            master_contains = verification["master_contains_lost"]
+            branch_contains = verification["recovery_branch_contains_lost"]
             traces[-1]["verification"] = {
                 "recovery_branch_exists": branch_exists,
                 "master_contains_lost": master_contains,
                 "recovery_branch_contains_lost": branch_contains,
+                "verifier_errors": verification["verifier_errors"],
             }
             write_trace(out_p.parent / "probe.jsonl", traces)
             if branch_exists and master_contains and branch_contains:
@@ -345,6 +384,12 @@ def run_scenario(a, stage_root, out_p, deadline):
         "tool_mode": a.tool_mode,
         "disable_thinking": a.disable_thinking,
         "endpoint": a.endpoint,
+        "harness_revision": harness_revision(),
+        "sampling": {
+            "temperature": a.temperature,
+            "seed": a.seed,
+            "max_tokens": a.max_tokens,
+        },
         "passed": passed,
         "elapsed_s": round(elapsed, 1),
         "deadline_exceeded": deadline_exceeded,
@@ -356,6 +401,7 @@ def run_scenario(a, stage_root, out_p, deadline):
             "recovery_branch_contains_lost": branch_contains,
             "master_contains_lost": master_contains,
             "recovery_verb_used": recover_cmd_used,
+            "verifier_errors": verification.get("verifier_errors"),
             "total_tool_calls": tool_calls,
             "tool_timeouts": tool_timeouts,
             "empty_continuations": len([c for c in calls if not c]),

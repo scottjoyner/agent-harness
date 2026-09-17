@@ -172,6 +172,19 @@ class RecoveryTests(unittest.TestCase):
             self.assertIn(detail, messages[2]["content"])
             self.assertEqual(json.loads(trace[0])["tool_result"]["returncode"], code)
 
+    def test_sampling_metadata_is_sent_and_recorded(self):
+        status, result, requests, trace, _ = self.run_scripted_recovery(
+            "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"
+        )
+        self.assertEqual(requests[0]["temperature"], 0.0)
+        self.assertEqual(requests[0]["seed"], 13)
+        self.assertEqual(requests[0]["max_tokens"], 1024)
+        self.assertEqual(result["sampling"],
+                         {"temperature": 0.0, "seed": 13, "max_tokens": 1024})
+        self.assertIsInstance(result["harness_revision"], str)
+        self.assertTrue(result["harness_revision"])
+        self.assertEqual(result["signal"]["verifier_errors"], [])
+
     def test_extra_task_is_appended_to_user_task(self):
         status, result, requests, trace, _ = self.run_scripted_recovery(
             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch",
@@ -359,8 +372,11 @@ class FixtureAuditTests(unittest.TestCase):
             subprocess.run(["git", "-C", str(root), "merge", "--ff-only",
                             "recovery-branch"], check=True)
             deadline = time.monotonic() + 30
-            self.assertEqual(harness.recovery_state(root, lost, deadline, env),
-                             (True, True, True))
+            state = harness.recovery_state(root, lost, deadline, env)
+            self.assertTrue(state["recovery_branch_exists"])
+            self.assertTrue(state["master_contains_lost"])
+            self.assertTrue(state["recovery_branch_contains_lost"])
+            self.assertEqual(state["verifier_errors"], [])
 
 
 class DeadlineTests(unittest.TestCase):
