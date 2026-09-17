@@ -172,6 +172,52 @@ class RecoveryTests(unittest.TestCase):
                 self.assertEqual(requests[1]["messages"][-1]["tool_call_id"], "recovery-1")
 
 
+class FeedbackTests(unittest.TestCase):
+    def test_unexecuted_turn_never_reports_tool_success(self):
+        cases = [
+            ("transport", OSError("connection unavailable")),
+            ("empty", {"content": ""}),
+            ("invalid", {"content": "", "tool_calls": [{
+                "id": "invalid-call", "type": "function",
+                "function": {"name": "bash", "arguments": "not json"},
+            }]}),
+        ]
+        for name, response in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                requests = []
+                output = Path(directory) / "results.json"
+
+                def reply(request):
+                    requests.append(json.loads(request.data))
+                    if len(requests) == 1 and isinstance(response, Exception):
+                        raise response
+                    message = response if len(requests) == 1 else {"content": ""}
+                    return io.BytesIO(json.dumps({"choices": [{"message": message}]}).encode())
+
+                with patch("sys.argv", ["probe", "--tool-mode", "native",
+                                        "--max-steps", "2", "--timeout-s", "5",
+                                        "--out", str(output)]), \
+                        patch("urllib.request.urlopen", side_effect=reply), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.main(), 1)
+                self.assertEqual(len(requests), 2)
+                feedback = requests[1]["messages"][-1]
+                self.assertEqual(feedback["role"], "user")
+                self.assertIn("No tool was executed", feedback["content"])
+                self.assertNotIn("rc=0", feedback["content"])
+                self.assertNotIn("//ExitEmpty//", json.dumps(requests[1]))
+                self.assertFalse(any(message["role"] == "tool"
+                                     for message in requests[1]["messages"]))
+                result = json.loads(output.read_text())
+                self.assertEqual(result["signal"]["total_tool_calls"], 0)
+                entries = [json.loads(line) for line in
+                           (output.parent / "probe.jsonl").read_text().splitlines()]
+                self.assertNotIn("tool_result", entries[0])
+                if name != "empty":
+                    self.assertIsNotNone(entries[0]["error"])
+                    self.assertIsNone(entries[0]["command"])
+
+
 class DeadlineTests(unittest.TestCase):
     def test_expired_budget_does_not_start_process(self):
         with patch.object(harness.subprocess, "Popen") as spawn:

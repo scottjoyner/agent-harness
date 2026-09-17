@@ -255,9 +255,10 @@ def run_scenario(a, stage_root, out_p, deadline):
             traces.append({"cont": cont, "request": request_snapshot, "response": out,
                            "command": cmd, "error": request_error})
             write_trace(out_p.parent / "probe.jsonl", traces)
-            if not cont or cont.startswith("//ExitEmpty//"):
-                msgs.append({"role": "assistant", "content": cont})
-                msgs.append({"role": "user", "content": "Tool result rc=0 (no output). Not done. Next single bash tool call that finds the lost commit and merges it:"})
+            if request_error is not None or not cont.strip():
+                reason = request_error or "empty response"
+                msgs.append({"role": "assistant", "content": cont if not request_error else ""})
+                msgs.append({"role": "user", "content": f"No tool was executed ({reason}). Not done. Next single bash tool call that finds the lost commit and merges it:"})
                 step += 1
                 continue
             # Parse ONE bash command from the emitted function block.
