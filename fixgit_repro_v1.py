@@ -154,6 +154,10 @@ def main():
                     help="restate the task with each tool result, as the official bridge does")
     ap.add_argument("--extra-task", default=None,
                     help="text appended to the task in the user turn (and per-turn restatement)")
+    ap.add_argument("--detached-commits", type=int, default=1,
+                    help="number of detached HEAD commits before the final checkout "
+                         "(default 1 = current behavior; N>1 adds extra commits, "
+                         "lost = newest detached work, verified by ancestry)"),
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature sent in every chat request")
     ap.add_argument("--seed", type=int, default=13,
@@ -209,9 +213,13 @@ def run_scenario(a, stage_root, out_p, deadline):
     (stage_root / "index.html").write_text("<h1>old</h1>\n")
     git("add", "index.html")
     git("-c", "user.email=h@l", "-c", "user.name=h", "commit", "-m", "Initial")
-    git("checkout", "--detach", "HEAD")
-    (stage_root / "index.html").write_text("<h1>new work</h1>\n")
-    git("-c", "user.email=h@l", "-c", "user.name=h", "commit", "-am", "Feature work")  # SHALL become the lost commit
+    for i in range(1, a.detached_commits + 1):
+        git("checkout", "--detach", "HEAD")
+        content = "<h1>new work</h1>\n" if i == a.detached_commits else "<h1>wip</h1>\n"
+        (stage_root / "index.html").write_text(content)
+        git("-c", "user.email=h@l", "-c", "user.name=h",
+            "commit", "-am",
+            "Feature work" if i == a.detached_commits else f"Feature work part {i}")
     lost = git("rev-parse", "HEAD").stdout.strip()
     git("checkout", "master")
 
