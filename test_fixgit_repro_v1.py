@@ -52,7 +52,7 @@ class SetupFailureTests(unittest.TestCase):
 
 class RecoveryTests(unittest.TestCase):
     def run_scripted_recovery(self, commands, snapshot_after_first_command=False,
-                              system=None, per_turn_task=False):
+                              system=None, per_turn_task=False, extra=None):
         requests = []
         trace_during_run = None
         if isinstance(commands, str):
@@ -84,6 +84,8 @@ class RecoveryTests(unittest.TestCase):
                 argv += ["--system-prompt", system]
             if per_turn_task:
                 argv += ["--per-turn-task"]
+            if extra is not None:
+                argv += ["--extra-task", extra]
             with patch("sys.argv", argv), \
                     patch("urllib.request.urlopen", side_effect=reply), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -133,6 +135,15 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn("recovery-branch", goal)
         self.assertIn("merge", goal)
         self.assertIn("Tool result rc=0", goal)
+
+    def test_extra_task_is_appended_to_user_task(self):
+        status, result, requests, trace, _ = self.run_scripted_recovery(
+            "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch",
+            extra="First run: git reflog.",
+        )
+        self.assertEqual(status, 0)
+        self.assertIn("First run: git reflog.",
+                      requests[0]["messages"][0]["content"])
 
     def test_recovers_from_reflog_observed_sha(self):
         def recover(body):

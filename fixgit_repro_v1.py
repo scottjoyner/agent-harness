@@ -126,6 +126,8 @@ def main():
                     help="optional system message prepended to the conversation")
     ap.add_argument("--per-turn-task", action="store_true",
                     help="restate the task with each tool result, as the official bridge does")
+    ap.add_argument("--extra-task", default=None,
+                    help="text appended to the task in the user turn (and per-turn restatement)")
     a = ap.parse_args()
     if not math.isfinite(a.timeout_s) or a.timeout_s <= 0:
         ap.error("--timeout-s must be positive and finite")
@@ -192,6 +194,8 @@ def run_scenario(a, stage_root, out_p, deadline):
             "Create a branch named recovery-branch at the lost commit, then merge "
             "it onto master. Use the bash tool, one call per turn."
         )
+    if a.extra_task:
+        task += " " + a.extra_task
 
     # ── 2. RUN the agent through the same bridge contract ──────────────────
     msgs = []
