@@ -108,7 +108,8 @@ def main():
             "model": a.model,
             "endpoint": a.endpoint,
             "passed": False,
-            "elapsed_s": 0.0,
+            "elapsed_s": round(time.monotonic() - started, 1),
+            "deadline_exceeded": time.monotonic() >= deadline,
             "steps": 0,
             "emit": "always",
             "harness_error": f"{type(e).__name__}: {e}",
@@ -164,7 +165,7 @@ def run_scenario(a, stage_root, out_p, deadline):
     harness_error = None
     tool_calls = 0
     tool_timeouts = 0
-    t0 = time.monotonic()
+    t0 = deadline - a.timeout_s
     try:
         import urllib.request
         step = 0
@@ -267,7 +268,11 @@ def run_scenario(a, stage_root, out_p, deadline):
             master_contains = (m.returncode == 0)
         except Exception:
             master_contains = False
-    passed = branch.exists() and master_contains
+    deadline_exceeded = time.monotonic() >= deadline
+    if deadline_exceeded:
+        harness_error = harness_error or "TimeoutError: Run deadline exceeded"
+    elapsed = time.monotonic() - t0
+    passed = branch.exists() and master_contains and not deadline_exceeded
 
     # ── 4. ALWAYS WRITE results.json ────────────────────────────────────────
     result = {
@@ -278,6 +283,7 @@ def run_scenario(a, stage_root, out_p, deadline):
         "endpoint": a.endpoint,
         "passed": passed,
         "elapsed_s": round(elapsed, 1),
+        "deadline_exceeded": deadline_exceeded,
         "steps": step,
         "emit": "always",
         "harness_error": harness_error,

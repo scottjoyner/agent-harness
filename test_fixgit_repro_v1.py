@@ -6,6 +6,8 @@ import time
 import subprocess
 import sys
 import unittest
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -75,11 +77,50 @@ class DeadlineTests(unittest.TestCase):
                 time.sleep(2)
         self.assertLess(time.monotonic() - started, 1)
 
+    def test_slow_http_response_reports_deadline_and_keeps_trace(self):
+        release = threading.Event()
+        received = threading.Event()
+        class SlowHandler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                self.send_response(200)
+                self.send_header("Content-Length", "1000")
+                self.end_headers()
+                self.wfile.flush()
+                received.set()
+                release.wait(5)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "results.json"
+                endpoint = f"http://127.0.0.1:{server.server_port}/v1/chat/completions"
+                started = time.monotonic()
+                with patch("sys.argv", ["probe", "--endpoint", endpoint,
+                                        "--timeout-s", "1", "--out", str(output)]), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(harness.main(), 1)
+                self.assertTrue(received.is_set())
+                self.assertLess(time.monotonic() - started, 2.5)
+                result = json.loads(output.read_text())
+                self.assertFalse(result["passed"])
+                self.assertTrue(result["deadline_exceeded"])
+                self.assertIn("deadline", result["harness_error"].lower())
+                self.assertGreaterEqual(result["elapsed_s"], 0.9)
+                self.assertIn("deadline", (output.parent / "probe.jsonl").read_text().lower())
+        finally:
+            release.set()
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_setup_timeout_writes_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "results.json"
-            def slow_setup(*args, **kwargs):
-                return harness.run_process([sys.executable, "-c", "import time; time.sleep(30)"], args[1])
             started = time.monotonic()
             original = harness.run_process
             def slow_git(command, deadline, **kwargs):
