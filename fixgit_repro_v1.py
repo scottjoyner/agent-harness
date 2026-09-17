@@ -74,6 +74,27 @@ def run_process(command, deadline, check=False, **kwargs):
         result.check_returncode()
     return result
 
+def write_trace(path, traces):
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".probe-", delete=False) as stream:
+            temporary = Path(stream.name)
+            for entry in traces:
+                stream.write(json.dumps(entry) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def recovery_state(stage_root, lost, deadline, git_env):
     def git(*args):
         return run_process(["git", *args], deadline, cwd=str(stage_root), env=git_env)
@@ -233,6 +254,7 @@ def run_scenario(a, stage_root, out_p, deadline):
             calls.append(cont)
             traces.append({"cont": cont, "request": request_snapshot, "response": out,
                            "command": cmd, "error": request_error})
+            write_trace(out_p.parent / "probe.jsonl", traces)
             if not cont or cont.startswith("//ExitEmpty//"):
                 msgs.append({"role": "assistant", "content": cont})
                 msgs.append({"role": "user", "content": "Tool result rc=0 (no output). Not done. Next single bash tool call that finds the lost commit and merges it:"})
@@ -262,6 +284,7 @@ def run_scenario(a, stage_root, out_p, deadline):
             traces[-1]["tool_result"] = {
                 "returncode": r.returncode, "stdout": r.stdout, "stderr": r.stderr,
             }
+            write_trace(out_p.parent / "probe.jsonl", traces)
             tool_out = f"stdout:\n{r.stdout[-600:]}\n[stderr] {r.stderr[-400:]}"
             feedback = f"Tool result rc={r.returncode}: {tool_out}"
             if a.tool_mode == "native":
@@ -282,6 +305,7 @@ def run_scenario(a, stage_root, out_p, deadline):
                 "master_contains_lost": master_contains,
                 "recovery_branch_contains_lost": branch_contains,
             }
+            write_trace(out_p.parent / "probe.jsonl", traces)
             if branch_exists and master_contains and branch_contains:
                 break
     except Exception as e:
@@ -324,9 +348,7 @@ def run_scenario(a, stage_root, out_p, deadline):
         "probe_jsonl": "probe.jsonl",
     }
     out_p.write_text(json.dumps(result, indent=2) + "\n")
-    with (out_p.parent / "probe.jsonl").open("w") as f:
-        for entry in traces:
-            f.write(json.dumps(entry) + "\n")
+    write_trace(out_p.parent / "probe.jsonl", traces)
     print(json.dumps(result, indent=2))
     return passed
 

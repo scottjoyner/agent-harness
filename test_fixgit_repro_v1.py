@@ -51,14 +51,18 @@ class SetupFailureTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
-    def run_scripted_recovery(self, commands):
+    def run_scripted_recovery(self, commands, snapshot_after_first_command=False):
         requests = []
+        trace_during_run = None
         if isinstance(commands, str):
             commands = [commands]
 
         def reply(request):
             body = json.loads(request.data)
             requests.append(body)
+            if snapshot_after_first_command and len(requests) == 2:
+                nonlocal trace_during_run
+                trace_during_run = (output.parent / "probe.jsonl").read_text()
             command = commands[min(len(requests) - 1, len(commands) - 1)]
             if callable(command):
                 command = command(body)
@@ -80,7 +84,18 @@ class RecoveryTests(unittest.TestCase):
                 status = harness.main()
             result = json.loads(output.read_text())
             trace = (output.parent / "probe.jsonl").read_text().splitlines()
-        return status, result, requests, trace
+        return status, result, requests, trace, trace_during_run
+
+    def test_completed_turn_is_on_disk_before_next_request(self):
+        status, result, requests, trace, snapshot = self.run_scripted_recovery(
+            "git reflog --format='%H %gs'", snapshot_after_first_command=True
+        )
+        self.assertIsNotNone(snapshot)
+        entries = [json.loads(line) for line in snapshot.splitlines()]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["tool_result"]["returncode"], 0)
+        self.assertIn("commit: Feature work", entries[0]["tool_result"]["stdout"])
+        self.assertFalse(entries[0]["verification"]["master_contains_lost"])
 
     def test_recovers_from_reflog_observed_sha(self):
         def recover(body):
@@ -91,7 +106,7 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(all(c in "0123456789abcdef" for c in sha))
             return f"git branch recovery-branch {sha} && git merge --ff-only recovery-branch"
 
-        status, result, requests, trace = self.run_scripted_recovery([
+        status, result, requests, trace, _ = self.run_scripted_recovery([
             "git reflog --format='%H %gs'",
             recover,
         ])
@@ -113,7 +128,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(result["tool_mode"], "native")
 
     def test_lost_commit_is_only_reachable_through_reflog(self):
-        status, result, requests, trace = self.run_scripted_recovery(
+        status, result, requests, trace, _ = self.run_scripted_recovery(
             "git branch --contains HEAD@{1}; git log --all --format=%s; git reflog --format=%gs"
         )
         feedback = requests[1]["messages"][-1]["content"]
@@ -123,7 +138,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(result["passed"])
 
     def test_stops_after_successful_native_recovery(self):
-        status, result, requests, trace = self.run_scripted_recovery(
+        status, result, requests, trace, _ = self.run_scripted_recovery(
             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"
         )
         self.assertEqual(status, 0)
@@ -135,7 +150,7 @@ class RecoveryTests(unittest.TestCase):
         self.assertIsNone(result["harness_error"])
 
     def test_packed_recovery_ref_passes(self):
-        status, result, requests, trace = self.run_scripted_recovery(
+        status, result, requests, trace, _ = self.run_scripted_recovery(
             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch && git pack-refs --all"
         )
         self.assertEqual(status, 0)
@@ -149,7 +164,7 @@ class RecoveryTests(unittest.TestCase):
             "git branch recovery-branch master && git merge --ff-only HEAD@{1}",
         ):
             with self.subTest(command=command):
-                status, result, requests, trace = self.run_scripted_recovery(command)
+                status, result, requests, trace, _ = self.run_scripted_recovery(command)
                 self.assertEqual(status, 1)
                 self.assertFalse(result["passed"])
                 self.assertEqual(len(requests), 2)
