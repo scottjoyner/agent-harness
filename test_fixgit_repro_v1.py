@@ -51,7 +51,8 @@ class SetupFailureTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
-    def run_scripted_recovery(self, commands, snapshot_after_first_command=False):
+    def run_scripted_recovery(self, commands, snapshot_after_first_command=False,
+                              system=None):
         requests = []
         trace_during_run = None
         if isinstance(commands, str):
@@ -77,8 +78,11 @@ class RecoveryTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "results.json"
-            with patch("sys.argv", ["probe", "--tool-mode", "native", "--model", "test-model",
-                                    "--max-steps", "2", "--timeout-s", "5", "--out", str(output)]), \
+            argv = ["probe", "--tool-mode", "native", "--model", "test-model",
+                    "--max-steps", "2", "--timeout-s", "5", "--out", str(output)]
+            if system is not None:
+                argv += ["--system-prompt", system]
+            with patch("sys.argv", argv), \
                     patch("urllib.request.urlopen", side_effect=reply), \
                     contextlib.redirect_stdout(io.StringIO()):
                 status = harness.main()
@@ -96,6 +100,25 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual(entries[0]["tool_result"]["returncode"], 0)
         self.assertIn("commit: Feature work", entries[0]["tool_result"]["stdout"])
         self.assertFalse(entries[0]["verification"]["master_contains_lost"])
+
+    def test_system_prompt_is_sent_when_provided(self):
+        system = "Act on the first decisive evidence; do not rescan."
+        status, result, requests, trace, _ = self.run_scripted_recovery(
+            ["git reflog --format='%H %gs'",
+             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"],
+            system=system,
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(requests[0]["messages"][0],
+                         {"role": "system", "content": system})
+        self.assertEqual(requests[1]["messages"][0],
+                         {"role": "system", "content": system})
+
+    def test_no_system_prompt_by_default(self):
+        status, result, requests, trace, _ = self.run_scripted_recovery(
+            "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"
+        )
+        self.assertEqual(requests[0]["messages"][0]["role"], "user")
 
     def test_recovers_from_reflog_observed_sha(self):
         def recover(body):

@@ -122,6 +122,8 @@ def main():
                          "native: OpenAI tools array (server parses tool_calls)")
     ap.add_argument("--disable-thinking", action="store_true",
                     help="send chat_template_kwargs.enable_thinking=false")
+    ap.add_argument("--system-prompt", default=None,
+                    help="optional system message prepended to the conversation")
     a = ap.parse_args()
     if not math.isfinite(a.timeout_s) or a.timeout_s <= 0:
         ap.error("--timeout-s must be positive and finite")
@@ -190,7 +192,10 @@ def run_scenario(a, stage_root, out_p, deadline):
         )
 
     # ── 2. RUN the agent through the same bridge contract ──────────────────
-    msgs = [{"role": "user", "content": task}]
+    msgs = []
+    if a.system_prompt:
+        msgs.append({"role": "system", "content": a.system_prompt})
+    msgs.append({"role": "user", "content": task})
     calls = []
     traces = []
     harness_error = None
