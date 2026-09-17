@@ -51,15 +51,21 @@ class SetupFailureTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
-    def run_scripted_recovery(self, command):
+    def run_scripted_recovery(self, commands):
         requests = []
+        if isinstance(commands, str):
+            commands = [commands]
 
         def reply(request):
-            requests.append(json.loads(request.data))
+            body = json.loads(request.data)
+            requests.append(body)
+            command = commands[min(len(requests) - 1, len(commands) - 1)]
+            if callable(command):
+                command = command(body)
             message = {
                 "role": "assistant", "content": "",
                 "tool_calls": [{
-                    "id": "recovery-1", "type": "function",
+                    "id": f"recovery-{len(requests)}", "type": "function",
                     "function": {"name": "bash", "arguments": json.dumps({"command": command})},
                 }],
             }
@@ -75,6 +81,36 @@ class RecoveryTests(unittest.TestCase):
             result = json.loads(output.read_text())
             trace = (output.parent / "probe.jsonl").read_text().splitlines()
         return status, result, requests, trace
+
+    def test_recovers_from_reflog_observed_sha(self):
+        def recover(body):
+            output = body["messages"][-1]["content"]
+            line = next(line for line in output.splitlines() if "commit: Feature work" in line)
+            sha = line.split()[0]
+            self.assertEqual(len(sha), 40)
+            self.assertTrue(all(c in "0123456789abcdef" for c in sha))
+            return f"git branch recovery-branch {sha} && git merge --ff-only recovery-branch"
+
+        status, result, requests, trace = self.run_scripted_recovery([
+            "git reflog --format='%H %gs'",
+            recover,
+        ])
+        self.assertEqual(status, 0)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["steps"], 2)
+        self.assertEqual(len(requests), 2)
+        second_request = requests[1]
+        self.assertEqual(second_request["messages"][-1]["role"], "tool")
+        self.assertEqual(second_request["messages"][-1]["tool_call_id"], "recovery-1")
+        self.assertIn("commit: Feature work", second_request["messages"][-1]["content"])
+        entries = [json.loads(line) for line in trace]
+        self.assertEqual(entries[0]["request"], requests[0])
+        self.assertEqual(entries[1]["request"], requests[1])
+        self.assertEqual(entries[0]["tool_result"]["returncode"], 0)
+        self.assertIn("commit: Feature work", entries[0]["tool_result"]["stdout"])
+        self.assertEqual(entries[1]["response"]["choices"][0]["message"]["tool_calls"][0]["id"], "recovery-2")
+        self.assertTrue(entries[1]["verification"]["master_contains_lost"])
+        self.assertEqual(result["tool_mode"], "native")
 
     def test_lost_commit_is_only_reachable_through_reflog(self):
         status, result, requests, trace = self.run_scripted_recovery(

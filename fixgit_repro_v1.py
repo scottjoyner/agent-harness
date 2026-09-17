@@ -171,6 +171,7 @@ def run_scenario(a, stage_root, out_p, deadline):
     # ── 2. RUN the agent through the same bridge contract ──────────────────
     msgs = [{"role": "user", "content": task}]
     calls = []
+    traces = []
     harness_error = None
     tool_calls = 0
     tool_timeouts = 0
@@ -197,6 +198,10 @@ def run_scenario(a, stage_root, out_p, deadline):
                 }]
             if a.disable_thinking:
                 body["chat_template_kwargs"] = {"enable_thinking": False}
+            request_snapshot = json.loads(json.dumps(body))
+            out = None
+            cmd = None
+            request_error = None
             try:
                 with request_budget(deadline):
                     req = urllib.request.Request(a.endpoint, data=json.dumps(body).encode(),
@@ -223,8 +228,11 @@ def run_scenario(a, stage_root, out_p, deadline):
                         raise ValueError("Tool command must be a nonempty string")
                     cont = json.dumps(msg)
             except Exception as e:
+                request_error = f"{type(e).__name__}: {e}"
                 cont = f"//ExitEmpty//{e}"
             calls.append(cont)
+            traces.append({"cont": cont, "request": request_snapshot, "response": out,
+                           "command": cmd, "error": request_error})
             if not cont or cont.startswith("//ExitEmpty//"):
                 msgs.append({"role": "assistant", "content": cont})
                 msgs.append({"role": "user", "content": "Tool result rc=0 (no output). Not done. Next single bash tool call that finds the lost commit and merges it:"})
@@ -250,6 +258,10 @@ def run_scenario(a, stage_root, out_p, deadline):
                 r = subprocess.CompletedProcess(cmd, 124, stdout=e.output or "",
                                                 stderr=(e.stderr or "") + "\n[tool timeout]")
                 tool_timeouts += 1
+            traces[-1]["command"] = cmd
+            traces[-1]["tool_result"] = {
+                "returncode": r.returncode, "stdout": r.stdout, "stderr": r.stderr,
+            }
             tool_out = f"stdout:\n{r.stdout[-600:]}\n[stderr] {r.stderr[-400:]}"
             feedback = f"Tool result rc={r.returncode}: {tool_out}"
             if a.tool_mode == "native":
@@ -265,6 +277,11 @@ def run_scenario(a, stage_root, out_p, deadline):
             branch_exists, master_contains, branch_contains = recovery_state(
                 stage_root, lost, deadline, git_env
             )
+            traces[-1]["verification"] = {
+                "recovery_branch_exists": branch_exists,
+                "master_contains_lost": master_contains,
+                "recovery_branch_contains_lost": branch_contains,
+            }
             if branch_exists and master_contains and branch_contains:
                 break
     except Exception as e:
@@ -286,6 +303,8 @@ def run_scenario(a, stage_root, out_p, deadline):
         "task": "fix-git-lost-commit",
         "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "model": a.model,
+        "tool_mode": a.tool_mode,
+        "disable_thinking": a.disable_thinking,
         "endpoint": a.endpoint,
         "passed": passed,
         "elapsed_s": round(elapsed, 1),
@@ -306,8 +325,8 @@ def run_scenario(a, stage_root, out_p, deadline):
     }
     out_p.write_text(json.dumps(result, indent=2) + "\n")
     with (out_p.parent / "probe.jsonl").open("w") as f:
-        for c in calls:
-            f.write(json.dumps({"cont": c[:3000]}) + "\n")
+        for entry in traces:
+            f.write(json.dumps(entry) + "\n")
     print(json.dumps(result, indent=2))
     return passed
 
