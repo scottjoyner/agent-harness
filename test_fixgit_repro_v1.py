@@ -52,7 +52,7 @@ class SetupFailureTests(unittest.TestCase):
 
 class RecoveryTests(unittest.TestCase):
     def run_scripted_recovery(self, commands, snapshot_after_first_command=False,
-                              system=None):
+                              system=None, per_turn_task=False):
         requests = []
         trace_during_run = None
         if isinstance(commands, str):
@@ -82,6 +82,8 @@ class RecoveryTests(unittest.TestCase):
                     "--max-steps", "2", "--timeout-s", "5", "--out", str(output)]
             if system is not None:
                 argv += ["--system-prompt", system]
+            if per_turn_task:
+                argv += ["--per-turn-task"]
             with patch("sys.argv", argv), \
                     patch("urllib.request.urlopen", side_effect=reply), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -119,6 +121,18 @@ class RecoveryTests(unittest.TestCase):
             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"
         )
         self.assertEqual(requests[0]["messages"][0]["role"], "user")
+
+    def test_per_turn_task_restatement_includes_goal(self):
+        status, result, requests, trace, _ = self.run_scripted_recovery(
+            ["git reflog --format='%H %gs'",
+             "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"],
+            per_turn_task=True,
+        )
+        self.assertEqual(status, 0)
+        goal = requests[1]["messages"][-1]["content"]
+        self.assertIn("recovery-branch", goal)
+        self.assertIn("merge", goal)
+        self.assertIn("Tool result rc=0", goal)
 
     def test_recovers_from_reflog_observed_sha(self):
         def recover(body):

@@ -124,6 +124,8 @@ def main():
                     help="send chat_template_kwargs.enable_thinking=false")
     ap.add_argument("--system-prompt", default=None,
                     help="optional system message prepended to the conversation")
+    ap.add_argument("--per-turn-task", action="store_true",
+                    help="restate the task with each tool result, as the official bridge does")
     a = ap.parse_args()
     if not math.isfinite(a.timeout_s) or a.timeout_s <= 0:
         ap.error("--timeout-s must be positive and finite")
@@ -296,8 +298,13 @@ def run_scenario(a, stage_root, out_p, deadline):
             if a.tool_mode == "native":
                 msgs.append({"role": "assistant", "content": msg.get("content") or "",
                              "tool_calls": ntc})
-                msgs.append({"role": "tool", "tool_call_id": ntc[0]["id"],
-                             "content": feedback})
+                feedback = f"Tool result rc={r.returncode}: {tool_out}"
+                if a.per_turn_task:
+                    msgs.append({"role": "user", "content": task + "\n\n" + feedback +
+                                 "\nReply with exactly one bash tool call to continue recovery."})
+                else:
+                    msgs.append({"role": "tool", "tool_call_id": ntc[0]["id"],
+                                 "content": feedback})
             else:
                 msgs += [{"role": "assistant", "content": cont},
                          {"role": "user", "content": feedback +
