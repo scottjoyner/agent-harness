@@ -146,6 +146,30 @@ def build_rows():
             "tools": TOOLS,
         })
 
+    # line-selection: model branches at the checkout-to-master entry (master's own
+    # sha, the top reflog line) instead of the 'commit: Feature work' line; the
+    # merge then no-ops. Feedback names the mistake; target re-selects correctly.
+    for i in range(12, 15):
+        lost, master = sha(i, LOST_TAIL), sha(i, MASTER_TAIL)
+        rows.append({
+            "messages": [
+                user(TASK),
+                assistant_cmd(REFLOG_CMD, len(rows) + 1),
+                user(TASK + "\n\n" + reflog_fb(lost, master) + CONT),
+                assistant_cmd(f"git branch recovery-branch {master} && "
+                              "git merge --ff-only recovery-branch", len(rows) + 1),
+                user(TASK + f"\n\nTool result rc=0: stdout:\nAlready up to date.\n\n"
+                     f"[stderr] \nrecovery-branch points at {master}, the checkout "
+                     "entry — that is master itself, not the lost commit. The lost "
+                     f"commit is the line reading 'commit: Feature work' ({lost}). "
+                     "Reset the branch and merge again.\n" + CONT),
+                assistant_cmd(f"git branch -f recovery-branch {lost} && "
+                              "git checkout master && "
+                              "git merge --ff-only recovery-branch", len(rows) + 1),
+            ],
+            "tools": TOOLS,
+        })
+
     return rows
 
 
