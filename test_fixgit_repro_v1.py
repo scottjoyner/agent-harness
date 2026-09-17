@@ -1,6 +1,8 @@
 import contextlib
 import io
 import json
+import os
+import re
 import tempfile
 import time
 import subprocess
@@ -264,6 +266,67 @@ class FeedbackTests(unittest.TestCase):
                 if name != "empty":
                     self.assertIsNotNone(entries[0]["error"])
                     self.assertIsNone(entries[0]["command"])
+
+
+class FixtureAuditTests(unittest.TestCase):
+    def stage_fixture(self, root):
+        ident = ["-c", "user.email=h@l", "-c", "user.name=h"]
+
+        def git(*args, check=True):
+            return subprocess.run(["git", "-C", str(root), *args],
+                                  capture_output=True, text=True, check=check)
+        git("init", "-b", "master")
+        (root / "index.html").write_text("<h1>old</h1>\n")
+        git("add", "index.html")
+        git(*ident, "commit", "-m", "Initial")
+        git("checkout", "--detach", "HEAD")
+        (root / "index.html").write_text("<h1>new work</h1>\n")
+        git(*ident, "commit", "-am", "Feature work")
+        lost = git("rev-parse", "HEAD").stdout.strip()
+        git("checkout", "master")
+        return lost
+
+    def test_lost_commit_reconstructible_via_fsck_and_reflog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "repo"
+            root.mkdir()
+            lost = self.stage_fixture(root)
+            self.assertNotEqual(lost, "")
+            # oracle 1: fsck, independent of reflogs
+            fsck = subprocess.run(["git", "-C", str(root), "fsck",
+                                   "--unreachable", "--no-reflogs"],
+                                  capture_output=True, text=True, check=True)
+            unreachable = re.findall(r"unreachable commit ([0-9a-f]{40})", fsck.stdout)
+            self.assertEqual(len(unreachable), 1)
+            self.assertEqual(unreachable[0], lost)
+            # oracle 2: lost-found artifact written under .git
+            subprocess.run(["git", "-C", str(root), "fsck", "--lost-found",
+                            "--no-reflogs"], capture_output=True, text=True, check=True)
+            artifact = root / ".git" / "lost-found" / "commit" / lost
+            self.assertTrue(artifact.exists())
+            # oracle 3: reflog line, matched by message
+            reflog = subprocess.run(["git", "-C", str(root), "reflog",
+                                     "--format=%H %gs"],
+                                    capture_output=True, text=True, check=True)
+            feature = [line.split()[0] for line in reflog.stdout.splitlines()
+                       if line.endswith("commit: Feature work")]
+            self.assertEqual(feature, [lost])
+            # recovery verified with the harness's own checker
+            content = subprocess.run(["git", "-C", str(root), "show",
+                                      f"{lost}:index.html"],
+                                     capture_output=True, text=True, check=True).stdout
+            self.assertIn("<h1>new work</h1>", content)
+            env = dict(os.environ, GIT_AUTHOR_NAME="Harness",
+                       GIT_AUTHOR_EMAIL="harness@localhost",
+                       GIT_COMMITTER_NAME="Harness", GIT_COMMITTER_EMAIL="harness@localhost")
+            subprocess.run(["git", "-C", str(root), "branch", "recovery-branch", lost],
+                           check=True)
+            subprocess.run(["git", "-C", str(root), "checkout", "master"], check=True)
+            subprocess.run(["git", "-C", str(root), "merge", "--ff-only",
+                            "recovery-branch"], check=True)
+            deadline = time.monotonic() + 30
+            self.assertEqual(harness.recovery_state(root, lost, deadline, env),
+                             (True, True, True))
 
 
 class DeadlineTests(unittest.TestCase):
