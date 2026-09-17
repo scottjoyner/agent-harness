@@ -50,6 +50,67 @@ class SetupFailureTests(unittest.TestCase):
             self.assertFalse(json.loads(output.read_text())["passed"])
 
 
+class RecoveryTests(unittest.TestCase):
+    def run_scripted_recovery(self, command):
+        requests = []
+
+        def reply(request):
+            requests.append(json.loads(request.data))
+            message = {
+                "role": "assistant", "content": "",
+                "tool_calls": [{
+                    "id": "recovery-1", "type": "function",
+                    "function": {"name": "bash", "arguments": json.dumps({"command": command})},
+                }],
+            }
+            return io.BytesIO(json.dumps({"choices": [{"message": message}]}).encode())
+
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "results.json"
+            with patch("sys.argv", ["probe", "--tool-mode", "native", "--model", "test-model",
+                                    "--max-steps", "2", "--timeout-s", "5", "--out", str(output)]), \
+                    patch("urllib.request.urlopen", side_effect=reply), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = harness.main()
+            result = json.loads(output.read_text())
+            trace = (output.parent / "probe.jsonl").read_text().splitlines()
+        return status, result, requests, trace
+
+    def test_stops_after_successful_native_recovery(self):
+        status, result, requests, trace = self.run_scripted_recovery(
+            "git branch recovery-branch feature && git merge --ff-only recovery-branch"
+        )
+        self.assertEqual(status, 0)
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["steps"], 1)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(len(trace), 1)
+        self.assertEqual(requests[0]["model"], "test-model")
+        self.assertIsNone(result["harness_error"])
+
+    def test_packed_recovery_ref_passes(self):
+        status, result, requests, trace = self.run_scripted_recovery(
+            "git branch recovery-branch feature && git merge --ff-only recovery-branch && git pack-refs --all"
+        )
+        self.assertEqual(status, 0)
+        self.assertTrue(result["signal"]["recovery_branch_exists"])
+        self.assertEqual(len(requests), 1)
+
+    def test_incomplete_recovery_does_not_pass(self):
+        for command in (
+            "git branch recovery-branch feature",
+            "git merge --ff-only feature",
+            "git branch recovery-branch master && git merge --ff-only feature",
+        ):
+            with self.subTest(command=command):
+                status, result, requests, trace = self.run_scripted_recovery(command)
+                self.assertEqual(status, 1)
+                self.assertFalse(result["passed"])
+                self.assertEqual(len(requests), 2)
+                self.assertEqual(requests[1]["messages"][-1]["role"], "tool")
+                self.assertEqual(requests[1]["messages"][-1]["tool_call_id"], "recovery-1")
+
+
 class DeadlineTests(unittest.TestCase):
     def test_expired_budget_does_not_start_process(self):
         with patch.object(harness.subprocess, "Popen") as spawn:

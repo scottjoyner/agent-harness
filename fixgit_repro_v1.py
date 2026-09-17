@@ -74,6 +74,19 @@ def run_process(command, deadline, check=False, **kwargs):
         result.check_returncode()
     return result
 
+def recovery_state(stage_root, lost, deadline, git_env):
+    def git(*args):
+        return run_process(["git", *args], deadline, cwd=str(stage_root), env=git_env)
+
+    branch_exists = git("show-ref", "--verify", "--quiet",
+                        "refs/heads/recovery-branch").returncode == 0
+    master_contains = git("merge-base", "--is-ancestor", lost, "master").returncode == 0
+    branch_contains = branch_exists and git(
+        "merge-base", "--is-ancestor", lost, "refs/heads/recovery-branch"
+    ).returncode == 0
+    return branch_exists, master_contains, branch_contains
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--endpoint", default="http://localhost:1235/v1/chat/completions")
@@ -165,6 +178,7 @@ def run_scenario(a, stage_root, out_p, deadline):
     harness_error = None
     tool_calls = 0
     tool_timeouts = 0
+    branch_exists = master_contains = branch_contains = False
     t0 = deadline - a.timeout_s
     try:
         import urllib.request
@@ -252,27 +266,23 @@ def run_scenario(a, stage_root, out_p, deadline):
                          {"role": "user", "content": feedback +
                           "\nContinue until recovery-branch exists and master contains the lost commit."}]
             step += 1
+            branch_exists, master_contains, branch_contains = recovery_state(
+                stage_root, lost, deadline, git_env
+            )
+            if branch_exists and master_contains and branch_contains:
+                break
     except Exception as e:
         harness_error = f"{type(e).__name__}: {e}"
     elapsed = time.monotonic() - t0
 
     # ── 3. SINGLE ASSERTION: recovery branch present + its commit on master ─
     distinct = [c for c in calls if c and not c.startswith("//ExitEmpty//")]
-    branch = stage_root / ".git" / "refs" / "heads" / "recovery-branch"
     recover_cmd_used = any("recovery-branch" in c or "reflog" in c or "logs/HEAD" in c for c in distinct)
-    master_contains = False
-    if (stage_root / ".git" / "HEAD").exists():
-        try:
-            m = run_process(["git", "merge-base", "--is-ancestor", lost, "master"],
-                            deadline, cwd=str(stage_root), env=git_env)
-            master_contains = (m.returncode == 0)
-        except Exception:
-            master_contains = False
     deadline_exceeded = time.monotonic() >= deadline
     if deadline_exceeded:
         harness_error = harness_error or "TimeoutError: Run deadline exceeded"
     elapsed = time.monotonic() - t0
-    passed = branch.exists() and master_contains and not deadline_exceeded
+    passed = branch_exists and master_contains and branch_contains and not deadline_exceeded
 
     # ── 4. ALWAYS WRITE results.json ────────────────────────────────────────
     result = {
@@ -288,7 +298,8 @@ def run_scenario(a, stage_root, out_p, deadline):
         "emit": "always",
         "harness_error": harness_error,
         "signal": {
-            "recovery_branch_exists": branch.exists(),
+            "recovery_branch_exists": branch_exists,
+            "recovery_branch_contains_lost": branch_contains,
             "master_contains_lost": master_contains,
             "recovery_verb_used": recover_cmd_used,
             "total_tool_calls": tool_calls,
