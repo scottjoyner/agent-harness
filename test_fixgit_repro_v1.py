@@ -14,6 +14,71 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fixgit_repro_v1 as harness
+import build_k2_reflog_dataset_v2 as dataset
+
+
+class DatasetTests(unittest.TestCase):
+    def test_rows_are_grounded_and_correction_results_match_commands(self):
+        executions = []
+        real_run = dataset.run_cmd
+
+        def record(root, command):
+            result = real_run(root, command)
+            executions.append((command, result))
+            return result
+
+        with patch.object(dataset, "run_cmd", side_effect=record):
+            train, heldout = dataset.build_rows()
+        self.assertEqual((len(train), len(heldout)), (14, 5))
+        self.assertEqual(dataset.validate(train + heldout), [])
+        for row in train + heldout:
+            messages = row["messages"]
+            for previous, message in zip(messages, messages[1:]):
+                if message["role"] != "tool":
+                    continue
+                call = previous["tool_calls"][0]
+                command = json.loads(call["function"]["arguments"])["command"]
+                self.assertTrue(any(
+                    command == executed and message == dataset.tool_reply(call["id"], result)
+                    for executed, result in executions))
+            command = json.loads(messages[-1]["tool_calls"][0]["function"]["arguments"])["command"]
+            if "git checkout main" in command:
+                self.assertNotIn("master", messages[0]["content"])
+            self.assertNotIn("The last 'commit:' line", json.dumps(row))
+        self.assertTrue(any("Update scratch notes" in json.dumps(row) for row in train))
+        self.assertFalse(any(recipe[-1] for recipe in dataset.RECIPES if recipe[-2]))
+
+    def test_tool_reply_preserves_full_output(self):
+        result = subprocess.CompletedProcess("git reflog", 7, "x" * 900, "y" * 700)
+        reply = dataset.tool_reply("call-1", result)
+        self.assertEqual(reply["content"],
+                         f"Tool result rc=7: stdout:\n{result.stdout}\n[stderr] {result.stderr}")
+
+
+@unittest.skipUnless(os.environ.get("K2_LIVE_ENDPOINT"), "set K2_LIVE_ENDPOINT for live evaluation")
+class LiveK2Tests(unittest.TestCase):
+    def test_heldout_action_matches_recovery_target(self):
+        import urllib.request
+
+        path = Path(__file__).with_name("k2_reflog_heldout_v2.jsonl")
+        row = json.loads(path.read_text().splitlines()[1])
+        expected = row["messages"][-1]["tool_calls"][0]["function"]
+        request = {
+            "model": os.environ["K2_LIVE_MODEL"],
+            "messages": row["messages"][:-1], "tools": row["tools"],
+            "temperature": 0.0, "seed": 13, "max_tokens": 1024,
+        }
+        req = urllib.request.Request(os.environ["K2_LIVE_ENDPOINT"],
+                                     data=json.dumps(request).encode(),
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=120) as response:
+            result = json.load(response)
+        calls = result["choices"][0]["message"].get("tool_calls", [])
+        self.assertEqual(len(calls), 1, result)
+        actual = calls[0]["function"]
+        self.assertEqual(actual["name"], expected["name"], result)
+        self.assertEqual(json.loads(actual["arguments"]),
+                         json.loads(expected["arguments"]), result)
 
 
 class SetupFailureTests(unittest.TestCase):

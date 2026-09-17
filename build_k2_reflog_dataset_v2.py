@@ -48,21 +48,22 @@ TASKS = {
 }
 
 RECIPES = [
-    # id, task_key, base_branch, filename, old, new, subject, detached_commits, held_out
     ("site-default", "site", "master", "index.html",
-     "<h1>old</h1>\n", "<h1>new work</h1>\n", 1, False),
+     "<h1>old</h1>\n", "<h1>new work</h1>\n", 1, False, False),
     ("site-main", "site", "main", "index.html",
-     "<h1>old</h1>\n", "<h1>gallery live</h1>\n", 1, False),
+     "<h1>old</h1>\n", "<h1>gallery live</h1>\n", 1, False, True),
     ("config-tune", "config", "main", "settings.conf",
-     "cache_size = 16\n", "cache_size = 64\n", 1, False),
+     "cache_size = 16\n", "cache_size = 64\n", 1, False, False),
     ("notes-draft", "notes", "master", "NOTES.md",
-     "# Notes\n", "# Notes\n- release candidate 3\n", 1, False),
+     "# Notes\n", "# Notes\n- release candidate 3\n", 1, False, True),
     ("site-two-commits", "site", "master", "index.html",
-     "<h1>old</h1>\n", "<h1>rebuilt nav</h1>\n", 2, False),
+     "<h1>old</h1>\n", "<h1>rebuilt nav</h1>\n", 2, False, False),
+    ("site-noise-two", "site", "main", "index.html",
+     "<h1>old</h1>\n", "<h1>menus reorganized</h1>\n", 2, False, True),
     ("perf-fast", "perf", "main", "export.py",
-     "def run(): pass\n", "def run(): return 42\n", 1, True),
+     "def run(): pass\n", "def run(): return 42\n", 1, True, False),
     ("site-advanced", "site", "main", "index.html",
-     "<h1>old</h1>\n", "<h1>footer adjusted</h1>\n", 2, True),
+     "<h1>old</h1>\n", "<h1>footer adjusted</h1>\n", 2, True, False),
 ]
 
 REFLOG_CMD = "git reflog --format='%H %gs'"
@@ -78,13 +79,20 @@ def run_cmd(root, command):
 
 
 def build_fixture(recipe):
-    _, task_key, base_branch, filename, old, new, n_detached, held_out = recipe
+    _, task_key, base_branch, filename, old, new, n_detached, _, noise = recipe
     root = Path(tempfile.mkdtemp("k2ds"))
     subprocess.run(["git", "-C", str(root), "init", "-b", base_branch],
                    capture_output=True, text=True, check=True)
     (root / filename).write_text(old)
     run_cmd(root, f"git add {filename}")
     run_cmd(root, "git commit -m Initial")
+    if noise:
+        (root / "scratch.txt").write_text("scratch pad\n")
+        run_cmd(root, "git add scratch.txt")
+        run_cmd(root, "git commit -m 'Add scratch notes'")
+        (root / "scratch.txt").write_text("scratch pad v2\n")
+        run_cmd(root, "git commit -am 'Update scratch notes'")
+        run_cmd(root, "git reset --hard HEAD~1")
     subprocess.run(["git", "-C", str(root), "checkout", "--detach", "HEAD"],
                    capture_output=True, text=True, check=True)
     lost_shas = []
@@ -96,7 +104,10 @@ def build_fixture(recipe):
     lost = lost_shas[-1]
     subprocess.run(["git", "-C", str(root), "checkout", base_branch],
                    capture_output=True, text=True, check=True)
-    return root, lost, lost_shas, TASKS[task_key], base_branch
+    task = TASKS[task_key]
+    if task_key == "site" and base_branch != "master":
+        task = task.replace("master", base_branch)
+    return root, lost, lost_shas, task, base_branch
 
 
 def user(content):
@@ -112,14 +123,14 @@ def assistant_cmd(cmd, call_id):
 
 def tool_reply(call_id, r):
     return {"role": "tool", "tool_call_id": call_id,
-            "content": (f"Tool result rc={r.returncode}: stdout:\n{r.stdout[-600:]}\n"
-                        f"[stderr] {r.stderr[-400:]}")}
+            "content": (f"Tool result rc={r.returncode}: stdout:\n{r.stdout}\n"
+                        f"[stderr] {r.stderr}")}
 
 
 def build_rows():
     train_rows, heldout_rows = [], []
     for recipe in RECIPES:
-        recipe_id, _, _, _, _, _, n_detached, held_out = recipe
+        recipe_id, _, _, _, _, _, n_detached, held_out, _ = recipe
         root, lost, lost_shas, task, base_branch = build_fixture(recipe)
         try:
             call = [f"c-{recipe_id}-1", f"c-{recipe_id}-2", f"c-{recipe_id}-3"]
@@ -127,8 +138,10 @@ def build_rows():
             action = (f"git branch recovery-branch {lost} && "
                       f"git checkout {base_branch} && "
                       f"git merge --ff-only recovery-branch")
+            base_sha = run_cmd(root, "git rev-parse HEAD").stdout.strip()
             action_r = run_cmd(root, action)
             assert action_r_ok(action_r), action_r
+            assert run_cmd(root, "git rev-parse HEAD").stdout.strip() == lost
 
             # discovery row: task -> reflog
             row = {"messages": [user(task), assistant_cmd(REFLOG_CMD, call[0])],
@@ -146,18 +159,20 @@ def build_rows():
 
             if n_detached > 1:
                 # multi-detached chain: verify branch points at the LAST commit
-                verify = "git rev-parse recovery-branch"
+                run_cmd(root, f"git reset --hard {base_sha}").check_returncode()
+                run_cmd(root, "git branch -D recovery-branch").check_returncode()
+                wrong_r = run_cmd(root, f"git branch recovery-branch {lost_shas[0]}")
+                wrong_r.check_returncode()
                 row = {"messages": [
                     user(task),
                     assistant_cmd(REFLOG_CMD, call[0]),
                     tool_reply(call[0], reflog_r),
                     assistant_cmd(f"git branch recovery-branch {lost_shas[0]}",
                                   call[1]),
-                    tool_reply(call[1], run_cmd(root, f"git branch -D recovery-branch; "
-                                                f"git branch recovery-branch {lost_shas[0]}")),
+                    tool_reply(call[1], wrong_r),
                     user(task + "\n\nrecovery-branch points at the first detached "
                          "commit, but the newest detached work is the missing one. "
-                         "The last 'commit:' line in the reflog above is the newest. "
+                          "The newest 'commit:' entry appears first in the reflog above. "
                          "Reply with exactly one bash tool call to finish recovery."),
                     assistant_cmd(f"git branch -f recovery-branch {lost} && "
                                   f"git checkout {base_branch} && "
