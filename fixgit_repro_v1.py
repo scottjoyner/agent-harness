@@ -148,15 +148,11 @@ def run_scenario(a, stage_root, out_p, deadline):
     (stage_root / "index.html").write_text("<h1>old</h1>\n")
     git("add", "index.html")
     git("-c", "user.email=h@l", "-c", "user.name=h", "commit", "-m", "Initial")
-    git("checkout", "-b", "feature")
+    git("checkout", "--detach", "HEAD")
     (stage_root / "index.html").write_text("<h1>new work</h1>\n")
     git("-c", "user.email=h@l", "-c", "user.name=h", "commit", "-am", "Feature work")  # SHALL become the lost commit
     lost = git("rev-parse", "HEAD").stdout.strip()
     git("checkout", "master")
-    git("reset", "--hard", "HEAD~0")              # master back to Initial
-    # Detached-HEAD recreation of the official task:
-    git("checkout", lost)                          # detached at the feature commit
-    git("checkout", "master")                      # scenario: work is now 'lost'
 
     task = (
         "I was working on a personal site in a detached HEAD. I made my changes and "

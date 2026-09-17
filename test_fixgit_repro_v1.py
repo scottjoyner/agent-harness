@@ -76,9 +76,19 @@ class RecoveryTests(unittest.TestCase):
             trace = (output.parent / "probe.jsonl").read_text().splitlines()
         return status, result, requests, trace
 
+    def test_lost_commit_is_only_reachable_through_reflog(self):
+        status, result, requests, trace = self.run_scripted_recovery(
+            "git branch --contains HEAD@{1}; git log --all --format=%s; git reflog --format=%gs"
+        )
+        feedback = requests[1]["messages"][-1]["content"]
+        self.assertNotIn("feature", feedback)
+        self.assertNotIn("\nFeature work\n", feedback)
+        self.assertIn("commit: Feature work", feedback)
+        self.assertFalse(result["passed"])
+
     def test_stops_after_successful_native_recovery(self):
         status, result, requests, trace = self.run_scripted_recovery(
-            "git branch recovery-branch feature && git merge --ff-only recovery-branch"
+            "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch"
         )
         self.assertEqual(status, 0)
         self.assertTrue(result["passed"])
@@ -90,7 +100,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_packed_recovery_ref_passes(self):
         status, result, requests, trace = self.run_scripted_recovery(
-            "git branch recovery-branch feature && git merge --ff-only recovery-branch && git pack-refs --all"
+            "git branch recovery-branch HEAD@{1} && git merge --ff-only recovery-branch && git pack-refs --all"
         )
         self.assertEqual(status, 0)
         self.assertTrue(result["signal"]["recovery_branch_exists"])
@@ -98,9 +108,9 @@ class RecoveryTests(unittest.TestCase):
 
     def test_incomplete_recovery_does_not_pass(self):
         for command in (
-            "git branch recovery-branch feature",
-            "git merge --ff-only feature",
-            "git branch recovery-branch master && git merge --ff-only feature",
+            "git branch recovery-branch HEAD@{1}",
+            "git merge --ff-only HEAD@{1}",
+            "git branch recovery-branch master && git merge --ff-only HEAD@{1}",
         ):
             with self.subTest(command=command):
                 status, result, requests, trace = self.run_scripted_recovery(command)
