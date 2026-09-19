@@ -45,6 +45,22 @@ TASKS = {
              "Now the change is nowhere in git status. Recover it: create a branch named "
              "recovery-branch at that commit and merge it into main. Use the bash tool, "
              "one call per turn."),
+    "site-alt": ("I edited a personal site while HEAD was detached, committed the page "
+                 "change, and returned to master. The page is back to its old version and "
+                 "status is clean. Inspect the reflog, recover the newest committed page "
+                 "work through recovery-branch, and fast-forward master. Use the bash tool, "
+                 "one call per turn."),
+    "perf-alt": ("I optimized a hot path in a detached worktree and committed the speedup. "
+                 "After returning to main, git status and git diff are clean. Use the reflog "
+                 "to find the newest committed speedup, create recovery-branch there, and "
+                 "fast-forward main. Use the bash tool, one call per turn."),
+    "site-correction-short": ("Two commits were made in detached HEAD, then master was "
+                              "checked out. The newest detached commit is lost. Read the "
+                              "reflog, force recovery-branch to it, and fast-forward master. "
+                              "Use bash, one command per turn."),
+    "site-correction-last": ("Detached HEAD had two commits, then master was checked out. "
+                             "The newest detached commit is lost. Read the reflog and "
+                             "finish recovery. Use bash, one command per turn."),
 }
 
 RECIPES = [
@@ -127,11 +143,15 @@ def tool_reply(call_id, r):
                         f"[stderr] {r.stderr}")}
 
 
-def build_rows():
+def build_rows(recipes=None, task_overrides=None, correction_phrases=None):
+    recipes = recipes or RECIPES
+    task_overrides = task_overrides or {}
+    correction_phrases = correction_phrases or {}
     train_rows, heldout_rows = [], []
-    for recipe in RECIPES:
+    for recipe in recipes:
         recipe_id, _, _, _, _, _, n_detached, held_out, _ = recipe
         root, lost, lost_shas, task, base_branch = build_fixture(recipe)
+        task = task_overrides.get(recipe[1], task)
         try:
             call = [f"c-{recipe_id}-1", f"c-{recipe_id}-2", f"c-{recipe_id}-3"]
             reflog_r = run_cmd(root, REFLOG_CMD)
@@ -163,6 +183,12 @@ def build_rows():
                 run_cmd(root, "git branch -D recovery-branch").check_returncode()
                 wrong_r = run_cmd(root, f"git branch recovery-branch {lost_shas[0]}")
                 wrong_r.check_returncode()
+                correction_phrase = correction_phrases.get(
+                    recipe_id,
+                    "recovery-branch points at the first detached "
+                    "commit, but the newest detached work is the missing one. "
+                    "Force recovery-branch to the newest detached commit; the newest "
+                    "'commit:' entry appears first in the reflog above. ")
                 row = {"messages": [
                     user(task),
                     assistant_cmd(REFLOG_CMD, call[0]),
@@ -170,9 +196,7 @@ def build_rows():
                     assistant_cmd(f"git branch recovery-branch {lost_shas[0]}",
                                   call[1]),
                     tool_reply(call[1], wrong_r),
-                    user(task + "\n\nrecovery-branch points at the first detached "
-                         "commit, but the newest detached work is the missing one. "
-                          "The newest 'commit:' entry appears first in the reflog above. "
+                    user(task + "\n\n" + correction_phrase +
                          "Reply with exactly one bash tool call to finish recovery."),
                     assistant_cmd(f"git branch -f recovery-branch {lost} && "
                                   f"git checkout {base_branch} && "
