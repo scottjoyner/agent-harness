@@ -533,15 +533,15 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     if not tasks:
         raise ValueError("no tasks selected")
-    if not args.endpoint or not args.model:
-        raise ValueError("--endpoint and --model are required for execution")
+    if not args.endpoint or not args.model or not args.model_key:
+        raise ValueError("--endpoint, --model and --model-key are required for execution")
     if not args.artifact or not args.artifact_sha256:
         raise ValueError("--artifact and --artifact-sha256 are required")
     if len(args.artifact_sha256) != 64:
         raise ValueError("--artifact-sha256 must be a SHA-256 hex digest")
     int(args.artifact_sha256, 16)
-    if not args.runtime_id:
-        raise ValueError("--runtime-id is required")
+    if not args.runtime_id or not args.node or not args.backend:
+        raise ValueError("--runtime-id, --node and --backend are required")
     if args.reasoning_mode not in {"default", "none"} and not args.reasoning_policy_sha256:
         raise ValueError(
             "--reasoning-policy-sha256 is required for an explicit reasoning mode"
@@ -588,7 +588,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "manifest_sha256": sha256_json(manifest),
         "runner_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "observed_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "model_key": args.model_key,
         "model": args.model,
+        "node": args.node,
+        "backend": args.backend,
         "artifact": args.artifact,
         "artifact_sha256": args.artifact_sha256,
         "runtime_id": args.runtime_id,
@@ -608,6 +611,9 @@ def main() -> int:
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--endpoint")
     parser.add_argument("--model")
+    parser.add_argument("--model-key")
+    parser.add_argument("--node")
+    parser.add_argument("--backend")
     parser.add_argument("--artifact")
     parser.add_argument("--artifact-sha256")
     parser.add_argument("--runtime-id")
