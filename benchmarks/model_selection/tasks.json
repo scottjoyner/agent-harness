@@ -5,7 +5,8 @@
     "non_destructive": true,
     "tools_are_simulated": true,
     "scoring": "Deterministic validators only; no LLM-as-judge in v1.",
-    "repeat_policy": "Repeated execution of the same case does not increase unique-case count."
+    "repeat_policy": "Repeated execution of the same case does not increase unique-case count.",
+    "generated_cases": "Generator definitions are manifest-bound and generator implementation is additionally bound by runner_sha256 in every result."
   },
   "tasks": [
     {
@@ -574,6 +575,50 @@
           "caveat": "local quantized quality must be measured"
         }
       }
+    }
+  ],
+  "generators": [
+    {
+      "id": "decision-policy-grid",
+      "family": "decision_judge",
+      "type": "decision_policy_grid",
+      "generated_case_count": 64,
+      "description": "All combinations of six bounded evidence-state booleans with deterministic accept/retry/delegate/abstain precedence."
+    },
+    {
+      "id": "structured-edit-grid",
+      "family": "structured_output",
+      "type": "structured_edit_grid",
+      "generated_case_count": 24,
+      "description": "Exact one-field JSON edits across multiple fields and values."
+    },
+    {
+      "id": "repo-fix-grid",
+      "family": "repo_work",
+      "type": "repo_fix_grid",
+      "generated_case_count": 12,
+      "description": "Deterministic minimal-fix identification across common repository defect classes."
+    },
+    {
+      "id": "tool-choice-grid",
+      "family": "terminal_agent",
+      "type": "tool_choice_grid",
+      "generated_case_count": 12,
+      "description": "Simulated read-file versus run-tests choices; no tool is executed."
+    },
+    {
+      "id": "long-context-grid",
+      "family": "long_context_retrieval",
+      "type": "long_context_grid",
+      "generated_case_count": 8,
+      "description": "Eight unique retrieval needles at an operator-selected context target."
+    },
+    {
+      "id": "summary-grid",
+      "family": "summarization",
+      "type": "summary_grid",
+      "generated_case_count": 20,
+      "description": "Twenty deterministic extraction/compression cases with irrelevant distractors."
     }
   ]
 }
