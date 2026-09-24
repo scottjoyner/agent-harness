@@ -1,0 +1,579 @@
+{
+  "schema_version": "model-quality-suite-v1",
+  "suite_revision": "2026-09-24.1",
+  "semantics": {
+    "non_destructive": true,
+    "tools_are_simulated": true,
+    "scoring": "Deterministic validators only; no LLM-as-judge in v1.",
+    "repeat_policy": "Repeated execution of the same case does not increase unique-case count."
+  },
+  "tasks": [
+    {
+      "id": "DJ-001",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "A coding task passed all requested tests, changed only the requested file, and has no unresolved validation errors. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "accept"
+        }
+      }
+    },
+    {
+      "id": "DJ-002",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "A task produced a patch, but the required unit test fails deterministically and the failure is directly related to the patch. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "retry"
+        }
+      }
+    },
+    {
+      "id": "DJ-003",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "A task is blocked because deployment credentials are unavailable to the coding agent and only an authorized operator can supply them. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "delegate"
+        }
+      }
+    },
+    {
+      "id": "DJ-004",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "The evidence bundle is incomplete and does not show whether the requested change was actually tested. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "abstain"
+        }
+      }
+    },
+    {
+      "id": "DJ-005",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "The implementation matches the requested behavior but silently widens mutation authority beyond the approved boundary. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "retry"
+        }
+      }
+    },
+    {
+      "id": "DJ-006",
+      "family": "decision_judge",
+      "system": "Return only JSON with one key named decision.",
+      "prompt": "The requested operation requires a physical-device confirmation that cannot be simulated and all code-side checks are already complete. Choose accept, retry, delegate, or abstain.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "delegate"
+        }
+      }
+    },
+    {
+      "id": "SO-001",
+      "family": "structured_output",
+      "system": "Return only valid JSON. Preserve every unmentioned value exactly.",
+      "prompt": "Change timeout_seconds to 45 in {\"timeout_seconds\":30,\"retry_limit\":3,\"mode\":\"safe\"}",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "timeout_seconds": 45,
+          "retry_limit": 3,
+          "mode": "safe"
+        }
+      }
+    },
+    {
+      "id": "SO-002",
+      "family": "structured_output",
+      "system": "Return only valid JSON. Preserve every unmentioned value exactly.",
+      "prompt": "Set enabled to false in {\"name\":\"router\",\"enabled\":true,\"retries\":2}",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "name": "router",
+          "enabled": false,
+          "retries": 2
+        }
+      }
+    },
+    {
+      "id": "SO-003",
+      "family": "structured_output",
+      "system": "Return only valid JSON matching the requested keys.",
+      "prompt": "Return {\"status\":\"ok\",\"count\":3,\"items\":[\"a\",\"b\",\"c\"]} exactly.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "status": "ok",
+          "count": 3,
+          "items": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      }
+    },
+    {
+      "id": "SO-004",
+      "family": "structured_output",
+      "system": "Return only valid JSON. Preserve nesting.",
+      "prompt": "In {\"runtime\":{\"model\":\"k2\",\"context\":8192},\"admitted\":false}, change runtime.context to 65536.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "runtime": {
+            "model": "k2",
+            "context": 65536
+          },
+          "admitted": false
+        }
+      }
+    },
+    {
+      "id": "SO-005",
+      "family": "structured_output",
+      "system": "Return only valid JSON.",
+      "prompt": "Return an object with decision \"abstain\" and confidence 0.25.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "abstain",
+          "confidence": 0.25
+        }
+      }
+    },
+    {
+      "id": "SO-006",
+      "family": "structured_output",
+      "system": "Return only valid JSON. Do not add fields.",
+      "prompt": "Remove only the key \"temporary\" from {\"id\":\"a1\",\"temporary\":true,\"value\":7}.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "id": "a1",
+          "value": 7
+        }
+      }
+    },
+    {
+      "id": "RW-001",
+      "family": "repo_work",
+      "system": "Return only JSON with file and change.",
+      "prompt": "A Python function compares user IDs with `is` instead of `==`. The bug is in src/auth.py. Give the minimal semantic change.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "file": "src/auth.py",
+          "change": "replace is with =="
+        }
+      }
+    },
+    {
+      "id": "RW-002",
+      "family": "repo_work",
+      "system": "Return only JSON with file and change.",
+      "prompt": "tests/test_cache.py expects Cache.clear() to remove all entries, but src/cache.py clear() returns without clearing the dict. Give the minimal change.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "file": "src/cache.py",
+          "change": "clear the backing dict"
+        }
+      }
+    },
+    {
+      "id": "RW-003",
+      "family": "repo_work",
+      "system": "Return only JSON with action and reason.",
+      "prompt": "A PR changes production routing and tests are green, but the exact deployed artifact SHA was not captured. What is the smallest next action?",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "action": "capture exact deployed artifact SHA",
+          "reason": "deployment identity is unproven"
+        }
+      }
+    },
+    {
+      "id": "RW-004",
+      "family": "repo_work",
+      "system": "Return only JSON with action and reason.",
+      "prompt": "A formatter changed 40 unrelated files while the requested bug fix needs one line in parser.py. What should the implementation do before review?",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "action": "revert unrelated formatting changes",
+          "reason": "keep the patch scoped"
+        }
+      }
+    },
+    {
+      "id": "RW-005",
+      "family": "repo_work",
+      "system": "Return only JSON with test and expected.",
+      "prompt": "A resolver must fail closed when an exact model artifact is unavailable. Name the narrow regression test behavior.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "test": "exact artifact unavailable",
+          "expected": "no fallback route"
+        }
+      }
+    },
+    {
+      "id": "RW-006",
+      "family": "repo_work",
+      "system": "Return only JSON with file and change.",
+      "prompt": "config.py reads TIMEOUT with int(os.getenv('TIMEOUT')) and crashes when the variable is absent. The documented default is 30. Give the minimal change.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "file": "config.py",
+          "change": "default TIMEOUT to 30 before int conversion"
+        }
+      }
+    },
+    {
+      "id": "TA-001",
+      "family": "terminal_agent",
+      "system": "Choose exactly one provided tool call. Do not execute or describe it.",
+      "prompt": "You need to inspect README.md before deciding what to edit.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read one file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "description": "Run a named test target",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ]
+            }
+          }
+        }
+      ],
+      "validator": {
+        "type": "tool_call_exact",
+        "name": "read_file",
+        "arguments": {
+          "path": "README.md"
+        }
+      }
+    },
+    {
+      "id": "TA-002",
+      "family": "terminal_agent",
+      "system": "Choose exactly one provided tool call. Do not execute or describe it.",
+      "prompt": "The implementation is complete. Run the unit tests for tests/test_router.py.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read one file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "description": "Run a named test target",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ]
+            }
+          }
+        }
+      ],
+      "validator": {
+        "type": "tool_call_exact",
+        "name": "run_tests",
+        "arguments": {
+          "target": "tests/test_router.py"
+        }
+      }
+    },
+    {
+      "id": "TA-003",
+      "family": "terminal_agent",
+      "system": "Choose exactly one provided tool call. Do not execute or describe it.",
+      "prompt": "Before modifying src/main.py, inspect that file.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read one file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "description": "Run a named test target",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ]
+            }
+          }
+        }
+      ],
+      "validator": {
+        "type": "tool_call_exact",
+        "name": "read_file",
+        "arguments": {
+          "path": "src/main.py"
+        }
+      }
+    },
+    {
+      "id": "TA-004",
+      "family": "terminal_agent",
+      "system": "Choose exactly one provided tool call. Do not execute or describe it.",
+      "prompt": "A change touched the parser. Run tests/test_parser.py before claiming success.",
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read one file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "run_tests",
+            "description": "Run a named test target",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "target": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ]
+            }
+          }
+        }
+      ],
+      "validator": {
+        "type": "tool_call_exact",
+        "name": "run_tests",
+        "arguments": {
+          "target": "tests/test_parser.py"
+        }
+      }
+    },
+    {
+      "id": "LC-001",
+      "family": "long_context_retrieval",
+      "system": "Return only JSON with the key answer.",
+      "prompt": "Find the unique fact in the supplied context: what is the launch code?",
+      "long_context": {
+        "needle": "The launch code is ORBIT-7319.",
+        "expected": {
+          "answer": "ORBIT-7319"
+        }
+      },
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "answer": "ORBIT-7319"
+        }
+      }
+    },
+    {
+      "id": "LC-002",
+      "family": "long_context_retrieval",
+      "system": "Return only JSON with the key answer.",
+      "prompt": "Find the unique fact in the supplied context: what is the approved context limit?",
+      "long_context": {
+        "needle": "The approved context limit is 65536 tokens.",
+        "expected": {
+          "answer": 65536
+        }
+      },
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "answer": 65536
+        }
+      }
+    },
+    {
+      "id": "LC-003",
+      "family": "long_context_retrieval",
+      "system": "Return only JSON with the key answer.",
+      "prompt": "Find the unique fact in the supplied context: which artifact is admitted?",
+      "long_context": {
+        "needle": "The admitted artifact is model-handle-v17.",
+        "expected": {
+          "answer": "model-handle-v17"
+        }
+      },
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "answer": "model-handle-v17"
+        }
+      }
+    },
+    {
+      "id": "LC-004",
+      "family": "long_context_retrieval",
+      "system": "Return only JSON with the key answer.",
+      "prompt": "Find the unique fact in the supplied context: what was the exact retry budget?",
+      "long_context": {
+        "needle": "The exact retry budget is 4.",
+        "expected": {
+          "answer": 4
+        }
+      },
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "answer": 4
+        }
+      }
+    },
+    {
+      "id": "SM-001",
+      "family": "summarization",
+      "system": "Return only JSON with keys owner, blocker, next.",
+      "prompt": "Project Atlas is owned by Mina. The release is blocked only by a missing signing proof. The next action is to capture a signed-device validation. Ignore the old note that suggested rebuilding the API.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "owner": "Mina",
+          "blocker": "missing signing proof",
+          "next": "capture a signed-device validation"
+        }
+      }
+    },
+    {
+      "id": "SM-002",
+      "family": "summarization",
+      "system": "Return only JSON with keys status and risk.",
+      "prompt": "The benchmark completed successfully on three nodes. One older node is currently offline, but its historical benchmark remains valid. Current live routing must not use that offline node.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "status": "benchmark evidence remains valid",
+          "risk": "offline node is ineligible for live routing"
+        }
+      }
+    },
+    {
+      "id": "SM-003",
+      "family": "summarization",
+      "system": "Return only JSON with keys decision and reason.",
+      "prompt": "The compressed artifact is twice as fast, but no paired quality evaluation exists. The reference model has proven task success. Summarize the selection implication.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "decision": "do not promote from speed alone",
+          "reason": "quantized quality retention is unproven"
+        }
+      }
+    },
+    {
+      "id": "SM-004",
+      "family": "summarization",
+      "system": "Return only JSON with keys fact and caveat.",
+      "prompt": "Artificial Analysis reports a base-model intelligence prior. Local execution uses a different quantized artifact. Summarize what can and cannot be assumed.",
+      "validator": {
+        "type": "json_exact",
+        "expected": {
+          "fact": "the external score is a base-model prior",
+          "caveat": "local quantized quality must be measured"
+        }
+      }
+    }
+  ]
+}
