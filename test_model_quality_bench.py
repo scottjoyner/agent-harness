@@ -126,5 +126,44 @@ class ModelQualityBenchTests(unittest.TestCase):
         self.assertGreater(result["task_count"], 0)
 
 
+    def test_generated_suite_meets_unique_case_floors(self) -> None:
+        tasks = bench.select_tasks(self.manifest, [], [])
+        by_family = {}
+        for task in tasks:
+            by_family.setdefault(task["family"], set()).add(task["id"])
+
+        floors = {
+            "decision_judge": 50,
+            "structured_output": 20,
+            "repo_work": 12,
+            "terminal_agent": 12,
+            "long_context_retrieval": 8,
+            "summarization": 20,
+        }
+        for family, floor in floors.items():
+            self.assertGreaterEqual(len(by_family.get(family, set())), floor)
+
+    def test_generated_case_ids_are_unique(self) -> None:
+        tasks = bench.select_tasks(self.manifest, [], [])
+        ids = [task["id"] for task in tasks]
+        self.assertEqual(len(ids), len(set(ids)))
+
+    def test_decision_grid_has_all_four_outcomes(self) -> None:
+        tasks = bench.select_tasks(
+            self.manifest,
+            ["decision_judge"],
+            [],
+        )
+        decisions = {
+            task["validator"]["expected"]["decision"]
+            for task in tasks
+            if task["validator"]["type"] == "json_exact"
+            and "decision" in task["validator"]["expected"]
+        }
+        self.assertTrue(
+            {"accept", "retry", "delegate", "abstain"}.issubset(decisions)
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
