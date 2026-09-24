@@ -535,8 +535,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("no tasks selected")
     if not args.endpoint or not args.model or not args.model_key:
         raise ValueError("--endpoint, --model and --model-key are required for execution")
-    if not args.artifact or not args.artifact_sha256:
-        raise ValueError("--artifact and --artifact-sha256 are required")
+    if not args.artifact or not args.artifact_sha256 or not args.quantization:
+        raise ValueError(
+            "--artifact, --artifact-sha256 and --quantization are required"
+        )
     if len(args.artifact_sha256) != 64:
         raise ValueError("--artifact-sha256 must be a SHA-256 hex digest")
     int(args.artifact_sha256, 16)
@@ -594,6 +596,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "backend": args.backend,
         "artifact": args.artifact,
         "artifact_sha256": args.artifact_sha256,
+        "quantization": args.quantization,
+        "weight_gib": args.weight_gib,
         "runtime_id": args.runtime_id,
         "reasoning_mode": args.reasoning_mode,
         "reasoning_policy_sha256": args.reasoning_policy_sha256,
@@ -616,6 +620,8 @@ def main() -> int:
     parser.add_argument("--backend")
     parser.add_argument("--artifact")
     parser.add_argument("--artifact-sha256")
+    parser.add_argument("--quantization")
+    parser.add_argument("--weight-gib", type=float)
     parser.add_argument("--runtime-id")
     parser.add_argument(
         "--reasoning-mode",
