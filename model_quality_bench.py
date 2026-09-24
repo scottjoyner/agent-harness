@@ -64,6 +64,27 @@ def validate_manifest(payload: dict[str, Any]) -> None:
         if family == "long_context_retrieval" and not task.get("long_context"):
             raise ValueError(f"long-context task {task_id} requires needle data")
 
+    generator_types = {
+        "decision_policy_grid",
+        "structured_edit_grid",
+        "repo_fix_grid",
+        "tool_choice_grid",
+        "long_context_grid",
+        "summary_grid",
+    }
+    generator_ids: set[str] = set()
+    for spec in payload.get("generators", []):
+        if not isinstance(spec, dict):
+            raise ValueError("generators must be objects")
+        generator_id = str(spec.get("id") or "")
+        if not generator_id or generator_id in generator_ids:
+            raise ValueError("generator IDs must be non-empty and unique")
+        generator_ids.add(generator_id)
+        if spec.get("type") not in generator_types:
+            raise ValueError(f"unsupported generator {generator_id}")
+        if int(spec.get("generated_case_count") or 0) <= 0:
+            raise ValueError(f"generator {generator_id} requires a positive case count")
+
 
 def endpoint_url(endpoint: str) -> str:
     value = endpoint.rstrip("/")
@@ -220,12 +241,272 @@ def score_task(
     return False, "unsupported_validator"
 
 
+
+def _tool_schema() -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "description": "Read one file",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "run_tests",
+                "description": "Run a named test target",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"target": {"type": "string"}},
+                    "required": ["target"],
+                },
+            },
+        },
+    ]
+
+
+def _decision_grid(count: int) -> list[dict[str, Any]]:
+    tasks = []
+    labels = (
+        "tests_passed",
+        "scope_clean",
+        "evidence_complete",
+        "operator_blocker",
+        "artifact_available",
+        "authority_preserved",
+    )
+    for index in range(count):
+        state = {
+            label: bool(index & (1 << bit))
+            for bit, label in enumerate(labels)
+        }
+        if state["operator_blocker"]:
+            decision = "delegate"
+        elif not state["evidence_complete"] or not state["artifact_available"]:
+            decision = "abstain"
+        elif (
+            not state["tests_passed"]
+            or not state["scope_clean"]
+            or not state["authority_preserved"]
+        ):
+            decision = "retry"
+        else:
+            decision = "accept"
+        facts = ", ".join(
+            f"{key}={str(value).lower()}" for key, value in state.items()
+        )
+        tasks.append({
+            "id": f"G-DJ-{index:03d}",
+            "family": "decision_judge",
+            "system": "Return only JSON with one key named decision.",
+            "prompt": (
+                "Apply this precedence: operator-only blocker -> delegate; "
+                "missing evidence or unavailable exact artifact -> abstain; "
+                "failed tests, scope drift, or authority drift -> retry; "
+                "otherwise accept. State: " + facts
+            ),
+            "validator": {
+                "type": "json_exact",
+                "expected": {"decision": decision},
+            },
+        })
+    return tasks
+
+
+def _structured_grid(count: int) -> list[dict[str, Any]]:
+    fields = ("timeout", "retries", "context", "batch")
+    values = (5, 7, 11, 13, 17, 19)
+    base = {"timeout": 30, "retries": 3, "context": 8192, "batch": 1}
+    tasks = []
+    for index in range(count):
+        field = fields[index % len(fields)]
+        value = values[(index // len(fields)) % len(values)]
+        expected = dict(base)
+        expected[field] = value
+        tasks.append({
+            "id": f"G-SO-{index:03d}",
+            "family": "structured_output",
+            "system": "Return only valid JSON. Preserve every unmentioned value exactly.",
+            "prompt": (
+                f"Change {field} to {value} in "
+                + json.dumps(base, separators=(",", ":"))
+            ),
+            "validator": {"type": "json_exact", "expected": expected},
+        })
+    return tasks
+
+
+def _repo_grid(count: int) -> list[dict[str, Any]]:
+    cases = [
+        ("src/auth.py", "identity comparison uses is", "replace is with =="),
+        ("src/cache.py", "clear returns without clearing storage", "clear the backing dict"),
+        ("src/config.py", "missing environment default crashes startup", "add the documented default before conversion"),
+        ("src/parser.py", "empty input indexes element zero", "handle empty input before indexing"),
+        ("src/client.py", "HTTP response body is read twice", "read and parse the response once"),
+        ("src/router.py", "fallback silently changes selected model", "fail closed when the exact model is unavailable"),
+        ("src/state.py", "mutable default list is shared", "use a per-instance default factory"),
+        ("src/io.py", "file handle is not closed on error", "use a context manager"),
+        ("src/retry.py", "retry loop attempts one extra time", "fix the loop bound"),
+        ("src/schema.py", "unknown fields are silently accepted", "forbid unknown fields"),
+        ("src/clock.py", "naive timestamps are compared with UTC timestamps", "normalize timestamps to timezone-aware UTC"),
+        ("src/hash.py", "artifact identity uses filename only", "bind identity to a cryptographic fingerprint"),
+    ]
+    tasks = []
+    for index in range(count):
+        file_name, bug, change = cases[index % len(cases)]
+        tasks.append({
+            "id": f"G-RW-{index:03d}",
+            "family": "repo_work",
+            "system": "Return only JSON with file and change.",
+            "prompt": f"The defect is: {bug}. It is in {file_name}. Give the minimal semantic fix.",
+            "validator": {
+                "type": "json_exact",
+                "expected": {"file": file_name, "change": change},
+            },
+        })
+    return tasks
+
+
+def _tool_grid(count: int) -> list[dict[str, Any]]:
+    read_paths = (
+        "README.md",
+        "src/main.py",
+        "src/router.py",
+        "src/config.py",
+        "pyproject.toml",
+        "tests/test_router.py",
+    )
+    test_targets = (
+        "tests/test_router.py",
+        "tests/test_parser.py",
+        "tests/test_config.py",
+        "tests/test_schema.py",
+        "tests/test_client.py",
+        "tests/test_state.py",
+    )
+    tasks = []
+    for index in range(count):
+        if index % 2 == 0:
+            path = read_paths[(index // 2) % len(read_paths)]
+            prompt = f"Inspect {path} before deciding what to change."
+            expected_name = "read_file"
+            expected_args = {"path": path}
+        else:
+            target = test_targets[(index // 2) % len(test_targets)]
+            prompt = f"The implementation is complete. Validate only {target}."
+            expected_name = "run_tests"
+            expected_args = {"target": target}
+        tasks.append({
+            "id": f"G-TA-{index:03d}",
+            "family": "terminal_agent",
+            "system": "Choose exactly one provided tool call. Do not execute or describe it.",
+            "prompt": prompt,
+            "tools": _tool_schema(),
+            "validator": {
+                "type": "tool_call_exact",
+                "name": expected_name,
+                "arguments": expected_args,
+            },
+        })
+    return tasks
+
+
+def _long_context_grid(count: int) -> list[dict[str, Any]]:
+    tasks = []
+    for index in range(count):
+        code = f"CTX-{index:02d}-{(index * 7919 + 104729) % 100000:05d}"
+        tasks.append({
+            "id": f"G-LC-{index:03d}",
+            "family": "long_context_retrieval",
+            "system": "Return only JSON with the key answer.",
+            "prompt": "Find the unique evidence key in the supplied context.",
+            "long_context": {
+                "needle": f"The evidence key is {code}.",
+                "expected": {"answer": code},
+            },
+            "validator": {
+                "type": "json_exact",
+                "expected": {"answer": code},
+            },
+        })
+    return tasks
+
+
+def _summary_grid(count: int) -> list[dict[str, Any]]:
+    owners = ("Mina", "Ravi", "Lena", "Omar", "Iris")
+    blockers = (
+        "missing signing proof",
+        "unverified artifact identity",
+        "failing regression test",
+        "missing operator approval",
+    )
+    next_steps = (
+        "capture signed-device validation",
+        "record the exact artifact fingerprint",
+        "fix the regression and rerun the test",
+        "request the required operator approval",
+    )
+    tasks = []
+    for index in range(count):
+        owner = owners[index % len(owners)]
+        slot = index % len(blockers)
+        blocker = blockers[slot]
+        next_step = next_steps[slot]
+        project = f"Project-{index:02d}"
+        tasks.append({
+            "id": f"G-SM-{index:03d}",
+            "family": "summarization",
+            "system": "Return only JSON with keys project, owner, blocker, next.",
+            "prompt": (
+                f"{project} is owned by {owner}. The only current blocker is "
+                f"{blocker}. The next action is to {next_step}. An older note "
+                "mentions unrelated infrastructure work; ignore it."
+            ),
+            "validator": {
+                "type": "json_exact",
+                "expected": {
+                    "project": project,
+                    "owner": owner,
+                    "blocker": blocker,
+                    "next": next_step,
+                },
+            },
+        })
+    return tasks
+
+
+def generated_tasks(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    builders = {
+        "decision_policy_grid": _decision_grid,
+        "structured_edit_grid": _structured_grid,
+        "repo_fix_grid": _repo_grid,
+        "tool_choice_grid": _tool_grid,
+        "long_context_grid": _long_context_grid,
+        "summary_grid": _summary_grid,
+    }
+    tasks: list[dict[str, Any]] = []
+    for spec in manifest.get("generators", []):
+        builder = builders[str(spec["type"])]
+        generated = builder(int(spec["generated_case_count"]))
+        family = str(spec["family"])
+        if any(task.get("family") != family for task in generated):
+            raise ValueError(f"generator {spec['id']} produced the wrong family")
+        tasks.extend(generated)
+    return tasks
+
+
 def select_tasks(
     manifest: dict[str, Any],
     families: list[str],
     cases: list[str],
 ) -> list[dict[str, Any]]:
-    selected = list(manifest.get("tasks", []))
+    selected = list(manifest.get("tasks", [])) + generated_tasks(manifest)
     if families:
         wanted = set(families)
         selected = [task for task in selected if task.get("family") in wanted]
@@ -245,6 +526,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "schema_version": "model-quality-validation-v1",
             "suite_revision": manifest["suite_revision"],
             "manifest_sha256": sha256_json(manifest),
+            "runner_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
             "task_count": len(tasks),
             "families": sorted({task["family"] for task in tasks}),
         }
@@ -304,6 +586,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": "model-quality-benchmark-result-v1",
         "suite_revision": manifest["suite_revision"],
         "manifest_sha256": sha256_json(manifest),
+        "runner_sha256": hashlib.sha256(pathlib.Path(__file__).read_bytes()).hexdigest(),
         "observed_at": datetime.now(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "model": args.model,
         "artifact": args.artifact,
