@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Compile runner
-        run: python -m py_compile model_quality_bench.py test_model_quality_bench.py
+        run: python -m py_compile model_quality_bench.py test_model_quality_bench.py system_one_receipt_bench.py test_system_one_receipt_bench.py
       - name: Validate frozen manifest
         run: python model_quality_bench.py --validate-only
       - name: Run unit tests
