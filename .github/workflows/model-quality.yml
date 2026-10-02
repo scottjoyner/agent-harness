@@ -6,12 +6,18 @@ on:
       - 'model_quality_bench.py'
       - 'test_model_quality_bench.py'
       - 'benchmarks/model_selection/**'
+      - 'system_one_receipt_bench.py'
+      - 'test_system_one_receipt_bench.py'
+      - 'benchmarks/system_one/**'
       - '.github/workflows/model-quality.yml'
   pull_request:
     paths:
       - 'model_quality_bench.py'
       - 'test_model_quality_bench.py'
       - 'benchmarks/model_selection/**'
+      - 'system_one_receipt_bench.py'
+      - 'test_system_one_receipt_bench.py'
+      - 'benchmarks/system_one/**'
       - '.github/workflows/model-quality.yml'
   workflow_dispatch:
 
@@ -23,9 +29,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Compile runner
-        run: python -m py_compile model_quality_bench.py test_model_quality_bench.py
-      - name: Validate frozen manifest
+      - name: Compile runners
+        run: |
+          python -m py_compile \
+            model_quality_bench.py \
+            test_model_quality_bench.py \
+            system_one_receipt_bench.py \
+            test_system_one_receipt_bench.py
+      - name: Validate frozen model-quality manifest
         run: python model_quality_bench.py --validate-only
+      - name: Validate frozen System-One browser fixtures
+        run: python system_one_receipt_bench.py --validate-only
       - name: Run unit tests
-        run: python -m unittest -v test_model_quality_bench.py
+        run: |
+          python -m unittest -v \
+            test_model_quality_bench.py \
+            test_system_one_receipt_bench.py
