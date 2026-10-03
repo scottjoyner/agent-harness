@@ -21,7 +21,7 @@
       "test-results.json",
       "metrics.json",
       "comparison.json  (per task; tasks/<task_id>/ when several)",
-      "rollup.json  (written by , campaign-wide)"
+      "rollup.json  (written by summarize, campaign-wide)"
     ],
     "schema_markers": [
       "realtask.run_manifest.v1",
