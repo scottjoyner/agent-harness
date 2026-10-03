@@ -469,8 +469,33 @@ Same stance as `comparison.json`:
 | `auto_ingest_shorts_plan_review` | `code_review` | analysis | the review surfaces the lifecycle defect and its hazard |
 | `auto_ingest_shorts_driver_helper` | `small_refactor` | patch | behaviour-preserving driver-lifetime helper |
 | `auto_ingest_plan_shorts_contract` | `contract_reasoning` | analysis | the driver-lifetime contract and what a repair must preserve |
+| `auto_router_task_contract_lane_mismatch` | `bug_fix` | patch | a plan lane whose tools were never registered, so it can never be routed |
+| `auto_router_settings_latency_cache_path` | `bug_fix` | patch | the latency cache path derived by a second, divergent copy of the SQLite grammar |
+| `assistx_answers_store_cursor_drops_ties` | `bug_fix` | patch | a keyset cursor that silently drops every answer sharing a millisecond |
 
-`auto_ingest_plan_shorts_live_driver` is the only fixture with a `broader` tier:
+### Corpus shape
+
+Five fixtures are one campaign: the same frozen `auto_ingest/shorts/cli.py`,
+the same defect, five independent angles on it. That is deliberate — it isolates
+*what the harness measures* — but on its own it would not support any claim about
+generalisation, so the corpus also carries defects from two further repositories
+that share no code, no author, and no bug class with the campaign:
+
+| | repositories | distinct source identities | families |
+|---|---|---|---|
+| campaign | 1 | 1 | 5 |
+| corpus | 3 | 4 | 5 |
+
+`test_realtask_corpus.py` enforces that shape rather than assuming it: it fails
+if the corpus collapses onto a single source identity, if two fixtures sharing a
+snapshot describe the same problem or the same family, if any two fixtures from
+different repositories are byte-identical, if a fixture names another fixture, or
+if a credential-shaped default is filled in.
+
+### Campaign fixture: auto-ingest driver lifetime
+
+`auto_ingest_plan_shorts_live_driver` is the only campaign fixture with a
+`broader` tier:
 a 14-check suite over the rest of the module — parser surface, the
 plans-directory contract, real `Plan` persistence, the brand check, and the
 remaining driver-owning handlers — using the real `models` module from the
@@ -495,13 +520,56 @@ on every exit path including the `--discusses` early return and any exception
 during planning — not merely that `close()` is called somewhere. The obvious
 repair that regresses `--discusses` cleanup or leaks the driver is caught.
 
+### Cross-repository fixtures
+
+The three defects outside the campaign share no code with it and no bug class
+with each other. Each was found by reading frozen source, and each is the kind of
+bug that a single-wrong-line reading walks straight past.
+
+**`auto_router_task_contract_lane_mismatch`** — frozen from `scottjoyner/auto-router`
+at `7575d2b1400a5d799c9710927366cf1523ad4cd3`. `task_contract.py` derives
+`requires_tools` from a set that enumerates four tool kinds while the plan and
+metrics vocabularies enumerate ten, so `implementation`, `refinement`, `repair`,
+`review`, `repo`, `patch`, `documentation`, `docs`, `terminal` and `shell` all
+produce a lane that can never be routed. The fix is not a missing item but the
+realisation that the vocabularies were hand-maintained in three places and should
+have one home; the reference repair introduces `_CODE_KINDS`, `_RESEARCH_KINDS`,
+`_OPERATIONS_KINDS` and `_PLAN_EXPLICIT_KINDS` and derives the others. Targeted
+tier: 29 failed / 13 passed before, 42 passed after. Broader: 27 passed either
+way.
+
+**`auto_router_settings_latency_cache_path`** — same repository. `settings.py`
+derives the latency cache path by re-implementing the SQLite URL grammar inline,
+which agrees with `validate_database_placement` for absolute paths and for
+`sqlite:////x`, and diverges for the bare relative form: `sqlite:///data/x`
+resolves against the process working directory in one place and is rejected in the
+other. The reference repair factors out `_resolve_sqlite_path` and makes both
+call sites use it, so the two can never drift again. Targeted: 2 failed / 11
+passed before, 13 passed after. Broader: 20 passed either way.
+
+**`assistx_answers_store_cursor_drops_ties`** — frozen from `scottjoyner/auto-assist`
+at `e872ed64531d308af9a0e02ad3c813ee0671a7bf`. `answers_store.py` serves
+newest-first pages from a Redis sorted set scored by `updated_at` in integer
+milliseconds. The score is not unique, but the pagination loop uses only the
+score half of the documented composite `'<score>:<id>'` cursor and advances an
+*exclusive* bound, so when a page boundary lands inside a group of tied
+milliseconds every remaining member of that group is skipped — and because the
+cursor can never re-enter a group it already half-crossed, those answers are lost
+permanently. Nothing is missing from the store, so the loss survives restarts and
+retries; how much is lost depends on page size and timing rather than on the data.
+The reference repair makes the bound inclusive and resumes from the last member
+actually *examined* rather than the last one *fetched*, which is the subtler trap:
+a page that stops early would otherwise skip the remainder of its own window.
+Targeted: 8 failed / 8 passed before, 16 passed after. Broader: 30 passed either
+way.
+
 ## 12. Tests
 
 ```bash
 python3 -m unittest test_fixgit_repro_v1 test_realtask_binding \
     test_realtask_roles test_realtask_patch test_realtask_runner \
-    test_realtask_evidence test_realtask_endpoint test_realtask_resilience \\
-    test_realtask_rollup test_realtask_cli
+    test_realtask_evidence test_realtask_endpoint test_realtask_resilience \
+    test_realtask_rollup test_realtask_cli test_realtask_corpus
 
 # or
 python3 -m pytest test_realtask_*.py -q
@@ -510,6 +578,7 @@ python3 -m pytest test_realtask_*.py -q
 | Module | Covers |
 |---|---|
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
+| `test_realtask_corpus.py` | corpus-level guarantees: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |

@@ -1,0 +1,69 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_settings_broader.py"
+      ]
+    ],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_router/settings.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_latency_cache_placement.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Change only auto_router/settings.py.",
+    "The two readers must agree for every sqlite:/// URL form: sqlite:///data/x, sqlite:///./data/x, sqlite:////data/x and sqlite:///:memory:.",
+    "The documented URL grammar must not change. sqlite:///data/x still means /data/x and sqlite:///./data/x is still workdir-relative.",
+    "validate_database_placement must keep returning the same keys, the same values and raising ValueError with the same meaning when required=True and the path is not persistent.",
+    "Do not remove or weaken the fail-closed behaviour for a non-persistent database path; the guard is the protection against the /app/data regression.",
+    "Do not add new required settings fields and do not change any existing default, including database_url and database_persistent_root.",
+    "The EMA file must keep its latency_ema.json filename.",
+    "Prefer a single owner for the URL grammar over a second corrected copy that can drift again."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "Commit 7575d2b ('fail closed on non-persistent router database paths') added the canonical resolver and left latency_cache_path untouched -- this fixture is the residual defect of that repair. The same one-off `sqlite:///` interpretation is duplicated in six other modules in that repository, so a repair which 'fixes' this by inlining yet another copy of the grammar will be accepted by a naive reviewer and will drift again. There is no test coverage for latency_cache_path at all.",
+  "problem": "auto_router/settings.py contains two readers of the same SQLite URL grammar and they do not agree. `validate_database_placement` is the canonical resolver and documents the deployment contract in its own comments: `sqlite:///data/x` means the absolute persistent mount `/data/x`, while `sqlite:///./data/x` stays workdir-relative. `Settings.latency_cache_path` predates that resolver and still re-implements the grammar: for a bare-relative path it joins against the process working directory. So with database_url=sqlite:///data/router.sqlite3 the placement guard reports `persistent: true` and the operator sees a passing check, while the per-node latency EMA cache is written to <cwd>/data/latency_ema.json -- the container writable layer, which is discarded on every container recreation, so the router re-learns node snappiness from cold forever. That is the exact drift class the placement guard exists to prevent. Repair the module so both readers resolve a configured URL the same way and the EMA file always lands beside router.sqlite3.",
+  "prompt_source_files": [
+    "auto_router/settings.py"
+  ],
+  "relevant_source_files": [
+    "auto_router/settings.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_router/settings.py",
+        "sha256": "46f51b2abafc175aa79a978cf6f9ea301c58ea5527812e85cfb56dd4b0287f7d",
+        "size_bytes": 7096
+      }
+    ],
+    "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+    "manifest_sha256": "e1b10fa2d91c17665b4f628fb24c72a5a39286b9059a1a7c8c927f8ec022ab56",
+    "repository": "scottjoyner/auto-router",
+    "writable_prefixes": []
+  },
+  "task_family": "bug_fix",
+  "task_id": "auto_router_settings_latency_cache_path",
+  "title": "The latency EMA cache resolves database URLs differently from the placement guard"
+}

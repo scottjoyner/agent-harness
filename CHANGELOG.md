@@ -1,5 +1,51 @@
 # Agent Harness Changelog
 
+## Unreleased
+
+### Added
+
+- **Three cross-repository fixtures** — the corpus no longer derives from a single
+  defect. All three were found by reading frozen source and all three fail on
+  their own untouched snapshot:
+  - `auto_router_task_contract_lane_mismatch` (`bug_fix`) — frozen from
+    `scottjoyner/auto-router@7575d2b`. `task_contract.py` derives `requires_tools`
+    from a hand-maintained set covering four tool kinds while the plan and metrics
+    vocabularies cover ten, so ten plan lanes can never be routed. The reference
+    repair gives the vocabularies a single home. Targeted 29 failed / 13 passed
+    before, 42 passed after; broader 27 passed either way.
+  - `auto_router_settings_latency_cache_path` (`bug_fix`) — same repository.
+    `settings.py` re-implements the SQLite URL grammar inline for the latency
+    cache path, so the bare relative form `sqlite:///data/x` resolves one way and
+    is rejected the other. The reference repair factors out `_resolve_sqlite_path`.
+    Targeted 2 failed / 11 passed before, 13 passed after; broader 20 passed
+    either way.
+  - `assistx_answers_store_cursor_drops_ties` (`bug_fix`) — frozen from
+    `scottjoyner/auto-assist@e872ed64`. `list_answers_paginated` keys pages on a
+    Redis score that is `updated_at` in whole milliseconds, so it is not unique,
+    but the cursor uses only the score half and an exclusive bound: any answer
+    sharing a millisecond with the page boundary is skipped permanently. The
+    reference repair makes the bound inclusive and resumes from the last member
+    examined rather than the last fetched. Targeted 8 failed / 8 passed before,
+    16 passed after; broader 30 passed either way.
+- **`test_realtask_corpus.py`** — corpus-level guarantees that no individual
+  fixture test can make. Fails if a fixture is unsatisfiable (no reference
+  solution reaches `SUCCESS`), undiscriminating (the untouched snapshot passes),
+  or non-independent (names another fixture, is byte-identical to a fixture from
+  another repository, or the campaign collapses onto one defect or one family).
+  Also requires every `patch` deliverable to have a tracked reference solution,
+  checks collateral damage reads as `REGRESSION_FAILURE` rather than success, and
+  scans for credential literals instead of credential vocabulary.
+- **`test_realtask_reference_*.diff`** — reference solutions as reviewable
+  version-controlled artifacts rather than inline test strings. The collateral
+  file for the campaign fixture repairs the defect *and* changes two unrelated
+  defaults, which is what proves the broader tier has teeth.
+
+### Fixed
+
+- Three generated reference diffs carried a doubled strip prefix
+  (`--- a/a/...`, `+++ b/b/...`) and would not apply with `-p1`. `test_realtask_corpus.py`
+  now rejects that shape.
+
 ## v2.0.0 - Real-Task Benchmark Harness (2026-10-02)
 
 ### Added

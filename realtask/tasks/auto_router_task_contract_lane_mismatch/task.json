@@ -1,0 +1,68 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_task_contract_broader.py"
+      ]
+    ],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_router/task_contract.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_task_contract_coherence.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Change only auto_router/task_contract.py.",
+    "The contract must stay internally coherent: whenever plan steps or validation metrics imply tool access, requires_tools must be true and capability_lane must be \"tool_required\".",
+    "Explicit caller overrides must keep winning. If a payload supplies requires_tools, capability_lane, plan_steps, validation_metrics or review_checkpoints, that value must still be honoured over kind inference.",
+    "The finalized / reviewed flags and the terminal workflow stages (handoff, final, finalized, review_final) must keep forcing the tool lane; do not remove or reorder those short-circuits.",
+    "Keyword inference in normalize_task_kind must keep working unchanged, including the \"coding\" -> \"code\" alias and the general fallback.",
+    "Do not add new keys to the returned contract and do not change the values any existing key takes for kinds that are already coherent.",
+    "Prefer one owner for the kind sets over three independent literals that can drift apart again."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "The existing tests in auto-router do not catch this: tests/test_task_contract.py only exercises task_kind=\"coding\", which IS in the requires_tools set and therefore passes, and task_kind=\"review\" only together with finalized=True, which short-circuits before kind inference is reached. All nine affected kinds are untested. The lazy repair -- widening the set, or deleting the explicit-override short-circuit so kind inference always wins -- is caught by the broader acceptance tier, which pins override precedence, keyword inference and caller-supplied lists.",
+  "problem": "auto_router/task_contract.py builds one contract per task: a task_kind, whether tools are required, a capability_lane, a workflow_stage, plan steps, validation metrics and review checkpoints. At this revision several of those fields contradict each other. A task whose kind is `refinement`, `repair`, `review`, `repo`, `patch`, `documentation`, `docs`, `terminal` or `shell` is handed the code-execution or operations plan -- including a step to make the smallest safe change, or apply the smallest safe operation -- and is handed validation metrics such as `regressions_checked`, `state_verified` or `change_applied`, while at the same time the same contract reports requires_tools=False and capability_lane=\"prompt_only\" with workflow_stage=\"prompt_only\". Downstream consumers read those fields: the routing path skips the tool lane entirely when requires_tools is false, and the job builder still grants terminal and code_execution toolsets. Repair the module so a contract never prescribes work that requires tool access while declaring that it does not require tool access.",
+  "prompt_source_files": [
+    "auto_router/task_contract.py"
+  ],
+  "relevant_source_files": [
+    "auto_router/task_contract.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_router/task_contract.py",
+        "sha256": "2c82cc77649987f424dd69824c9c8a548b7615e023d3ffa364fddc26e22ea506",
+        "size_bytes": 6647
+      }
+    ],
+    "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+    "manifest_sha256": "0671ccfdd99801aa7c47bd284b0b3fc2c93294dc504d6c9ca2e6fae4d8f2299d",
+    "repository": "scottjoyner/auto-router",
+    "writable_prefixes": []
+  },
+  "task_family": "bug_fix",
+  "task_id": "auto_router_task_contract_lane_mismatch",
+  "title": "build_task_contract emits self-contradictory contracts for nine task kinds"
+}

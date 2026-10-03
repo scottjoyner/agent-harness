@@ -1,0 +1,74 @@
+diff --git a/auto_router/task_contract.py b/auto_router/task_contract.py
+index 6146498..d81bcf0 100644
+--- a/auto_router/task_contract.py
++++ b/auto_router/task_contract.py
+@@ -36,6 +36,20 @@ def normalize_task_kind(payload: dict[str, Any]) -> str:
+     return "general"
+ 
+ 
++#: Kinds that receive an explicit, domain-specific plan rather than the generic
++#: fallback. Every one of these can only be carried out with tool access, so the
++#: contract must classify them as tool_required. Defining the set once keeps
++#: task_requires_tools, task_plan_steps and task_validation_metrics from
++#: disagreeing about the same kind.
++_CODE_KINDS = frozenset({
++    "code", "implementation", "refinement", "repair", "review", "repo", "patch",
++})
++_RESEARCH_KINDS = frozenset({"research", "analysis", "documentation", "docs"})
++_OPERATIONS_KINDS = frozenset({"operations", "terminal", "shell"})
++
++_PLAN_EXPLICIT_KINDS = _CODE_KINDS | _RESEARCH_KINDS | _OPERATIONS_KINDS
++
++
+ def task_requires_tools(payload: dict[str, Any]) -> bool:
+     metadata = _metadata(payload)
+     if "requires_tools" in payload:
+@@ -47,7 +61,7 @@ def task_requires_tools(payload: dict[str, Any]) -> bool:
+     workflow_stage = _string(payload.get("workflow_stage") or payload.get("stage") or metadata.get("workflow_stage") or metadata.get("stage")).lower()
+     if workflow_stage in {"handoff", "final", "finalized", "review_final"}:
+         return True
+-    return normalize_task_kind(payload) in {"research", "analysis", "operations", "code"}
++    return normalize_task_kind(payload) in _PLAN_EXPLICIT_KINDS
+ 
+ 
+ def task_evidence_required(payload: dict[str, Any]) -> bool:
+@@ -85,21 +99,21 @@ def task_plan_steps(payload: dict[str, Any]) -> list[str]:
+         return [_string(item) for item in explicit if _string(item)]
+ 
+     task_kind = normalize_task_kind(payload)
+-    if task_kind in {"code", "implementation", "refinement", "repair", "review", "repo", "patch"}:
++    if task_kind in _CODE_KINDS:
+         return [
+             "Inspect the current state one slice at a time.",
+             "Make the smallest safe change or conclusion.",
+             "Validate the result against the acceptance criteria.",
+             "Report risks, gaps, and handoff notes.",
+         ]
+-    if task_kind in {"research", "analysis", "documentation", "docs"}:
++    if task_kind in _RESEARCH_KINDS:
+         return [
+             "Gather the relevant evidence or context.",
+             "Compare the options and identify the best path.",
+             "Draft the answer or recommendation.",
+             "Verify claims, cite sources, and finalize the handoff.",
+         ]
+-    if task_kind in {"operations", "terminal", "shell"}:
++    if task_kind in _OPERATIONS_KINDS:
+         return [
+             "Inspect the live state.",
+             "Apply the smallest safe operation.",
+@@ -120,11 +134,11 @@ def task_validation_metrics(payload: dict[str, Any]) -> list[str]:
+         return [_string(item) for item in explicit if _string(item)]
+ 
+     task_kind = normalize_task_kind(payload)
+-    if task_kind in {"code", "implementation", "refinement", "repair", "review", "repo", "patch"}:
++    if task_kind in _CODE_KINDS:
+         return ["acceptance_criteria_met", "regressions_checked", "handoff_ready"]
+-    if task_kind in {"research", "analysis", "documentation", "docs"}:
++    if task_kind in _RESEARCH_KINDS:
+         return ["evidence_captured", "claims_supported", "final_answer_ready"]
+-    if task_kind in {"operations", "terminal", "shell"}:
++    if task_kind in _OPERATIONS_KINDS:
+         return ["state_verified", "change_applied", "health_confirmed"]
+     return ["goal_understood", "next_step_defined", "handoff_ready"]
+ 

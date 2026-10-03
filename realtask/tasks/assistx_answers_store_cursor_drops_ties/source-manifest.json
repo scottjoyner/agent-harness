@@ -1,0 +1,15 @@
+{
+  "capture_note": "Bounded snapshot of the files this fixture binds. Produced by reading the named checkout; the fixture never depends on that checkout remaining available or unmodified.",
+  "captured_at": "2026-10-02T00:00:00Z",
+  "files": [
+    {
+      "path": "assistx/answers_store.py",
+      "sha256": "816d6d8c5f9b32a0bb3cee1f8b51aa88dae57c54329e774dcdc6edb40c1d2567",
+      "size_bytes": 7896
+    }
+  ],
+  "head": "e872ed64531d308af9a0e02ad3c813ee0671a7bf",
+  "repository": "scottjoyner/auto-assist",
+  "root_dir": "source",
+  "schema": "realtask.source_manifest.v1"
+}

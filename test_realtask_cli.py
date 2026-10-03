@@ -222,9 +222,17 @@ class CliTestCase(HarnessTestCase):
 
 class ValidateAndListTests(CliTestCase):
     def test_validate_all_fixtures_without_an_endpoint(self):
+        from realtask.fixtures import iter_fixture_manifests
+
         payload = self.cli_json("validate", "--json")
         self.assertEqual(payload["failures"], 0)
-        self.assertEqual(payload["count"], 5)
+        # Count against the corpus on disk rather than a literal, so adding a
+        # fixture cannot leave this test asserting a number nobody maintains.
+        on_disk = {
+            m.parent.name for m in iter_fixture_manifests(TASKS_ROOT)
+        }
+        self.assertEqual(payload["count"], len(on_disk))
+        self.assertEqual({row["task_id"] for row in payload["tasks"]}, on_disk)
         for row in payload["tasks"]:
             self.assertTrue(row["binding_ok"], row)
 

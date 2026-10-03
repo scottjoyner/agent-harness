@@ -1,0 +1,61 @@
+diff --git a/assistx/answers_store.py b/assistx/answers_store.py
+index b4ef7c4..dc4f6cb 100644
+--- a/assistx/answers_store.py
++++ b/assistx/answers_store.py
+@@ -177,23 +177,37 @@ def list_answers_paginated(
+     zkey = _index_key_for_status(status if status in ALL_STATUSES else None)
+     q_norm = (q or "").strip().lower()
+     # max bound (exclusive if cursor present)
++    # The index score is updated_at in milliseconds, so it is NOT unique. The
++    # cursor is a keyset cursor over the composite (score, id) and the score bound
++    # must be inclusive: an exclusive bound skips every member sharing the score
++    # at the page boundary, and nothing a client can send will ever re-enter it.
+     cur = _parse_cursor(cursor)
+-    maxb = "+inf" if not cur else f"({int(cur[0])}"
++    cursor_score, cursor_id = cur if cur else (None, None)
++    maxb = "+inf" if cursor_score is None else str(int(cursor_score))
+ 
+     items: List[Dict[str, Any]] = []
+     next_cursor = None
+ 
+-    # pull in small windows until we collect 'limit' or exhaust (bounds-only pagination)
++    # pull in small windows until we collect 'limit' or exhaust
+     window = max(50, limit * 3)
+     loops = 0
+     while len(items) < limit and loops < 6:
+         batch = _get_redis().zrevrangebyscore(zkey, maxb, "-inf", start=0, num=window, withscores=True)
+         if not batch:
+             break
+-        # advance max bound to just below last score in batch
+-        last_score = int(batch[-1][1])
+-        maxb = f"({last_score}"
++        if cursor_id is not None:
++            # Drop what the previous page already covered. The page is newest
++            # first, so "after the cursor" means a strictly lower score, or the
++            # same score with a member sorting before the cursor id.
++            batch = [
++                (aid, score) for aid, score in batch
++                if score < cursor_score or (score == cursor_score and aid < cursor_id)
++            ]
++            if not batch:
++                break
++        examined = None
+         for aid, score in batch:
++            examined = (score, aid)
+             obj = get_answer(aid)
+             if not obj:
+                 # lazy cleanup of stale index entry
+@@ -207,6 +221,13 @@ def list_answers_paginated(
+             if len(items) == limit:
+                 next_cursor = f"{obj.get('updated_at', int(score))}:{obj['id']}"
+                 break
++        # Resume from the last member actually examined, not the last one
++        # fetched, or a page that stopped early would skip the rest of the
++        # window. Filtered members are re-examined next page: wasteful, not lossy.
++        if examined is None:
++            break
++        cursor_score, cursor_id = examined
++        maxb = str(int(examined[0]))
+         loops += 1
+ 
+     return {"items": items, "count": len(items), "next_cursor": next_cursor}
