@@ -59,6 +59,7 @@ from realtask.adapter import (  # noqa: E402
 from realtask.compare import build_comparison  # noqa: E402
 from realtask.evidence import (  # noqa: E402
     RunDirectory,
+    atomic_write_json,
     harness_provenance,
     source_manifest_artifact,
     utc_now,
@@ -73,6 +74,7 @@ from realtask.fixtures import (  # noqa: E402
     summarize_task,
 )
 from realtask.runner import BenchmarkRunner, RunnerOptions  # noqa: E402
+from realtask.summarize import summarize_runs  # noqa: E402
 from realtask.taxonomy import Outcome  # noqa: E402
 from realtask.version import MAX_REFINEMENTS  # noqa: E402
 
@@ -162,6 +164,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--no-comparison", action="store_true",
                      help="skip comparison.json emission")
     run.add_argument("--run-id", help="override the generated run directory name")
+
+    # ---- summarize ----------------------------------------------------
+    summarize = sub.add_parser(
+        "summarize",
+        parents=[common],
+        help="fold previous runs into one roll-up; needs no endpoint",
+    )
+    summarize.add_argument("--json", action="store_true", help="emit JSON only")
+    summarize.add_argument(
+        "--out-file", type=Path,
+        help="where to write rollup.json (default: <out>/rollup.json)",
+    )
 
     # ---- plan-command -------------------------------------------------
     plan = sub.add_parser(
@@ -554,6 +568,75 @@ def _quote(token: str) -> str:
     return token
 
 
+def _render_rollup(rollup_dict: Dict[str, Any]) -> str:
+    """Human-readable roll-up. Components stay components."""
+    agg = rollup_dict["aggregate"]
+    lines = []
+    lines.append("=== runs ===")
+    lines.append("  {}  runs={} tasks={} attempts={}".format(
+        rollup_dict["runs_root"], agg["runs"], agg["tasks"], agg["attempts"]))
+    if rollup_dict["harness_git_shas"]:
+        lines.append("  harness git shas: {}".format(
+            ", ".join(sha[:12] for sha in rollup_dict["harness_git_shas"])))
+    for runtime in rollup_dict["model_runtimes"]:
+        lines.append("  runtime: {} model={} node={}".format(
+            runtime.get("label"), runtime.get("model"), runtime.get("node") or "-"))
+
+    lines.append("=== outcomes ===")
+    for outcome, count in agg["outcome_histogram"].items():
+        lines.append("  {:22s} {}".format(outcome, count))
+
+    lines.append("=== by task family ===")
+    for family, row in agg["by_task_family"].items():
+        lines.append("  {:22s} tasks={} successful_tasks={} attempts={} successes={}".format(
+            family, row["tasks"], row["successful_tasks"], row["attempts"], row["successes"]))
+
+    lines.append("=== by strategy ===")
+    for strategy, row in agg["by_strategy"].items():
+        lines.append("  {:22s} attempts={} successes={} model_calls={}".format(
+            strategy, row["attempts"], row["successes"], row["model_calls"]))
+
+    totals = agg["totals"]
+    lines.append("=== totals ===")
+    for key in ("model_calls", "model_wall_s", "harness_overhead_s",
+                "prompt_tokens", "completion_tokens", "total_tokens"):
+        lines.append("  {:22s} {}".format(key, totals[key]))
+
+    if rollup_dict["harness_errors"]:
+        lines.append("=== harness errors ===")
+        for entry in rollup_dict["harness_errors"]:
+            lines.append("  {}".format(entry))
+    if rollup_dict["runs_with_integrity_failures"]:
+        lines.append("=== runs with integrity failures ===")
+        for entry in rollup_dict["runs_with_integrity_failures"]:
+            lines.append("  {}".format(entry))
+    if rollup_dict["skipped_runs"]:
+        lines.append("=== skipped ===")
+        for entry in rollup_dict["skipped_runs"]:
+            lines.append("  {}: {}".format(entry["path"], entry["reason"]))
+
+    lines.append("=== scope ===")
+    lines.append("  composite_score: {} ({})".format(
+        rollup_dict["composite_score"], "intentionally absent"))
+    for limit in rollup_dict["scope_limits"]:
+        lines.append("  - {}".format(limit))
+    return "\n".join(lines)
+
+
+def command_summarize(args: argparse.Namespace) -> int:
+    rollup = summarize_runs(args.out)
+    payload = rollup.to_dict()
+    destination = args.out_file or (Path(args.out) / "rollup.json")
+    atomic_write_json(destination, payload)
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(_render_rollup(payload))
+        print("rollup: {}".format(destination))
+    # A roll-up with nothing in it is a configuration mistake, not a result.
+    return 0 if rollup.run_ids else 1
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -564,6 +647,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return command_list(args)
         if args.command == "run":
             return command_run(args)
+        if args.command == "summarize":
+            return command_summarize(args)
         if args.command == "plan-command":
             return command_plan_command(args)
     except FixtureError as exc:

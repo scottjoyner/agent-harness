@@ -17,6 +17,7 @@ from .version import (  # noqa: F401
     MAX_REFINEMENTS,
     SCHEMA_COMPARISON,
     SCHEMA_METRICS,
+    SCHEMA_ROLLUP,
     SCHEMA_RUN_MANIFEST,
     SCHEMA_TASK,
 )
@@ -28,4 +29,5 @@ __all__ = [
     "SCHEMA_RUN_MANIFEST",
     "SCHEMA_METRICS",
     "SCHEMA_COMPARISON",
+    "SCHEMA_ROLLUP",
 ]

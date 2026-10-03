@@ -18,6 +18,7 @@ SCHEMA_ROLE_RESULT = "realtask.role_result.v1"
 SCHEMA_TEST_RESULTS = "realtask.test_results.v1"
 SCHEMA_METRICS = "realtask.metrics.v1"
 SCHEMA_COMPARISON = "realtask.comparison.v1"
+SCHEMA_ROLLUP = "realtask.rollup.v1"
 
 TASK_SCHEMA_VERSION = 1
 

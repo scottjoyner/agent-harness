@@ -468,6 +468,72 @@ class MultiTaskRunTests(CliTestCase):
         )
 
 
+class SummarizeCommandTests(CliTestCase):
+    """summarize is the consumption surface: runs in, one roll-up out."""
+
+    def test_summarize_needs_no_endpoint(self):
+        # An empty runs root exits 1: no evidence is a configuration mistake,
+        # not a result.
+        payload = json.loads(
+            self.cli("summarize", "--out", str(self.tmp / "empty"), "--json", expect=1).stdout
+        )
+        self.assertEqual(payload["schema"], "realtask.rollup.v1")
+        self.assertEqual(payload["tasks"], [])
+        self.assertIsNone(payload["composite_score"])
+
+    def test_empty_runs_root_exits_one(self):
+        self.cli("summarize", "--out", str(self.tmp / "empty"), expect=1)
+
+    def test_summarize_folds_real_runs(self):
+        server = LoopbackEndpoint({"single": patch_payload()})
+        self.addCleanup(server.close)
+        out = self.tmp / "runs"
+        self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(out), "--base-url", server.base_url, "--model", "loopback-test-model",
+        )
+        payload = self.cli_json("summarize", "--out", str(out), "--json")
+        self.assertEqual(payload["aggregate"]["runs"], 1)
+        self.assertEqual(payload["aggregate"]["tasks"], 1)
+        self.assertEqual(payload["aggregate"]["outcome_histogram"], {"SUCCESS": 1})
+        self.assertEqual(payload["tasks"][0]["task_id"], AUTO_INGEST_BUG_FIX)
+        self.assertTrue((out / "rollup.json").is_file())
+
+    def test_human_output_states_the_scope_limits(self):
+        server = LoopbackEndpoint({"single": patch_payload()})
+        self.addCleanup(server.close)
+        out = self.tmp / "runs"
+        self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(out), "--base-url", server.base_url, "--model", "loopback-test-model",
+        )
+        completed = self.cli("summarize", "--out", str(out))
+        self.assertIn("composite_score: None", completed.stdout)
+        self.assertIn("does not establish that a model qualifies", completed.stdout)
+        self.assertIn("=== by task family ===", completed.stdout)
+        self.assertIn("=== by strategy ===", completed.stdout)
+
+    def test_out_file_can_be_redirected(self):
+        target = self.tmp / "elsewhere" / "rollup.json"
+        self.cli("summarize", "--out", str(self.tmp / "empty"),
+                 "--out-file", str(target), expect=1)
+        self.assertTrue(target.is_file())
+
+    def test_summarize_ignores_a_foreign_evidence_directory(self):
+        """Legacy artifacts must not be silently folded into a roll-up."""
+        out = self.tmp / "runs"
+        legacy = out / "legacy-run"
+        legacy.mkdir(parents=True)
+        (legacy / "manifest.json").write_text(json.dumps({"schema": "bench_v7.unversioned"}))
+        (legacy / "metrics.json").write_text(json.dumps({"schema": "whatever"}))
+        payload = json.loads(
+            self.cli("summarize", "--out", str(out), "--json", expect=1).stdout
+        )
+        self.assertEqual(payload["aggregate"]["runs"], 0)
+        reasons = " ".join(s["reason"] for s in payload["skipped_runs"])
+        self.assertIn("manifest schema", reasons)
+
+
 class ExitCodeTests(CliTestCase):
     """The exit code must distinguish a bad model from a bad harness."""
 
