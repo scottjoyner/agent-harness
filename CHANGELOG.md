@@ -1,5 +1,72 @@
 # Agent Harness Changelog
 
+## v2.0.0 - Real-Task Benchmark Harness (2026-10-02)
+
+### Added
+
+- **`realtime_bench.py`** — the canonical entrypoint for frozen real-task
+  benchmarks and bounded swarm experiments. Stages: `single`, `scout`,
+  `implement`, `review`, `swarm`. See `docs/REAL-TASK-BENCHMARK.md`.
+- **`realtask/`** — the harness package: frozen `RealTask` fixtures, strict
+  fixture validation, SHA-256 source binding with fail-closed `SOURCE_MISMATCH`,
+  structured SCOUT/IMPLEMENTER/REVIEWER contracts, a patch safety screen, a
+  disposable evaluation worktree, allow-listed command execution, component
+  metrics, atomic evidence writes, and a single-vs-swarm comparison artifact.
+- **`realtask/tasks/`** — five frozen fixtures covering `bug_fix`,
+  `test_generation`, `code_review`, `small_refactor` and `contract_reasoning`.
+  The campaign fixture freezes the `auto-ingest` driver-lifetime regression
+  (`planner.plan_shorts(..., driver=driver)` executed after `driver.close()`)
+  from `scottjoyner/auto-ingest@d7d75ff`.
+- **`seal_realtask_fixture.py`** — freezes a fixture: recomputes per-file
+  SHA-256, writes `source-manifest.json`, stamps `task.json`. `--check` verifies
+  without writing.
+- **`EVIDENCE-PROVENANCE.json`** / **`EVIDENCE-PROVENANCE.md`** — machine-readable
+  registry separating the historical `bench_*` / `bench_v*` / `benchmark_*` /
+  `dual_*` / `cpm_tb2_*` artifacts from the new `realtask.*.v1` family, with the
+  producing script, output glob, capabilities and gaps for every entry.
+- **`docs/HARNESS-REGISTRY.md`** — capability and call-site map of every existing
+  benchmark script, the reconciliation decision, what was carried forward, and
+  the conclusively-dead-code findings.
+- **`docs/REAL-TASK-BENCHMARK.md`** — the harness guide.
+- **`test_realtask_*.py`** — 177 tests across fixtures/binding, roles, patches,
+  the runner, evidence and the CLI (including a full run against a loopback
+  OpenAI-compatible endpoint).
+
+### Design decisions
+
+- **One canonical entrypoint, nothing retired.** No `fast_bench_v8.py`. Every
+  existing script still runs and still writes its own artifact format.
+  `realtime_bench.py` was introduced because no existing script could bind a
+  frozen task to a source revision, apply a candidate patch safely, enforce role
+  contracts, or write versioned atomic evidence.
+- **Models are read-only.** A model returns text. The harness screens the patch,
+  applies it only inside a disposable worktree it refuses to place inside any
+  read-only tree, runs allow-listed argv commands there with no shell, then
+  discards it. The authoritative source is never opened for writing.
+- **Eleven-outcome failure taxonomy** with a documented precedence order, and a
+  candidate-scoped versus attempt-level split so a refinement round is judged on
+  its own final validation without erasing history.
+- **Component metrics, never a composite score.** The comparison artifact
+  compares components to components and states its scope limits in the artifact.
+- **At most one refinement per attempt**, as a hard ceiling the CLI cannot raise.
+- **Endpoint identity is operator-supplied.** No node names or addresses are
+  hardcoded; a test enforces it. The harness never discovers or starts a server.
+- **Independent of production scheduling.** No AssistX claiming, no task
+  completion, no auto-router registration, no runtime projection, no dispatch, no
+  push to any benchmark target repository.
+
+### Known limitations
+
+- `test_generation` executes candidate-authored test code. It runs only inside
+  the disposable worktree with a scrubbed environment, and this is disclosed in
+  the fixture manifest and the guide.
+- Token counts are `null` when an endpoint omits `usage`; they are never
+  estimated. TTFT is `null` under `--no-stream`.
+- Broader acceptance commands run only when targeted acceptance passes, and the
+  skip is recorded rather than hidden.
+
+---
+
 ## Version 1.0.0 (2026-09-11)
 
 ### Initial Release

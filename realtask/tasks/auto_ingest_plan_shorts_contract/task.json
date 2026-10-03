@@ -1,0 +1,51 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_ingest/shorts/cli.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "${WORKTREE}/_realtask_tests/check_answer.py",
+        "${ANSWER}"
+      ]
+    ]
+  },
+  "constraints": [
+    "No patch. This task is analysis-only.",
+    "Ground every claim in the source text you were given; do not speculate about files you cannot see.",
+    "Distinguish what the code does from what the surrounding comments claim it does.",
+    "Say what a correct repair must preserve, not only what it must change."
+  ],
+  "deliverable": "analysis",
+  "fixture_version": 1,
+  "known_regression": "The interesting part of this contract is that the violation is silent: plan_shorts wraps its content mining in a blanket `except Exception`, so the command still exits 0 and produces a Plan. A shallow reading reports only 'the driver is closed' without noticing the ordering violation or the silent fallback.",
+  "problem": "State the driver-lifetime contract of the `plan` subcommand in auto_ingest/shorts/cli.py as it stands today, and say precisely which call in that subcommand violates it and what observable effect that violation has. Then say what a correct repair must preserve. Do not write a diff; this is a reasoning task.",
+  "prompt_source_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "relevant_source_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_ingest/shorts/cli.py",
+        "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
+        "size_bytes": 32067
+      }
+    ],
+    "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
+    "manifest_sha256": "e5ed83205ea9cbdb7352487feec8a18ad736ca02c89619b333532cb20cb8eaa5",
+    "repository": "scottjoyner/auto-ingest",
+    "writable_prefixes": []
+  },
+  "task_family": "contract_reasoning",
+  "task_id": "auto_ingest_plan_shorts_contract",
+  "title": "Reason about the driver-lifetime contract in the shorts plan command"
+}

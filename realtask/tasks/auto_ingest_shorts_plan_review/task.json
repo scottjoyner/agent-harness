@@ -1,0 +1,58 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_ingest/shorts/cli.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "${WORKTREE}/_realtask_tests/check_answer.py",
+        "${ANSWER}"
+      ]
+    ]
+  },
+  "constraints": [
+    "No patch. This task is review-only.",
+    "Every finding must cite a specific file and construct you were shown.",
+    "Report severity honestly, including on the fix you would recommend.",
+    "Do not raise style opinions as defects."
+  ],
+  "deliverable": "analysis",
+  "fixture_version": 1,
+  "known_regression": "Reviews that only check 'is the driver closed' miss the actual defect: the close happens in a `finally` that runs before planning, and the resulting failure is swallowed downstream. A review that also misses the hazard in the obvious repair (leaking the driver or regressing `--discusses` cleanup) is incomplete.",
+  "problem": "Review the driver lifecycle of the `plan` subcommand in auto_ingest/shorts/cli.py. Report every correctness concern you find, with severity and location, and state a verdict on whether this code is safe to ship as it stands. Do not write a diff; this is a review.",
+  "prompt_source_files": [
+    "auto_ingest/shorts/cli.py",
+    "auto_ingest/shorts/planner.py"
+  ],
+  "relevant_source_files": [
+    "auto_ingest/shorts/cli.py",
+    "auto_ingest/shorts/planner.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_ingest/shorts/cli.py",
+        "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
+        "size_bytes": 32067
+      },
+      {
+        "path": "auto_ingest/shorts/planner.py",
+        "sha256": "6531c64d9620e2fd3b9e01e3cdaf065105d4827506d027752ce68c230236d323",
+        "size_bytes": 31103
+      }
+    ],
+    "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
+    "manifest_sha256": "b9e1d3642cbbbe94888c30cc3250c3c3324bbb5dd3622706d7e87c565ea42374",
+    "repository": "scottjoyner/auto-ingest",
+    "writable_prefixes": []
+  },
+  "task_family": "code_review",
+  "task_id": "auto_ingest_shorts_plan_review",
+  "title": "Review the driver lifecycle in the auto-ingest shorts CLI"
+}

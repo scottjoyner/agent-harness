@@ -1,0 +1,10 @@
+# Real-task benchmark harness output. Evidence, not source.
+runs/
+
+# Python bytecode. The historical terminal_bench_harness.cpython-312.pyc remains
+# tracked on purpose; this rule only stops new ones from being added.
+__pycache__/
+*.py[cod]
+
+.pytest_cache/
+.ruff_cache/

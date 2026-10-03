@@ -1,0 +1,539 @@
+#!/usr/bin/env python3
+"""Canonical real-task benchmark entrypoint.
+
+This is the ONE entrypoint for frozen real-task benchmarks and bounded swarm
+experiments in this repository. It supersedes nothing: the historical
+``fast_bench*`` / ``baremetal_bench`` / ``cpm_tb2_bench`` / ``*_harness.py``
+scripts remain in place as evidence producers for their own formats (see
+``docs/HARNESS-REGISTRY.md``). Use this runner when you want a reproducible
+repository task, an exact source binding, role-separated attempts, and a
+single-vs-swarm evidence artifact.
+
+Examples
+--------
+
+Validate fixtures without touching any endpoint::
+
+    python3 realtime_bench.py validate
+
+Run one task's single attempt and swarm attempt against an already-running
+OpenAI-compatible endpoint::
+
+    python3 realtime_bench.py run \\
+        --task auto_ingest_plan_shorts_live_driver \\
+        --stage single --stage swarm \\
+        --endpoint-config ./endpoint.json \\
+        --out ./runs
+
+Print the exact command for a given endpoint, then run it::
+
+    python3 realtime_bench.py plan-command \\
+        --task auto_ingest_plan_shorts_live_driver \\
+        --base-url http://100.64.43.123:1234/v1 --model minicpm5-2b \\
+        --label optiplex --out ./runs
+
+Nothing here discovers nodes, starts servers, claims tasks, registers providers,
+or writes to any repository other than this one's ``runs/`` directory.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import platform
+import socket
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from realtask.adapter import (  # noqa: E402
+    EndpointConfig,
+    OpenAIChatAdapter,
+    endpoint_from_env,
+    endpoint_from_config_file,
+)
+from realtask.compare import build_comparison  # noqa: E402
+from realtask.evidence import (  # noqa: E402
+    RunDirectory,
+    harness_provenance,
+    source_manifest_artifact,
+    utc_now,
+    utc_stamp,
+)
+from realtask.fixtures import (  # noqa: E402
+    FixtureError,
+    RealTask,
+    iter_fixture_manifests,
+    load_source_manifest,
+    load_task,
+    summarize_task,
+)
+from realtask.runner import BenchmarkRunner, RunnerOptions  # noqa: E402
+from realtask.taxonomy import Outcome  # noqa: E402
+from realtask.version import MAX_REFINEMENTS  # noqa: E402
+
+DEFAULT_TASKS_ROOT = HERE / "realtask" / "tasks"
+VALID_STAGES = ("single", "scout", "implement", "review", "swarm")
+COMPARABLE = ("single", "swarm")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="realtime_bench.py",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--tasks-root", type=Path, default=DEFAULT_TASKS_ROOT,
+        help="directory containing frozen fixtures (default: %(default)s)",
+    )
+    common.add_argument(
+        "--out", type=Path, default=HERE / "runs",
+        help="evidence root; one timestamped directory per run (default: %(default)s)",
+    )
+
+    endpoint = argparse.ArgumentParser(add_help=False)
+    endpoint.add_argument("--endpoint-config", type=Path, help="private JSON endpoint config")
+    endpoint.add_argument("--base-url", help="OpenAI-compatible base URL, e.g. http://host:port/v1")
+    endpoint.add_argument("--model", help="model identifier to request")
+    endpoint.add_argument("--label", default="default", help="operator label used only for attribution")
+    endpoint.add_argument("--node", default="", help="optional free-form node identity for evidence")
+    endpoint.add_argument("--api-key-env", help="environment variable holding the API key")
+    endpoint.add_argument("--timeout-s", type=float, default=120.0)
+    endpoint.add_argument("--temperature", type=float, default=0.0)
+    endpoint.add_argument("--seed", type=int, default=13)
+    endpoint.add_argument("--max-tokens", type=int, default=1600)
+    endpoint.add_argument(
+        "--no-stream", action="store_true",
+        help="disable streaming; TTFT is then not measurable and is recorded as null",
+    )
+
+    binding = argparse.ArgumentParser(add_help=False)
+    binding.add_argument(
+        "--source-root", type=Path,
+        help="evaluate against this checkout instead of the fixture snapshot; "
+             "HEAD and every file hash must match or the run fails with SOURCE_MISMATCH",
+    )
+    binding.add_argument(
+        "--require-head", action="store_true",
+        help="verify git HEAD even in snapshot mode (snapshot mode normally treats "
+             "the recorded HEAD as provenance)",
+    )
+
+    tune = argparse.ArgumentParser(add_help=False)
+    tune.add_argument("--max-source-bytes", type=int, default=262144)
+    tune.add_argument("--test-timeout-s", type=float, default=300.0)
+    tune.add_argument("--no-refinement", action="store_true",
+                      help="forbid the single refinement round; a revise verdict becomes REVIEW_REJECTED")
+    tune.add_argument("--max-refinements", type=int, default=MAX_REFINEMENTS,
+                      help="refinement budget, clamped to the hard ceiling of {}".format(MAX_REFINEMENTS))
+
+    # ---- validate ----------------------------------------------------
+    validate = sub.add_parser(
+        "validate", parents=[common, binding],
+        help="validate every frozen fixture; no endpoint needed",
+    )
+    validate.add_argument("--json", action="store_true", help="emit JSON")
+
+    # ---- list --------------------------------------------------------
+    listing = sub.add_parser("list", parents=[common], help="list available fixtures")
+    listing.add_argument("--json", action="store_true")
+
+    # ---- run ---------------------------------------------------------
+    run = sub.add_parser(
+        "run", parents=[common, endpoint, binding, tune],
+        help="run strategies against frozen fixtures",
+    )
+    run.add_argument("--task", action="append", default=[],
+                     help="task_id; repeatable. Omit to run every fixture.")
+    run.add_argument("--stage", action="append", default=[], choices=VALID_STAGES,
+                     help="stage to run; repeatable. Defaults to single+swarm.")
+    run.add_argument("--single-attempts", type=int, default=1,
+                     help="how many single attempts to run per task (default: 1)")
+    run.add_argument("--patch-file", type=Path,
+                     help="candidate patch for the review stage (required with --stage review)")
+    run.add_argument("--no-comparison", action="store_true",
+                     help="skip comparison.json emission")
+    run.add_argument("--run-id", help="override the generated run directory name")
+
+    # ---- plan-command -------------------------------------------------
+    plan = sub.add_parser(
+        "plan-command", parents=[common],
+        help="print the exact run command for an already-running endpoint",
+    )
+    plan.add_argument("--task", action="append", default=[], help="task_id; repeatable")
+    plan.add_argument("--stage", action="append", default=["single", "swarm"], choices=VALID_STAGES)
+    plan.add_argument("--base-url", required=True)
+    plan.add_argument("--model", required=True)
+    plan.add_argument("--label", default="default")
+
+    return parser
+
+
+def resolve_endpoint(args: argparse.Namespace) -> EndpointConfig:
+    if getattr(args, "endpoint_config", None):
+        config = endpoint_from_config_file(str(args.endpoint_config))
+        overrides = {}
+        if getattr(args, "base_url", None):
+            overrides["base_url"] = args.base_url
+        if getattr(args, "model", None):
+            overrides["model"] = args.model
+        if getattr(args, "label", None) and args.label != "default":
+            overrides["label"] = args.label
+        if getattr(args, "node", ""):
+            overrides["node"] = args.node
+        if getattr(args, "api_key_env", None):
+            import os
+
+            overrides["api_key"] = os.environ.get(args.api_key_env)
+        if overrides:
+            import dataclasses
+
+            config = dataclasses.replace(config, **overrides)
+        return config
+    if getattr(args, "base_url", None) and getattr(args, "model", None):
+        import os
+
+        return EndpointConfig(
+            label=args.label,
+            base_url=args.base_url,
+            model=args.model,
+            api_key=os.environ.get(args.api_key_env) if args.api_key_env else None,
+            node=args.node,
+            timeout_s=args.timeout_s,
+            temperature=args.temperature,
+            seed=args.seed,
+            max_tokens=args.max_tokens,
+            stream=not args.no_stream,
+        )
+    try:
+        return endpoint_from_env()
+    except ValueError as exc:
+        raise SystemExit(
+            "error: no endpoint configured. Pass --endpoint-config, or both "
+            "--base-url and --model, or set REALTASK_ENDPOINT_BASE_URL and "
+            "REALTASK_ENDPOINT_MODEL.\n{}".format(exc)
+        )
+
+
+def select_tasks(args: argparse.Namespace) -> List[RealTask]:
+    manifests = iter_fixture_manifests(args.tasks_root)
+    if not manifests:
+        raise SystemExit(
+            "no fixtures found under {}".format(args.tasks_root)
+        )
+    if args.task:
+        wanted = set(args.task)
+        known = {m.parent.name for m in manifests}
+        unknown = sorted(wanted - known)
+        if unknown:
+            raise SystemExit(
+                "unknown task_id(s): {}. Available: {}".format(
+                    ", ".join(unknown), ", ".join(sorted(known))
+                )
+            )
+        manifests = [m for m in manifests if m.parent.name in wanted]
+    return [load_task(m) for m in manifests]
+
+
+def host_identity() -> Dict[str, Any]:
+    return {
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "python": platform.python_version(),
+        "cpu_count": __import__("os").cpu_count(),
+    }
+
+
+def command_validate(args: argparse.Namespace) -> int:
+    manifests = iter_fixture_manifests(args.tasks_root)
+    rows: List[Dict[str, Any]] = []
+    failures = 0
+    for manifest in manifests:
+        try:
+            task = load_task(manifest)
+            load_source_manifest(task)
+            from realtask.binding import verify_source_binding
+
+            binding = verify_source_binding(
+                task, require_head=getattr(args, "require_head", False)
+            )
+            row = summarize_task(task)
+            row["binding_ok"] = binding.ok
+            row["binding_head_status"] = binding.head_status
+            if not binding.ok:
+                row["binding_reasons"] = binding.reasons
+                failures += 1
+            rows.append(row)
+        except FixtureError as exc:
+            failures += 1
+            rows.append({"task_id": manifest.parent.name, "error": str(exc), "outcome": exc.outcome.value})
+    payload = {
+        "command": "validate",
+        "tasks_root": str(args.tasks_root),
+        "count": len(rows),
+        "failures": failures,
+        "tasks": rows,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        for row in rows:
+            if "error" in row:
+                print("FAIL {} [{}] {}".format(row["task_id"], row["outcome"], row["error"]))
+                continue
+            print(
+                "{ok} {task_id}  family={family}  deliverable={deliverable}  "
+                "head={head}  binding={binding}".format(
+                    ok="ok  " if row["binding_ok"] else "FAIL",
+                    task_id=row["task_id"],
+                    family=row["task_family"],
+                    deliverable=row["deliverable"],
+                    head=row["head"][:12],
+                    binding="ok" if row["binding_ok"] else row.get("binding_reasons"),
+                )
+            )
+        print("{} fixture(s), {} failure(s)".format(len(rows), failures))
+    return 1 if failures else 0
+
+
+def command_list(args: argparse.Namespace) -> int:
+    rows = []
+    for manifest in iter_fixture_manifests(args.tasks_root):
+        task = load_task(manifest)
+        rows.append(
+            {
+                "task_id": task.task_id,
+                "task_family": task.task_family,
+                "deliverable": task.deliverable,
+                "title": task.title,
+                "source_files": list(task.source.paths),
+            }
+        )
+    if args.json:
+        print(json.dumps(rows, indent=2))
+    else:
+        for row in rows:
+            print(
+                "{task_id}  [{task_family}/{deliverable}]  {title}".format(**row)
+            )
+    return 0
+
+
+def command_run(args: argparse.Namespace) -> int:
+    tasks = select_tasks(args)
+    stages = args.stage or list(COMPARABLE)
+    for stage in stages:
+        if stage not in VALID_STAGES:
+            raise SystemExit("unknown stage {!r}".format(stage))
+
+    patch_override = None
+    if args.patch_file:
+        patch_override = Path(args.patch_file).read_text(encoding="utf-8")
+    elif "review" in stages:
+        raise SystemExit("--stage review requires --patch-file")
+
+    config = resolve_endpoint(args)
+    adapter = OpenAIChatAdapter(config)
+
+    provenance = harness_provenance(HERE)
+    run_id = args.run_id or "{}-{}".format(
+        tasks[0].task_id if len(tasks) == 1 else "multi",
+        utc_stamp(),
+    )
+    run_dir = RunDirectory(args.out, run_id)
+
+    options = RunnerOptions(
+        max_source_bytes=args.max_source_bytes,
+        test_timeout_s=args.test_timeout_s,
+        allow_refinement=not args.no_refinement,
+        require_head=args.require_head,
+    )
+    options.max_refinements = min(args.max_refinements, MAX_REFINEMENTS)
+
+    run_dir.copy_fixture(
+        tasks[0].task_path,
+        tasks[0].source_manifest_path,
+    )
+    for extra in tasks[1:]:
+        run_dir.write_text("tasks/{}/task.json".format(extra.task_id), json.dumps(extra.to_dict(), indent=2))
+    run_dir.write_json(
+        "source-manifest.json",
+        source_manifest_artifact(
+            load_source_manifest(tasks[0]), None, {"note": "per-task binding written to metrics.json"}
+        ),
+    )
+
+    run_dir.write_run_manifest(
+        harness_sha=provenance["git_sha"],
+        harness_dirty=provenance["git_dirty"],
+        fixture_sha256=",".join(t.fixture_sha256() for t in tasks),
+        task_id=",".join(t.task_id for t in tasks),
+        task_family=",".join(sorted({t.task_family for t in tasks})),
+        endpoints=[config.identity()],
+        strategies=stages,
+        argv=sys.argv,
+        host=host_identity(),
+        options={
+            "max_source_bytes": args.max_source_bytes,
+            "test_timeout_s": args.test_timeout_s,
+            "allow_refinement": not args.no_refinement,
+            "max_refinements": options.max_refinements,
+            "refinement_hard_ceiling": MAX_REFINEMENTS,
+            "source_root": str(args.source_root) if args.source_root else None,
+            "require_head": args.require_head,
+            "tasks_root": str(args.tasks_root),
+        },
+        started_at=utc_now(),
+    )
+
+    results = []
+    integration_overhead = 0.0
+    for task in tasks:
+        runner = BenchmarkRunner(
+            adapter,
+            run_dir,
+            options,
+            work_root=Path(args.out) / "work",
+            harness_root=HERE,
+            source_root=args.source_root,
+        )
+        try:
+            result = runner.run_task(
+                task,
+                stages,
+                single_attempts=args.single_attempts,
+                patch_override=patch_override,
+            )
+        finally:
+            runner.close()
+        results.append(result)
+        integration_overhead += sum(a.metrics.harness_overhead_s for a in result.attempts)
+
+        for state in result.attempts:
+            print(
+                "{task}  {strategy:8s}  outcome={outcome:22s} calls={calls} "
+                "wall={wall:.1f}s tokens={tokens}".format(
+                    task=task.task_id,
+                    strategy=state.strategy,
+                    outcome=state.metrics.outcome.value,
+                    calls=state.metrics.model_calls,
+                    wall=state.metrics.total_wall_s,
+                    tokens=state.metrics.total_tokens,
+                )
+            )
+            for note in state.metrics.notes:
+                print("    note: {}".format(note))
+        if not result.authoritative_source_unchanged:
+            print(
+                "INTEGRITY FAILURE: the fixture tree changed during the run",
+                file=sys.stderr,
+            )
+            run_dir.finalize_manifest(
+                {"integrity": {"authoritative_source_unchanged": False}}
+            )
+            return 2
+
+    if not args.no_comparison:
+        for result in results:
+            singles = [a for a in result.attempts if a.strategy == "single"]
+            swarms = [a for a in result.attempts if a.strategy == "swarm"]
+            comparison = build_comparison(
+                task.task_id,
+                task.task_family,
+                task.fixture_sha256(),
+                [a.metrics for a in singles],
+                swarms[0].metrics if swarms else None,
+                integration_overhead_s=integration_overhead,
+                integration_notes=[
+                    "measured inside the harness only",
+                    "external controller orchestration is not measured by this tool",
+                ],
+            )
+            run_dir.write_json("comparison-{}.json".format(task.task_id), comparison)
+
+    run_dir.finalize_manifest(
+        {
+            "outcomes": {
+                task.task_id: [a.metrics.outcome.value for a in result.attempts]
+                for task, result in zip(tasks, results)
+            },
+            "integrity": {
+                "authoritative_source_unchanged": all(
+                    r.authoritative_source_unchanged for r in results
+                )
+            },
+            "authority": {
+                "authoritative_repo_mutated": False,
+                "assistx_task_state_mutated": False,
+                "routing_or_admission_mutated": False,
+            },
+        }
+    )
+    print("evidence: {}".format(run_dir.path))
+    return 0
+
+
+def command_plan_command(args: argparse.Namespace) -> int:
+    tasks = select_tasks(args)
+    stages = args.stage or ["single", "swarm"]
+    target = str((args.out / "runs").resolve()) if (args.out / "runs").exists() else str(args.out.resolve())
+    print("# point agent-harness at an already-running endpoint and run frozen real tasks")
+    print("# tasks: {}".format(", ".join(t.task_id for t in tasks)))
+    print("# stages: {}".format(", ".join(stages)))
+    print()
+    for task in tasks:
+        parts = [
+            sys.executable,
+            str(HERE / "realtime_bench.py"),
+            "run",
+            "--task",
+            task.task_id,
+            "--out",
+            target,
+            "--base-url",
+            args.base_url,
+            "--model",
+            args.model,
+            "--label",
+            args.label,
+        ]
+        for stage in stages:
+            parts.extend(["--stage", stage])
+        print("cd {} && {}".format(HERE, " ".join(_quote(p) for p in parts)))
+    return 0
+
+
+def _quote(token: str) -> str:
+    if any(ch in token for ch in " \t\"'$&|<>;"):
+        return '"{}"'.format(token.replace('"', '\\"'))
+    return token
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        if args.command == "validate":
+            return command_validate(args)
+        if args.command == "list":
+            return command_list(args)
+        if args.command == "run":
+            return command_run(args)
+        if args.command == "plan-command":
+            return command_plan_command(args)
+    except FixtureError as exc:
+        print("error [{}]: {}".format(exc.outcome.value, exc), file=sys.stderr)
+        return 2
+    parser.error("unknown command {}".format(args.command))
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

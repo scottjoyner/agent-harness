@@ -1,0 +1,57 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_ingest/shorts/cli.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_generated_regression.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Add tests only. Do not modify the production source under auto_ingest/; the defect must still be present so the new test can detect it.",
+    "Your new test file must live directly in the tests directory of this project so the harness can discover it.",
+    "The test must not require a live Neo4j instance, network access, credentials, or media tooling.",
+    "The test must assert the lifecycle contract (graph reads and planning happen while the driver is open; the driver is closed exactly once on every exit path), not merely that close() is called somewhere."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "A regression test that only asserts driver.close() was called passes against the buggy code and therefore detects nothing. The harness proves discrimination: the new test must fail on the unrepaired snapshot and pass on the repaired one.",
+  "problem": "The `plan` subcommand in auto_ingest/shorts/cli.py has a driver-lifetime defect: planning runs after the driver has been closed, and because the downstream content mining swallows exceptions the failure never surfaces. No test covers this. Add a regression test that fails against the current source and would pass once the ordering is corrected. Do not fix the defect itself.",
+  "prompt_source_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "relevant_source_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_ingest/shorts/cli.py",
+        "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
+        "size_bytes": 32067
+      }
+    ],
+    "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
+    "manifest_sha256": "e5ed83205ea9cbdb7352487feec8a18ad736ca02c89619b333532cb20cb8eaa5",
+    "repository": "scottjoyner/auto-ingest",
+    "writable_prefixes": [
+      "_realtask_tests/"
+    ]
+  },
+  "task_family": "test_generation",
+  "task_id": "auto_ingest_driver_lifetime_regression_test",
+  "title": "Add the missing regression test for the shorts plan driver lifetime"
+}
