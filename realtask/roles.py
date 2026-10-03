@@ -587,6 +587,30 @@ def single_prompt(problem: str, constraints: Sequence[str], acceptance_lines: Se
     return "\n".join(parts)
 
 
+def scout_result_from_evidence(payload: Dict[str, Any]) -> ScoutResult:
+    """Rebuild a :class:`ScoutResult` from a recorded ``scout`` evidence block.
+
+    Lets a scout run be inspected in one invocation and handed to an
+    implementer in the next, without re-asking the model or hand-transcribing the
+    result. Fails closed on anything that is not a well-formed scout block.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("scout evidence block must be an object")
+    missing = [f for f in ("root_cause", "relevant_files", "plan", "risks", "confidence")
+               if f not in payload]
+    if missing:
+        raise ValueError(
+            "scout evidence block is missing {}".format(", ".join(missing))
+        )
+    return ScoutResult(
+        root_cause=str(payload["root_cause"]),
+        relevant_files=tuple(str(x) for x in payload["relevant_files"]),
+        plan=tuple(str(x) for x in payload["plan"]),
+        risks=tuple(str(x) for x in payload["risks"]),
+        confidence=float(payload["confidence"]),
+    )
+
+
 def _to_json_text(self: ReviewerResult) -> str:
     return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)
 

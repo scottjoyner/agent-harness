@@ -20,6 +20,7 @@ from pathlib import Path
 
 from test_realtask_support import (
     AUTO_INGEST_BUG_FIX,
+    TASKS_ROOT,
     AUTO_INGEST_CONTRACT,
     REPO_ROOT,
     REFERENCE_REPAIR,
@@ -466,6 +467,136 @@ class MultiTaskRunTests(CliTestCase):
             [run_dir.name],
             "the evidence root holds runs and nothing else",
         )
+
+
+class ScoutHandoffTests(CliTestCase):
+    """A scout run must be able to feed a later implementer run.
+
+    Without this, role separation cannot be inspected between invocations: you
+    could run a scout, read it, and then only re-ask the model.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.tmp / "handoff"
+        self.server = LoopbackEndpoint(
+            {"scout": scout_payload(), "implementer": patch_payload()}
+        )
+        self.addCleanup(self.server.close)
+
+    def run_cli(self, *args, expect=0):
+        return self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--out", str(self.out),
+            "--base-url", self.server.base_url, "--model", "loopback-test-model",
+            *args, expect=expect,
+        )
+
+    def make_scout(self):
+        self.run_cli("--stage", "scout", "--run-id", "step1")
+        return self.out / "step1" / "scout" / "result.json"
+
+    def test_scout_then_implement_across_invocations(self):
+        scout_path = self.make_scout()
+        self.assertTrue(scout_path.is_file())
+        completed = self.run_cli(
+            "--stage", "implement", "--run-id", "step2",
+            "--scout-file", str(scout_path),
+        )
+        self.assertIn("implement", completed.stdout)
+        self.assertIn("SUCCESS", completed.stdout)
+
+    def test_handoff_is_recorded_in_the_manifest(self):
+        scout_path = self.make_scout()
+        self.run_cli("--stage", "implement", "--run-id", "step2",
+                     "--scout-file", str(scout_path))
+        manifest = json.loads((self.out / "step2" / "manifest.json").read_text())
+        handoff = manifest["options"]["scout_handoff"]
+        self.assertEqual(handoff["source_strategy"], "scout")
+        self.assertEqual(handoff["source_attempt_id"],
+                         "{}::scout".format(AUTO_INGEST_BUG_FIX))
+        self.assertEqual(handoff["relevant_files"], ["auto_ingest/shorts/cli.py"])
+        self.assertEqual(handoff["confidence"], 0.8)
+
+    def test_the_scout_actually_reaches_the_implementer_prompt(self):
+        """The whole point: the implementer sees the scout, not just the task."""
+        from realtask.adapter import ChatRequest, OpenAIChatAdapter
+        from realtask.evidence import RunDirectory
+        from realtask.fixtures import load_task_by_id
+        from realtask.roles import scout_result_from_evidence
+        from realtask.runner import BenchmarkRunner, RunnerOptions
+
+        scout_path = self.make_scout()
+        task = load_task_by_id(AUTO_INGEST_BUG_FIX, TASKS_ROOT)
+        payload = json.loads(scout_path.read_text())
+        scout = scout_result_from_evidence(payload["scout"])
+
+        captured = {}
+
+        class Capture(OpenAIChatAdapter):
+            def complete(self, request: ChatRequest):
+                captured["user"] = request.user
+                return super().complete(request)
+
+        adapter = Capture(
+            __import__("realtask.adapter", fromlist=["EndpointConfig"]).EndpointConfig(
+                label="cap", base_url=self.server.base_url, model="loopback-test-model",
+                timeout_s=30, retry_backoff_s=0.0,
+            )
+        )
+        runner = BenchmarkRunner(
+            adapter, RunDirectory(self.tmp / "cap", "cap"),
+            RunnerOptions(test_timeout_s=180.0),
+            work_root=self.tmp / "capwork", harness_root=REPO_ROOT,
+        )
+        try:
+            runner.run_task(task, ["implement"], scout_override=scout)
+        finally:
+            runner.close()
+        self.assertIn("SCOUT REPORT", captured["user"])
+        self.assertIn(scout.root_cause, captured["user"])
+        self.assertIn(scout.relevant_files[0], captured["user"])
+
+    def test_missing_file_is_rejected(self):
+        completed = self.run_cli(
+            "--stage", "implement", "--scout-file", str(self.out / "nope.json"), expect=1
+        )
+        self.assertIn("--scout-file not found", completed.stderr)
+
+    def test_wrong_schema_is_rejected(self):
+        bad = self.tmp / "bad.json"
+        bad.write_text(json.dumps({"schema": "bench_v7.unversioned", "scout": {}}))
+        completed = self.run_cli("--stage", "implement", "--scout-file", str(bad), expect=1)
+        self.assertIn("expected", completed.stderr)
+        self.assertIn("realtask.role_result.v1", completed.stderr)
+
+    def test_missing_scout_block_is_rejected(self):
+        bad = self.tmp / "no-scout.json"
+        bad.write_text(json.dumps({"schema": "realtask.role_result.v1",
+                                   "strategy": "single"}))
+        completed = self.run_cli("--stage", "implement", "--scout-file", str(bad), expect=1)
+        self.assertIn("no 'scout' block", completed.stderr)
+
+    def test_malformed_scout_block_is_rejected(self):
+        bad = self.tmp / "malformed.json"
+        bad.write_text(json.dumps({
+            "schema": "realtask.role_result.v1",
+            "scout": {"root_cause": "x"},
+        }))
+        completed = self.run_cli("--stage", "implement", "--scout-file", str(bad), expect=1)
+        self.assertIn("malformed", completed.stderr)
+
+    def test_invalid_json_is_rejected(self):
+        bad = self.tmp / "broken.json"
+        bad.write_text("{not json")
+        completed = self.run_cli("--stage", "implement", "--scout-file", str(bad), expect=1)
+        self.assertIn("not valid JSON", completed.stderr)
+
+    def test_unusable_stage_warns_rather_than_silently_ignoring(self):
+        scout_path = self.make_scout()
+        completed = self.run_cli(
+            "--stage", "single", "--scout-file", str(scout_path)
+        )
+        self.assertIn("warning: --scout-file only affects", completed.stderr)
 
 
 class SummarizeCommandTests(CliTestCase):

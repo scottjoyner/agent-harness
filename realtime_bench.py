@@ -75,7 +75,9 @@ from realtask.fixtures import (  # noqa: E402
 )
 from realtask.runner import BenchmarkRunner, RunnerOptions  # noqa: E402
 from realtask.summarize import summarize_runs  # noqa: E402
+from realtask.roles import scout_result_from_evidence  # noqa: E402
 from realtask.taxonomy import Outcome  # noqa: E402
+from realtask.version import SCHEMA_ROLE_RESULT  # noqa: E402
 from realtask.version import MAX_REFINEMENTS  # noqa: E402
 
 DEFAULT_TASKS_ROOT = HERE / "realtask" / "tasks"
@@ -161,6 +163,9 @@ def build_parser() -> argparse.ArgumentParser:
                      help="how many single attempts to run per task (default: 1)")
     run.add_argument("--patch-file", type=Path,
                      help="candidate patch for the review stage (required with --stage review)")
+    run.add_argument("--scout-file", type=Path,
+                     help="a recorded scout result (scout/result.json) to hand to the "
+                          "implementer instead of running a scout in this invocation")
     run.add_argument("--no-comparison", action="store_true",
                      help="skip comparison.json emission")
     run.add_argument("--run-id", help="override the generated run directory name")
@@ -341,6 +346,46 @@ def command_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _load_scout_handoff(path: Path):
+    """Read a recorded scout result and return ``(ScoutResult, provenance)``.
+
+    The handoff is evidence, so it is validated as evidence: wrong schema, wrong
+    shape or a missing file is an error rather than a silently ignored flag.
+    """
+    path = Path(path)
+    if not path.is_file():
+        raise SystemExit("--scout-file not found: {}".format(path))
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit("--scout-file is not valid JSON: {}".format(exc))
+    schema = payload.get("schema")
+    if schema != SCHEMA_ROLE_RESULT:
+        raise SystemExit(
+            "--scout-file schema is {!r}; expected {!r}. Point it at a scout/result.json "
+            "or swarm/result.json written by this harness.".format(schema, SCHEMA_ROLE_RESULT)
+        )
+    if "scout" not in payload:
+        raise SystemExit(
+            "--scout-file has no 'scout' block. Use the result.json from a scout run, "
+            "not from a single or implementer run."
+        )
+    try:
+        scout = scout_result_from_evidence(payload["scout"])
+    except (ValueError, TypeError) as exc:
+        raise SystemExit("--scout-file scout block is malformed: {}".format(exc))
+    provenance = {
+        "path": str(path),
+        "source_attempt_id": payload.get("attempt_id"),
+        "source_strategy": payload.get("strategy"),
+        "source_outcome": payload.get("outcome"),
+        "plan_steps": len(scout.plan),
+        "relevant_files": list(scout.relevant_files),
+        "confidence": scout.confidence,
+    }
+    return scout, provenance
+
+
 def command_run(args: argparse.Namespace) -> int:
     tasks = select_tasks(args)
     stages = args.stage or list(COMPARABLE)
@@ -348,11 +393,23 @@ def command_run(args: argparse.Namespace) -> int:
         if stage not in VALID_STAGES:
             raise SystemExit("unknown stage {!r}".format(stage))
 
+    if args.scout_file and not ({"implement", "swarm", "review"} & set(stages)):
+        print(
+            "warning: --scout-file only affects the implement, swarm and review stages; "
+            "this run uses {}".format(", ".join(stages) or "(none)"),
+            file=sys.stderr,
+        )
+
     patch_override = None
     if args.patch_file:
         patch_override = Path(args.patch_file).read_text(encoding="utf-8")
     elif "review" in stages:
         raise SystemExit("--stage review requires --patch-file")
+
+    scout_override = None
+    scout_handoff = None
+    if args.scout_file:
+        scout_override, scout_handoff = _load_scout_handoff(args.scout_file)
 
     config = resolve_endpoint(args)
     adapter = OpenAIChatAdapter(config)
@@ -412,6 +469,7 @@ def command_run(args: argparse.Namespace) -> int:
             "source_root": str(args.source_root) if args.source_root else None,
             "require_head": args.require_head,
             "tasks_root": str(args.tasks_root),
+            "scout_handoff": scout_handoff,
         },
         started_at=utc_now(),
     )
@@ -435,6 +493,7 @@ def command_run(args: argparse.Namespace) -> int:
                 stages,
                 single_attempts=args.single_attempts,
                 patch_override=patch_override,
+                scout_override=scout_override,
             )
         finally:
             runner.close()

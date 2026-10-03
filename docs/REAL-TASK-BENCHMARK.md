@@ -58,6 +58,38 @@ JSON file; the API key is named indirectly via `api_key_env` so it never lives i
 the file) or by `REALTASK_ENDPOINT_BASE_URL` / `REALTASK_ENDPOINT_MODEL`. A test
 asserts all three inputs produce identical endpoint identity.
 
+### What a real runtime may not implement
+
+A private OpenAI-compatible runtime need not implement every part of the
+specification, and the harness has never been run against one. Rather than
+probing -- which would edge into discovering runtimes the operator never
+mentioned -- it starts from the full request and narrows only when the endpoint
+actively refuses it:
+
+```
+full request
+  ├─ 400/422 names stream_options → drop it   (token usage may be absent)
+  ├─ 400/422 names seed           → drop it   (determinism rests on temperature)
+  └─ 400/422 names stream         → go blocking (TTFT becomes null)
+```
+
+The ladder stops at streaming on purpose: dropping `temperature` or
+`max_tokens` would change what the experiment measures rather than how it is
+measured. Separately, timeouts, connection resets and 5xx are retried up to
+`max_retries` (default 1). Other 4xx are never retried -- a rejected request is a
+configuration problem and retrying only burns the deadline. Degradation does not
+consume the retry budget.
+
+Every call records `request_profile` -- which parameters were really sent, plus
+the reason for each degradation -- and `retries`. A degraded request that
+succeeds is *not* silently equivalent to the request we wanted, and a run that
+had to degrade prints `endpoint note:` lines and carries the same detail in
+`metrics.json`.
+
+This path is tested against loopback handlers that reject specific parameters
+and fail transiently. It has **not** been exercised against real hardware;
+proving it needs a node.
+
 The harness does **not** discover hosts, probe subnets, or start servers. It
 POSTs to the URL it is given. Exit codes: `0` clean, `1` bad arguments or
 fixtures, `2` an integrity failure (the authoritative source changed), `3` a
@@ -75,6 +107,24 @@ harness error — see §9a.
 
 Every stage runs standalone as well as inside `swarm`. `--stage review` requires
 `--patch-file` because there is nothing to review otherwise.
+
+Role separation can be inspected between invocations. `--scout-file` hands a
+recorded scout result to the implementer, so a scout run can be read, judged and
+then reused without re-asking the model:
+
+```bash
+# read the scout first
+python3 realtime_bench.py run --task <id> --stage scout --out ./runs --run-id step1
+# then implement, informed by it
+python3 realtime_bench.py run --task <id> --stage implement \
+  --scout-file ./runs/step1/scout/result.json --out ./runs --run-id step2
+```
+
+The handoff is validated as evidence: wrong schema, a missing `scout` block, a
+malformed block or invalid JSON are all errors rather than a silently ignored
+flag. `manifest.json` records where the scout came from -- its source attempt id,
+strategy, outcome, plan length and confidence. Passing `--scout-file` to a run
+that uses only `single` warns instead of pretending to have used it.
 
 `swarm` in full:
 
@@ -324,6 +374,7 @@ runs/<run_id>/
     test-results.json              every command and its output, per attempt
     metrics.json                   all attempts
     comparison.json                single vs swarm, component-wise
+    rollup.json                    cross-task roll-up, written by `summarize`
 ```
 
 Running several tasks in one invocation (`--task` repeated) keeps every artifact
@@ -380,6 +431,35 @@ beats a single attempt, that no component is aggregated into a single quality
 score, and that the artifact records evidence only. A favourable delta is not a
 generalisation, and the artifact is built so it cannot be read as one.
 
+## 10a. Rolling up a campaign
+
+One run produces one `comparison.json`. A campaign produces many, across tasks
+and endpoints, and something has to fold them together:
+
+```bash
+python3 realtime_bench.py summarize --out ./runs          # table
+python3 realtime_bench.py summarize --out ./runs --json   # machine-readable
+```
+
+This writes `rollup.json` (`realtask.rollup.v1`) and reports outcome
+histogram, per-family and per-strategy breakdowns, per-attempt component metrics
+retained, totals for calls/wall/tokens, and which harness git shas and model
+runtimes produced it. Integrity failures and harness errors are surfaced, not
+buried. It needs no endpoint.
+
+Same stance as `comparison.json`:
+
+- `composite_score` is `null`, always. A test greps the serialized artifact to
+  make sure nothing resembling a verdict cannot appear.
+- Token totals are `null` when any contributing attempt's endpoint omitted usage.
+  A partial sum is worse than none. Call counts stay exact.
+- A corrupt, foreign-schema or interrupted run lands in `skipped_runs` rather
+  than raising: a corpus should never fail to summarise because one run died. A
+  manifest whose schema is not `realtask.run_manifest.v1` is skipped, so legacy
+  `bench_*` artifacts can never be silently pooled in.
+- Exits `1` when the runs root holds no evidence at all -- "nothing to report" is
+  a configuration mistake, not a result.
+
 ## 11. Shipped fixtures
 
 | task_id | family | deliverable | what it guards |
@@ -420,7 +500,8 @@ repair that regresses `--discusses` cleanup or leaks the driver is caught.
 ```bash
 python3 -m unittest test_fixgit_repro_v1 test_realtask_binding \
     test_realtask_roles test_realtask_patch test_realtask_runner \
-    test_realtask_evidence test_realtask_endpoint test_realtask_cli
+    test_realtask_evidence test_realtask_endpoint test_realtask_resilience \\
+    test_realtask_rollup test_realtask_cli
 
 # or
 python3 -m pytest test_realtask_*.py -q
@@ -434,7 +515,9 @@ python3 -m pytest test_realtask_*.py -q
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
 | `test_realtask_endpoint.py` | the three endpoint inputs (argv, config file, environment) agree; API keys come from the environment and never reach evidence; no fleet node is named anywhere in the harness or its entrypoint |
-| `test_realtask_cli.py` | validate/list/plan-command; each stage runnable standalone (`scout`, `implement`, `review --patch-file`); a multi-task run keeping per-task evidence; exit-code semantics (0 clean, 3 harness error, model failure is neither); and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
+| `test_realtask_resilience.py` | the degradation ladder and its order, profile caching, the bounded retry budget, that degradation does not spend retries, that unrecognised rejections stay terminal, and that unreachable endpoints are reported clearly |
+| `test_realtask_rollup.py` | single and nested multi-task runs, per-family breakdown, null tokens when usage is missing, no composite score or verdict language, and that corrupt/foreign/interrupted runs are skipped rather than fatal |
+| `test_realtask_cli.py` | validate/list/plan-command/summarize; each stage runnable standalone; the `--scout-file` handoff and that the scout really reaches the implementer prompt; a multi-task run keeping per-task evidence; exit-code semantics (0 clean, 3 harness error, model failure is neither); and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
 
 `test_realtask_cli.py` starts a `ThreadingHTTPServer` on `127.0.0.1:0` purely as
 a stand-in for a model runtime someone else started. It binds loopback only and
@@ -464,6 +547,7 @@ realtask/
     metrics.py        component metrics
     evidence.py       atomic writes, run directory, provenance
     compare.py        single-vs-swarm artifact
+    summarize.py      cross-task roll-up
     runner.py         stage orchestration
     tasks/            frozen fixtures
 realtime_bench.py     the canonical CLI

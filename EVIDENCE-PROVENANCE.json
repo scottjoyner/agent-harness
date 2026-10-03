@@ -20,7 +20,8 @@
       "patch.diff",
       "test-results.json",
       "metrics.json",
-      "comparison.json  (per task; tasks/<task_id>/ when several)"
+      "comparison.json  (per task; tasks/<task_id>/ when several)",
+      "rollup.json  (written by , campaign-wide)"
     ],
     "schema_markers": [
       "realtask.run_manifest.v1",
@@ -29,7 +30,8 @@
       "realtask.role_result.v1",
       "realtask.test_results.v1",
       "realtask.metrics.v1",
-      "realtask.comparison.v1"
+      "realtask.comparison.v1",
+      "realtask.rollup.v1"
     ],
     "distinguishing_properties": [
       "binds a frozen repository-task fixture by SHA-256 before any model call",

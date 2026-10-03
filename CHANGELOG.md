@@ -58,6 +58,22 @@
   completion, no auto-router registration, no runtime projection, no dispatch, no
   push to any benchmark target repository.
 
+### Post-release additions
+
+- **`summarize`** — a cross-task roll-up (`realtask.rollup.v1`). Goal step 4 is
+  "feed qualification evidence onward"; one run produced one comparison and
+  nothing folded a campaign together. Reports outcome histogram, per-family and
+  per-strategy breakdowns, retained per-attempt components, totals, and which
+  harness shas and runtimes produced it. No composite score, no verdict
+  language, token totals nulled rather than partially summed, and corrupt or
+  foreign-schema runs skipped rather than fatal.
+- **`--scout-file`** — hands a recorded scout result to the implementer, so a
+  scout can be read and judged between invocations instead of re-asking the
+  model. Validated as evidence; recorded in the manifest with its provenance.
+- **Adapter resilience** — the capability degradation ladder (`stream_options` →
+  `seed` → streaming) and a bounded transient retry, both recorded per call as
+  `request_profile` and `retries`. See the guide for why it stops at streaming.
+
 ### Follow-up: gaps closed by review
 
 A second pass over the specification against the first implementation found four
