@@ -71,9 +71,15 @@ def test_pagination_returns_everything_when_there_are_no_ties(store):
     assert sorted(seen) == ["a", "b", "c"]
 
 
-@pytest.mark.parametrize("limit", [1, 2, 3, 5, 7])
+@pytest.mark.parametrize("limit", [1, 2, 3, 5, 7, 11, 100])
 def test_ties_are_never_dropped_for_any_page_size(store, limit):
-    """The defect: a boundary inside a tie group loses the rest of the group."""
+    """The defect: a boundary inside a tie group loses the rest of the group.
+
+    The page sizes here are chosen to be useless as a lookup table. 1, 2, 3, 5,
+    7 and 11 appear nowhere else in the fixture and 100 is the size the broader
+    tier reaches for, so a repair that behaves correctly only for the sizes it
+    was written against is caught here rather than in review.
+    """
     module, client = store
     seeded = seed(module, client, TIED)
     seen, _pages, _cursors = drain_pages(module, limit=limit)

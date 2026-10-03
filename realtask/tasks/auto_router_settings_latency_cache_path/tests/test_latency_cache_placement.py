@@ -69,6 +69,20 @@ DOT_RELATIVE = "sqlite:///./data/router.sqlite3"
 ABSOLUTE = "sqlite:////data/router.sqlite3"
 MEMORY = "sqlite:///:memory:"
 
+#: The same three forms under filenames and mount points this fixture never
+#: names. The defect is a grammar, not a lookup table, so a repair has to hold
+#: for a path it has never been shown. Without these a patch that special-cases
+#: the literal ``sqlite:///data/router.sqlite3`` passes every other check in
+#: this file while leaving the grammar divergent for everything else -- which is
+#: memorisation, not a fix.
+GENERALITY_URLS = (
+    "sqlite:///data/fleet.sqlite3",
+    "sqlite:///data/agent-4471.db",
+    "sqlite:///var/lib/agent/ledger.db",
+    "sqlite:///data/nested/deep.sqlite3",
+    "sqlite:///srv/state.db",
+)
+
 
 def test_module_loads(settings_module):
     assert callable(settings_module.validate_database_placement)
@@ -90,6 +104,32 @@ def test_latency_cache_lives_beside_the_resolved_database(settings_module, url):
         "database_url={!r} resolves to {!r} but the latency EMA cache is written "
         "to {!r}".format(url, resolved, cache_dir)
     )
+
+
+@pytest.mark.parametrize("url", GENERALITY_URLS)
+def test_the_same_invariant_holds_for_paths_the_fixture_never_names(
+    settings_module, url
+):
+    """Coherence is a property of the grammar, not of the shipped filename.
+
+    Same assertion as above, over paths that appear nowhere else in this
+    fixture. A patch that special-cases one literal URL is caught here.
+    """
+    obj = _instance(settings_module, url)
+    placement = settings_module.validate_database_placement(
+        url,
+        expected_root=obj.database_persistent_root,
+        required=False,
+    )
+    resolved_dir = os.path.dirname(os.path.abspath(placement["resolved_path"]))
+    cache_dir = os.path.dirname(os.path.abspath(obj.latency_cache_path))
+    assert cache_dir == resolved_dir, (
+        "database_url={!r} resolves into {!r} but the latency EMA cache went to "
+        "{!r}; the two readers of this URL grammar still disagree".format(
+            url, resolved_dir, cache_dir
+        )
+    )
+    assert os.path.basename(obj.latency_cache_path) == "latency_ema.json"
 
 
 def test_bare_relative_form_is_treated_as_the_documented_mount(settings_module):

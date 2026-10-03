@@ -55,8 +55,17 @@ COLLATERAL_DAMAGE: Dict[str, str] = {
     "auto_ingest_plan_shorts_live_driver": "test_realtask_reference_regression.diff",
 }
 
+#: A patch that satisfies the oracle by memorising the inputs the oracle names,
+#: rather than by fixing the defect. Every one of these must be rejected: a
+#: benchmark that cannot tell a fix from a lookup table measures recall of the
+#: test file, not engineering.
+OVERFIT_PATCHES: Dict[str, str] = {
+    "auto_router_settings_latency_cache_path": "test_realtask_overfit_settings.diff",
+}
+
 PATCH_TASKS = tuple(REFERENCE_SOLUTIONS)
 ANALYSIS_TASKS = tuple(REFERENCE_ANSWERS)
+OVERFIT_TASKS = tuple(OVERFIT_PATCHES)
 
 
 def reference_patch(task_id: str) -> str:
@@ -679,5 +688,110 @@ class AnalysisSatisfiableTests(HarnessTestCase):
                 self.assertNotEqual(
                     result.attempts[0].metrics.outcome, Outcome.SUCCESS
                 )
+
+
+class MemorisationTests(HarnessTestCase):
+    """Can the oracle tell a fix from a lookup table?
+
+    The attack under test is the one any model eventually finds: read the
+    oracle, notice it only ever mentions one input, and special-case that input.
+    The patch still satisfies every check, still reports a green run, and leaves
+    the defect exactly as wide as it was for everything the oracle did not name.
+
+    This class is the reason the settings oracle probes five filenames the
+    fixture never mentions. That probe was added *because* the memorisation
+    patch passed 13/13 targeted and 20/20 broader before it existed.
+    """
+
+    def attack_patch(self, filename: str) -> str:
+        return (REPO_ROOT / filename).read_text(encoding="utf-8")
+
+    def test_a_memorising_patch_does_not_reach_success(self):
+        from test_realtask_support import patch_reply
+
+        for task_id, filename in OVERFIT_PATCHES.items():
+            _task, result = self.run_stages(
+                task_id, [patch_reply(self.attack_patch(filename))], ["single"]
+            )
+            with self.subTest(task=task_id):
+                self.assertNotEqual(
+                    result.attempts[0].metrics.outcome, Outcome.SUCCESS,
+                    "{} is passed by a patch that memorises the oracle rather "
+                    "than fixing anything".format(task_id),
+                )
+
+    def test_a_memorising_patch_applies_cleanly(self):
+        """Otherwise the rejection above would only mean a broken diff."""
+        from test_realtask_support import patch_reply
+
+        for task_id, filename in OVERFIT_PATCHES.items():
+            _task, result = self.run_stages(
+                task_id, [patch_reply(self.attack_patch(filename))], ["single"]
+            )
+            seen = [o.value for o in result.attempts[0].metrics.outcomes_seen]
+            with self.subTest(task=task_id):
+                self.assertTrue(
+                    result.attempts[0].metrics.patch.applied,
+                    "the attack patch must be valid, or the test proves nothing",
+                )
+                self.assertNotIn(Outcome.INVALID_PATCH.value, seen)
+
+    def test_a_memorising_patch_is_not_the_registered_solution(self):
+        """A fixture may be attacked *and* have a reference solution.
+
+        What must never happen is the attack being filed as the solution.
+        """
+        for task_id, filename in OVERFIT_PATCHES.items():
+            with self.subTest(task=task_id):
+                self.assertIn(task_id, REFERENCE_SOLUTIONS, task_id)
+                self.assertNotEqual(
+                    filename, REFERENCE_SOLUTIONS[task_id],
+                    "the memorisation patch is registered as the reference "
+                    "solution for {}".format(task_id),
+                )
+                self.assertNotEqual(
+                    self.attack_patch(filename),
+                    (REPO_ROOT / REFERENCE_SOLUTIONS[task_id]).read_text(
+                        encoding="utf-8"
+                    ),
+                )
+
+    def test_overfit_patches_are_tracked(self):
+        for filename in OVERFIT_PATCHES.values():
+            completed = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch", filename],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(completed.returncode, 0, filename)
+
+    def test_the_settings_oracle_probes_unnamed_filenames(self):
+        """The concrete hole this class was written for, pinned in place."""
+        body = (
+            TASKS_ROOT / "auto_router_settings_latency_cache_path"
+            / "tests" / "test_latency_cache_placement.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("GENERALITY_URLS", body)
+        listed = body.split("GENERALITY_URLS = (", 1)[1].split(")", 1)[0]
+        self.assertGreaterEqual(
+            len([l for l in listed.splitlines() if l.strip()]), 5
+        )
+        # The memorised literal must not be the only filename in the fixture.
+        self.assertIn('"sqlite:///data/fleet.sqlite3"', listed)
+
+    def test_the_cursor_oracle_sweeps_awkward_page_sizes(self):
+        body = (
+            TASKS_ROOT / "assistx_answers_store_cursor_drops_ties"
+            / "tests" / "test_cursor_completeness.py"
+        ).read_text(encoding="utf-8")
+        sizes = [
+            l for l in body.splitlines()
+            if l.strip().startswith("@pytest.mark.parametrize")
+            and "limit" in l
+        ]
+        self.assertTrue(sizes, "the page-size sweep disappeared")
+        self.assertIn("11", sizes[0])
+        self.assertIn("100", sizes[0])
+
+
 if __name__ == "__main__":
     unittest.main()

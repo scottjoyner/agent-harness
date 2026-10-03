@@ -48,6 +48,20 @@
 
 ### Fixed
 
+- **The settings oracle was passable by memorisation.** A patch that
+  special-cased the single literal URL the fixture names
+  (`sqlite:///data/router.sqlite3`) and changed nothing else passed 13/13
+  targeted and 20/20 broader, because every URL in the fixture shared one
+  basename. The SQLite grammar stayed as divergent as before for every filename
+  the fixture did not name. The oracle now also sweeps five filenames and mount
+  points that appear nowhere else in it; the memorisation patch fails 5 of them,
+  the frozen snapshot fails 7, and the reference repair passes all 18.
+  `test_realtask_overfit_settings.diff` keeps the attack, and
+  `test_realtask_corpus.py` asserts it is rejected, applies cleanly, and is
+  never filed as the reference solution.
+- The answers-store page-size sweep was widened from `[1, 2, 3, 5, 7]` to
+  `[1, 2, 3, 5, 7, 11, 100]`. The first set was already chosen to be useless as a
+  lookup table; the last two cover the sizes the broader tier reaches for.
 - **Both analysis graders were passable by keyword stuffing.** `check_answer.py`
   scanned the entire captured answer for trigger substrings, so a 391-byte word
   salad containing every trigger and no explanation passed all six findings in

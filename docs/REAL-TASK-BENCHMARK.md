@@ -586,6 +586,43 @@ quietly make the test vacuous, and it asserts three things per fixture: the
 reference answer reaches `SUCCESS` through the runner, the keyword dump does not,
 and neither does the same answer with one trigger per sentence.
 
+### Can the oracle tell a fix from a lookup table?
+
+An oracle that only ever mentions one input can be satisfied by special-casing
+that input. This is not hypothetical: a patch that adds
+
+```python
+if db == "sqlite:///data/router.sqlite3":
+    return "/data/latency_ema.json"
+```
+
+to `latency_cache_path` — and changes nothing else — passed **13/13 targeted and
+20/20 broader** on `auto_router_settings_latency_cache_path`. Every URL in the
+fixture shared the basename `router.sqlite3`, so the memorised literal was
+enough. The SQLite grammar stayed exactly as divergent as it was for every
+filename the fixture did not name.
+
+The fix is not a stricter assertion, it is more inputs. The oracle now also
+sweeps `GENERALITY_URLS`: five filenames and mount points that appear nowhere
+else in the fixture, including a hyphen-and-digits name and a nested path. The
+memorisation patch now fails 5 of them, the frozen snapshot fails 7, and the
+reference repair passes all 18.
+
+`test_realtask_corpus.py` keeps the attack as
+`test_realtask_overfit_settings.diff` and asserts it is rejected, that it
+applies cleanly (so the rejection is not just a broken diff), and that it is
+never filed as the reference solution.
+
+The same probe run against the other fixtures found nothing, which is worth
+recording rather than assuming:
+
+| fixture | attack | result |
+|---|---|---|
+| `auto_router_settings_latency_cache_path` | special-case the one literal URL | **passed before this change** — now rejected |
+| `assistx_answers_store_cursor_drops_ties` | widen the fetch window to defeat the boundary | rejected — a huge first page still leaves the exclusive bound, so ties are still lost |
+| `assistx_answers_store_cursor_drops_ties` | behave correctly only for `limit >= 100` | inert — one page already covers the index at that size |
+| `auto_router_task_contract_lane_mismatch` | hardcode the fourteen kinds | not an overfit — that list *is* the module's own three plan vocabularies |
+
 ## 12. Tests
 
 ```bash
@@ -601,7 +638,7 @@ python3 -m pytest test_realtask_*.py -q
 | Module | Covers |
 |---|---|
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
-| `test_realtask_corpus.py` | corpus-level guarantees, including attacking the analysis graders with an adaptively-built keyword dump: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
+| `test_realtask_corpus.py` | corpus-level guarantees, including attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
