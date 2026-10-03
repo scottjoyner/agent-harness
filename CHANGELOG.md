@@ -40,8 +40,22 @@
   file for the campaign fixture repairs the defect *and* changes two unrelated
   defaults, which is what proves the broader tier has teeth.
 
+- **`test_realtask_reference_review.json`** / **`test_realtask_reference_contract.json`**
+  — reference answers for the two `analysis` fixtures. An analysis deliverable is
+  prose, so its reference is an answer; without one there was no proof its grader
+  could be satisfied at all, and the corpus test could not check satisfiability
+  for half the corpus.
+
 ### Fixed
 
+- **Both analysis graders were passable by keyword stuffing.** `check_answer.py`
+  scanned the entire captured answer for trigger substrings, so a 391-byte word
+  salad containing every trigger and no explanation passed all six findings in
+  `code_review`. A finding must now be carried by a single proposition, and that
+  proposition must contain at least three words the grader is not keyed on.
+  `test_realtask_corpus.py` rebuilds the attack from each grader's own tables and
+  asserts the reference answers pass while the dump, the scattered triggers and an
+  empty answer all fail — through the grader and through the runner.
 - Three generated reference diffs carried a doubled strip prefix
   (`--- a/a/...`, `+++ b/b/...`) and would not apply with `-p1`. `test_realtask_corpus.py`
   now rejects that shape.

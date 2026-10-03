@@ -563,6 +563,29 @@ a page that stops early would otherwise skip the remainder of its own window.
 Targeted: 8 failed / 8 passed before, 16 passed after. Broader: 30 passed either
 way.
 
+### Analysis graders are attacked, not trusted
+
+An `analysis` deliverable has no patch, so its acceptance is a script that reads
+the captured answer. A script that scans the whole answer for trigger
+substrings measures almost nothing, and that is exactly what the first version
+of both graders did: a 391-byte word salad containing every trigger and no
+explanation at all passed every finding in `code_review`.
+
+Each finding now has to be carried by a **single proposition** — the answer is
+split on sentence and clause punctuation, but deliberately *not* on every period,
+so `cli.py`, `planner.plan_shorts` and `auto_ingest_config.get_x` survive intact
+— and that proposition has to contain at least three words the grader is *not*
+keyed on. "Trigger vocabulary" means the words inside every needle, so an answer
+assembled from the pieces of `after driver.close` is padding even though none of
+those words is a needle by itself. Answers are also required to make at least two
+propositions, and the grader prints why it failed.
+
+`test_realtask_corpus.py` builds the attack from each grader's own
+`REQUIRED_FINDINGS` table rather than hard-coding it, so adding a needle cannot
+quietly make the test vacuous, and it asserts three things per fixture: the
+reference answer reaches `SUCCESS` through the runner, the keyword dump does not,
+and neither does the same answer with one trigger per sentence.
+
 ## 12. Tests
 
 ```bash
@@ -578,7 +601,7 @@ python3 -m pytest test_realtask_*.py -q
 | Module | Covers |
 |---|---|
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
-| `test_realtask_corpus.py` | corpus-level guarantees: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
+| `test_realtask_corpus.py` | corpus-level guarantees, including attacking the analysis graders with an adaptively-built keyword dump: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |

@@ -1,0 +1,16 @@
+{
+  "root_cause": "In auto_ingest/shorts/cli.py the plan path has to keep one contract: every graph read and the planning call itself happen while the driver is still open, and the driver is closed exactly once on every exit path including the --discusses early return and any exception raised during planning.",
+  "relevant_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "plan": [
+    "move the plan_shorts call inside the try so it runs while the driver is live",
+    "keep the finally block so cleanup happens on every path",
+    "leave the driver argument in place; dropping it silently disables graph mining"
+  ],
+  "risks": [
+    "a repair that closes the driver earlier leaks it on the exception path",
+    "a repair that removes the driver argument looks correct and silently loses the graph content"
+  ],
+  "confidence": 0.9
+}

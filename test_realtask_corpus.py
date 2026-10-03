@@ -14,6 +14,7 @@ whole is worth measuring on:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import unittest
@@ -40,6 +41,14 @@ REFERENCE_SOLUTIONS: Dict[str, str] = {
         "test_realtask_reference_regression_test.diff",
 }
 
+#: task_id -> the reference answer that must satisfy the grader. An analysis
+#: deliverable is prose, so its reference is an answer rather than a diff --
+#: without one there is no proof the grader can be satisfied at all.
+REFERENCE_ANSWERS: Dict[str, str] = {
+    "auto_ingest_shorts_plan_review": "test_realtask_reference_review.json",
+    "auto_ingest_plan_shorts_contract": "test_realtask_reference_contract.json",
+}
+
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
 #: prove the broader tier catches collateral damage, not only the primary defect.
 COLLATERAL_DAMAGE: Dict[str, str] = {
@@ -47,10 +56,15 @@ COLLATERAL_DAMAGE: Dict[str, str] = {
 }
 
 PATCH_TASKS = tuple(REFERENCE_SOLUTIONS)
+ANALYSIS_TASKS = tuple(REFERENCE_ANSWERS)
 
 
 def reference_patch(task_id: str) -> str:
     return (REPO_ROOT / REFERENCE_SOLUTIONS[task_id]).read_text(encoding="utf-8")
+
+
+def reference_answer(task_id: str) -> str:
+    return (REPO_ROOT / REFERENCE_ANSWERS[task_id]).read_text(encoding="utf-8")
 
 
 def collateral_patch(task_id: str) -> str:
@@ -477,5 +491,193 @@ class ReferenceSolutionHygieneTests(unittest.TestCase):
             )
 
 
+def load_grader(task_id: str):
+    """Import a fixture's answer grader as a module, the way a candidate runs it."""
+    import importlib.util
+
+    path = TASKS_ROOT / task_id / "tests" / "check_answer.py"
+    spec = importlib.util.spec_from_file_location("grader_" + task_id, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def keyword_dump(task_id: str) -> str:
+    """An answer made *only* of the grader's own trigger vocabulary.
+
+    Built from the grader's tables rather than hand-written, so adding a needle
+    to a fixture cannot quietly make this test vacuous -- and so the attack
+    stays sharp as the fixture's trigger set changes.
+    """
+    module = load_grader(task_id)
+    words = []
+    for _name, all_of, any_of in module.REQUIRED_FINDINGS:
+        for needle in list(all_of) + list(any_of):
+            for token in re.findall(r"[a-z_][a-z0-9_]*", needle.lower()):
+                if token not in words:
+                    words.append(token)
+    return json.dumps({
+        "root_cause": " ".join(words),
+        "relevant_files": words[-1:],
+        "plan": words[:3],
+        "risks": words[3:6],
+        "confidence": 1.0,
+    })
+
+
+def scattered_triggers(task_id: str) -> str:
+    """One trigger per sentence: every needle present, no sentence asserting."""
+    module = load_grader(task_id)
+    return json.dumps({
+        "root_cause": ". ".join(
+            needle
+            for _name, all_of, any_of in module.REQUIRED_FINDINGS
+            for needle in list(all_of) + list(any_of)
+        )
+    })
+
+
+class AnalysisGraderTests(unittest.TestCase):
+    """An analysis fixture is only as good as the grader that judges it.
+
+    These tests attack the grader directly rather than trusting it. The one that
+    matters most is the keyword dump: a grader that scans the whole answer for
+    trigger substrings can be satisfied by emitting the vocabulary without
+    explaining anything, and then it measures nothing at all.
+    """
+
+    def grader(self, task_id: str):
+        return load_grader(task_id)
+
+    def run_grader(self, task_id: str, answer: str):
+        import subprocess
+        import tempfile
+
+        module_path = TASKS_ROOT / task_id / "tests" / "check_answer.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            answer_file = Path(tmp) / "answer.json"
+            answer_file.write_text(answer, encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(module_path), str(answer_file)],
+                capture_output=True, text=True, timeout=120,
+                env={"PATH": "/usr/bin:/bin", "HOME": tmp},
+            )
+        return completed.returncode, completed.stdout + completed.stderr
+
+    def keyword_dump(self, task_id: str) -> str:
+        return keyword_dump(task_id)
+
+    def test_the_reference_answer_satisfies_its_grader(self):
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                code, output = self.run_grader(task_id, reference_answer(task_id))
+                self.assertEqual(code, 0, output)
+
+    def test_a_keyword_dump_is_rejected(self):
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                code, output = self.run_grader(
+                    task_id, keyword_dump(task_id)
+                )
+                self.assertNotEqual(
+                    code, 0,
+                    "{} can be passed by echoing its own trigger words:\n{}".format(
+                        task_id, output
+                    ),
+                )
+
+    def test_an_empty_answer_is_rejected(self):
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                code, _output = self.run_grader(task_id, "{}")
+                self.assertNotEqual(code, 0)
+
+    def test_triggers_scattered_across_the_answer_are_rejected(self):
+        """Substring search over the whole document is not a finding.
+
+        One word per sentence, no sentence making a claim: every needle is
+        present and yet nothing has been argued.
+        """
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                code, output = self.run_grader(task_id, scattered_triggers(task_id))
+                self.assertNotEqual(code, 0, output)
+
+    def test_the_grader_explains_why_it_failed(self):
+        """A grader that only prints FAIL is not debuggable by a candidate."""
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                _code, output = self.run_grader(task_id, "{}")
+                self.assertIn("findings failed", output)
+                self.assertIn("[FAIL]", output)
+                self.assertRegex(output, r"missing:|expected one of:|no single clause")
+
+    def test_every_analysis_fixture_has_a_reference_answer(self):
+        for manifest in iter_fixture_manifests(TASKS_ROOT):
+            task = load_task(manifest)
+            if task.deliverable != "analysis":
+                continue
+            with self.subTest(task=task.task_id):
+                self.assertIn(task.task_id, REFERENCE_ANSWERS)
+
+    def test_reference_answers_are_tracked(self):
+        for filename in REFERENCE_ANSWERS.values():
+            completed = subprocess.run(
+                ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch", filename],
+                capture_output=True, text=True, timeout=60,
+            )
+            self.assertEqual(
+                completed.returncode, 0,
+                "{} is not tracked".format(filename),
+            )
+
+
+class AnalysisSatisfiableTests(HarnessTestCase):
+    """The reference answer has to survive the whole runner, not just the grader.
+
+    A grader that passes in isolation can still be unreachable through the
+    harness -- grounding can reject the answer first, or the scout schema can
+    reject its shape -- and then the fixture is a wall.
+    """
+
+    def answer_reply(self, task_id: str):
+        from test_realtask_support import ScriptedResponse
+
+        return ScriptedResponse(content=reference_answer(task_id))
+
+    def test_every_reference_answer_reaches_success(self):
+        for task_id in ANALYSIS_TASKS:
+            task, result = self.run_stages(
+                task_id, [self.answer_reply(task_id)], ["single"]
+            )
+            with self.subTest(task=task_id):
+                self.assertEqual(task.deliverable, "analysis")
+                self.assertOutcome(result.attempts[0], Outcome.SUCCESS)
+
+    def test_a_keyword_dump_does_not_reach_success(self):
+        """The adaptive dump from the grader's own tables, through the runner."""
+        from test_realtask_support import ScriptedResponse
+
+        for task_id in ANALYSIS_TASKS:
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content=keyword_dump(task_id))], ["single"]
+            )
+            with self.subTest(task=task_id):
+                self.assertNotEqual(
+                    result.attempts[0].metrics.outcome, Outcome.SUCCESS,
+                    "{} was passed by echoing its own trigger words".format(task_id),
+                )
+
+    def test_an_empty_answer_does_not_reach_success(self):
+        from test_realtask_support import ScriptedResponse
+
+        for task_id in ANALYSIS_TASKS:
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content="{}")], ["single"]
+            )
+            with self.subTest(task=task_id):
+                self.assertNotEqual(
+                    result.attempts[0].metrics.outcome, Outcome.SUCCESS
+                )
 if __name__ == "__main__":
     unittest.main()
