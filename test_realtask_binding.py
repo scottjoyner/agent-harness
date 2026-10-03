@@ -27,6 +27,7 @@ from realtask.binding import (
     HEAD_VERIFIED,
     MODE_EXTERNAL,
     MODE_SNAPSHOT,
+    git_head,
     verify_source_binding,
 )
 from realtask.fixtures import (
@@ -249,7 +250,44 @@ class SourceBindingTests(HarnessTestCase):
         binding = verify_source_binding(task, source_root=root)
         self.assertFalse(binding.ok)
         self.assertIs(binding.outcome, Outcome.SOURCE_MISMATCH)
-        self.assertTrue(any("not a git checkout" in reason for reason in binding.reasons))
+        self.assertTrue(
+            any("not itself a git repository root" in reason
+                for reason in binding.reasons),
+            list(binding.reasons),
+        )
+
+    def test_a_directory_nested_in_another_checkout_cannot_borrow_its_head(self):
+        """A HEAD belonging to an enclosing repository is not provenance.
+
+        ``git rev-parse`` walks up parent directories, so a source root sitting
+        inside some unrelated checkout would otherwise report that checkout's
+        HEAD and appear to bind successfully.
+        """
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        outer = self.tmp / "outer-repo"
+        outer.mkdir()
+        self.git("init", "-q", "-b", "master", str(outer))
+        inner = outer / "some" / "nested" / "path"
+        shutil.copytree(task.source_dir, inner)
+
+        self.assertEqual(
+            git_head(inner),
+            None,
+            "a nested directory must not inherit the enclosing repository's HEAD",
+        )
+        binding = verify_source_binding(task, source_root=inner)
+        self.assertFalse(binding.ok)
+        self.assertIs(binding.outcome, Outcome.SOURCE_MISMATCH)
+        self.assertIsNone(binding.actual_head)
+
+    def test_a_real_repository_root_still_binds(self):
+        """The hardening must not break legitimate external-worktree binding."""
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        clone = self.make_clone(task)
+        real_head = self.git("rev-parse", "HEAD", cwd=clone).stdout.strip()
+        variant = self.variant_fixture(AUTO_INGEST_BUG_FIX, real_head)
+        self.assertEqual(git_head(clone), real_head)
+        self.assertTrue(verify_source_binding(variant, source_root=clone).ok)
 
     def test_snapshot_mode_never_claims_a_verified_head(self):
         task = self.task(AUTO_INGEST_BUG_FIX)

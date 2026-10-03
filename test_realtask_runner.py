@@ -29,6 +29,7 @@ from test_realtask_support import (
 )
 
 from realtask.adapter import AdapterError, ScriptedAdapter, ScriptedResponse
+from realtask.fixtures import load_task
 from realtask.binding import binding_prompt_block
 from realtask.evaluation import TESTS_DIRNAME
 from realtask.metrics import grounding_failure, grounding_from_text
@@ -561,6 +562,237 @@ class SmallRefactorTests(HarnessTestCase):
         self.assertTrue(state.metrics.patch.applied)
         stdout = "\n".join(c.stdout for c in state.metrics.tests.targeted)
         self.assertIn("test_driver_close_is_stated_in_one_place", stdout)
+
+
+class AcceptanceTimeoutTests(HarnessTestCase):
+    """A hung acceptance command is TIMEOUT, not a test failure."""
+
+    def slow_fixture(self):
+        import json as _json
+        import shutil as _shutil
+
+        root = self.tmp / "slow-fixture"
+        if root.exists():
+            _shutil.rmtree(root)
+        _shutil.copytree(TASKS_ROOT / AUTO_INGEST_BUG_FIX, root)
+        payload = _json.loads((root / "task.json").read_text())
+        payload["acceptance"]["targeted"] = [[
+            "${PYTHON}", "-c",
+            "import time; time.sleep(30)",
+        ]]
+        payload["acceptance"]["broader"] = []
+        (root / "task.json").write_text(_json.dumps(payload, indent=2, sort_keys=True))
+        from test_realtask_support import seal_quietly
+
+        seal_quietly(root)
+        return load_task(root / "task.json")
+
+    def test_hung_acceptance_command_is_timeout(self):
+        task = self.slow_fixture()
+        runner = self.runner(
+            [patch_reply()], options=RunnerOptions(test_timeout_s=1.0)
+        )
+        result = runner.run_task(task, ["single"])
+        state = result.attempts[0]
+        self.assertOutcome(state, Outcome.TIMEOUT)
+        command = state.metrics.tests.targeted[0]
+        self.assertTrue(command.timed_out)
+        self.assertFalse(command.passed)
+        self.assertTrue(
+            any("test timeout" in note for note in state.metrics.notes),
+            list(state.metrics.notes),
+        )
+
+    def test_timeout_is_reported_in_the_command_evidence(self):
+        task = self.slow_fixture()
+        runner = self.runner([patch_reply()], options=RunnerOptions(test_timeout_s=1.0))
+        result = runner.run_task(task, ["single"])
+        self.assertIn("timed_out=True", result.attempts[0].test_evidence_text)
+
+
+class HarnessFailureTests(HarnessTestCase):
+    """Always-emit: an unexpected harness failure must not erase the run."""
+
+    def test_unexpected_error_in_an_attempt_is_recorded_not_raised(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        # One reply for the single attempt, then a full scout/implement/review
+        # sequence so the swarm actually reaches evaluation before it blows up.
+        runner = self.runner(
+            [patch_reply(), scout_reply(), patch_reply(), review_reply("accept")]
+        )
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("simulated harness failure")
+
+        runner.evaluate = explode
+        result = runner.run_task(task, ["single", "swarm"])
+        self.assertEqual(len(result.attempts), 2)
+        for state in result.attempts:
+            self.assertOutcome(state, Outcome.PROTOCOL_FAILURE)
+            self.assertIn("RuntimeError: simulated harness failure", state.metrics.harness_error)
+            self.assertTrue(
+                any("evidence retained" in note for note in state.metrics.notes),
+                list(state.metrics.notes),
+            )
+        self.assertEqual(
+            result.attempts[0].metrics.harness_error,
+            result.attempts[1].metrics.harness_error,
+            "both attempts failed for the same reason, as expected here",
+        )
+        self.assertNotEqual(
+            result.attempts[0].metrics.attempt_id,
+            result.attempts[1].metrics.attempt_id,
+            "attempt ids must stay unique across strategies",
+        )
+
+    def test_a_failing_attempt_does_not_stop_later_ones(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner([patch_reply(), patch_reply()])
+        calls = {"n": 0}
+        real = runner.evaluate
+
+        def flaky(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient harness failure")
+            return real(*args, **kwargs)
+
+        runner.evaluate = flaky
+        result = runner.run_task(task, ["single"], single_attempts=2)
+        first, second = result.attempts
+        self.assertIsNotNone(first.metrics.harness_error)
+        self.assertIsNone(second.metrics.harness_error)
+        self.assertOutcome(second, Outcome.SUCCESS)
+
+    def test_evidence_is_still_written_after_a_harness_error(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner([patch_reply()])
+        runner.evaluate = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+        result = runner.run_task(task, ["single"])
+
+        self.assertTrue((self.run_dir.path / "metrics.json").is_file())
+        self.assertTrue((self.run_dir.path / "single" / "metrics.json").is_file())
+        self.assertTrue((self.run_dir.path / "single" / "result.json").is_file())
+        metrics = json.loads((self.run_dir.path / "metrics.json").read_text())
+        self.assertIn("boom", metrics["attempts"][0]["harness_error"])
+        self.assertEqual(metrics["attempts"][0]["outcome"], "PROTOCOL_FAILURE")
+
+    def test_a_lost_artifact_write_is_recorded_not_swallowed(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner([patch_reply()])
+        runner._write_task_artifacts = lambda *a, **k: (_ for _ in ()).throw(
+            OSError("disk full")
+        )
+        result = runner.run_task(task, ["single"])
+        self.assertIn("disk full", result.attempts[0].metrics.harness_error)
+        failure = json.loads(
+            (self.run_dir.path / "artifact-write-failure.json").read_text()
+        )
+        self.assertIn("disk full", failure["error"])
+
+
+class SourceContextTests(HarnessTestCase):
+    """Bounded prompt context must be bounded honestly."""
+
+    def test_truncation_is_recorded_when_context_exceeds_the_budget(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner(
+            [patch_reply()], options=RunnerOptions(max_source_bytes=1024)
+        )
+        result = runner.run_task(task, ["single"])
+        notes = result.attempts[0].metrics.notes
+        self.assertTrue(
+            any("source context truncated" in note for note in notes), list(notes)
+        )
+        self.assertTrue(any("max_source_bytes=1024" in note for note in notes))
+
+    def test_truncated_context_is_marked_in_the_prompt(self):
+        from realtask.adapter import ScriptedAdapter
+
+        adapter = ScriptedAdapter([patch_reply()])
+        from realtask.evidence import RunDirectory
+
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = BenchmarkRunner(
+            adapter,
+            RunDirectory(self.tmp / "trunc", "t"),
+            RunnerOptions(max_source_bytes=1024),
+            work_root=self.tmp / "truncwork",
+            harness_root=REPO_ROOT,
+        )
+        runner.run_task(task, ["single"])
+        runner.close()
+        prompt = adapter.requests[0].user
+        self.assertIn("(TRUNCATED)", prompt)
+
+    def test_no_truncation_when_the_budget_is_generous(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner(
+            [patch_reply()], options=RunnerOptions(max_source_bytes=10_000_000)
+        )
+        result = runner.run_task(task, ["single"])
+        self.assertFalse(
+            any("truncated" in note for note in result.attempts[0].metrics.notes)
+        )
+
+
+class MultipleSingleAttemptTests(HarnessTestCase):
+    def test_several_single_attempts_all_run(self):
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply(), patch_reply(), patch_reply()],
+            ["single"], single_attempts=3,
+        )
+        self.assertEqual(len(result.attempts), 3)
+        for state in result.attempts:
+            self.assertOutcome(state, Outcome.SUCCESS)
+
+    def test_comparison_picks_the_best_of_several_singles(self):
+        from test_realtask_support import NON_APPLYING_PATCH
+
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [patch_reply(NON_APPLYING_PATCH), patch_reply(), patch_reply()],
+            ["single"], single_attempts=3,
+        )
+        from realtask.compare import build_comparison
+
+        comparison = build_comparison(
+            "t", "bug_fix", "f", [s.metrics for s in result.attempts], None
+        )
+        self.assertEqual(len(comparison["single_attempts_considered"]), 3)
+        self.assertEqual(
+            len({m["attempt_id"] for m in comparison["single_attempts_considered"]}), 3,
+            "each single attempt must have its own id",
+        )
+        self.assertEqual(comparison["best_single"]["quality"]["outcome"], "SUCCESS")
+        chosen = [m for m in comparison["single_attempts_considered"]
+                  if m["attempt_id"] == comparison["best_single"]["attempt_id"]]
+        self.assertEqual(len(chosen), 1)
+        self.assertEqual(chosen[0]["outcome"], "SUCCESS")
+        self.assertIn("failure-rank", comparison["best_single_selection_rule"])
+
+
+class RequireHeadTests(HarnessTestCase):
+    def test_require_head_on_a_snapshot_without_git_fails_closed(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner(
+            [patch_reply()], options=RunnerOptions(require_head=True)
+        )
+        result = runner.run_task(task, ["single"])
+        state = result.attempts[0]
+        self.assertOutcome(state, Outcome.SOURCE_MISMATCH)
+        self.assertEqual(state.metrics.model_calls, 0)
+        self.assertTrue(
+            any("not itself a git repository root" in reason
+                for reason in state.metrics.notes),
+            list(state.metrics.notes),
+        )
+
+    def test_without_require_head_the_snapshot_is_accepted(self):
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        runner = self.runner([patch_reply()], options=RunnerOptions(require_head=False))
+        result = runner.run_task(task, ["single"])
+        self.assertOutcome(result.attempts[0], Outcome.SUCCESS)
 
 
 class AnalysisDeliverableTests(HarnessTestCase):

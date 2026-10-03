@@ -59,7 +59,12 @@ _EXPLANATIONS: Dict[Outcome, str] = {
     Outcome.GROUNDING_FAILURE: "Model did not ground its answer in the bound source files.",
     Outcome.EMPTY_OUTPUT: "Model returned no usable content.",
     Outcome.TRUNCATED: "Model output ended early (finish_reason=length or unterminated structure).",
-    Outcome.TIMEOUT: "Model call exceeded its configured deadline.",
+    Outcome.TIMEOUT: (
+        "A bounded resource was exhausted: a model call exceeded its deadline, or an "
+        "allow-listed acceptance command exceeded the test timeout. A hung test suite is "
+        "reported as TIMEOUT rather than as a test failure, because not-finished and "
+        "finished-and-failed are different findings."
+    ),
     Outcome.INVALID_PATCH: "Candidate patch text was not a well-formed unified diff.",
     Outcome.PATCH_DOES_NOT_APPLY: "Candidate patch parsed but did not apply to the bound source.",
     Outcome.TARGETED_TEST_FAILURE: "Allow-listed targeted acceptance commands did not all pass.",

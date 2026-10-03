@@ -405,6 +405,7 @@ def command_run(args: argparse.Namespace) -> int:
     results = []
     integration_overhead = 0.0
     comparisons = []
+    harness_errors: List[str] = []
     for task, task_dir in zip(tasks, task_dirs):
         runner = BenchmarkRunner(
             adapter,
@@ -440,6 +441,14 @@ def command_run(args: argparse.Namespace) -> int:
             )
             for note in state.metrics.notes:
                 print("    note: {}".format(note))
+            if state.metrics.harness_error:
+                harness_errors.append(
+                    "{}::{}".format(task.task_id, state.strategy)
+                )
+                print(
+                    "    HARNESS ERROR: {}".format(state.metrics.harness_error),
+                    file=sys.stderr,
+                )
         if not result.authoritative_source_unchanged:
             print(
                 "INTEGRITY FAILURE: the fixture tree changed during the run",
@@ -481,7 +490,8 @@ def command_run(args: argparse.Namespace) -> int:
             "integrity": {
                 "authoritative_source_unchanged": all(
                     r.authoritative_source_unchanged for r in results
-                )
+                ),
+                "harness_errors": harness_errors,
             },
             "authority": {
                 "authoritative_repo_mutated": False,
@@ -494,6 +504,15 @@ def command_run(args: argparse.Namespace) -> int:
     print("evidence: {}".format(run_dir.path))
     for path in comparisons:
         print("  comparison: {}".format(path))
+    if harness_errors:
+        # Evidence was still emitted for every task. Exit 3 so a controller
+        # distinguishes "the models did badly" from "the harness did badly".
+        print(
+            "\n{} attempt(s) hit a harness error; evidence is complete but the run "
+            "is not clean. Exit 3.".format(len(harness_errors)),
+            file=sys.stderr,
+        )
+        return 3
     return 0
 
 

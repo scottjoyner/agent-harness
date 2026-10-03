@@ -111,8 +111,39 @@ class SourceBinding:
         }
 
 
+def git_top_level(root: Path) -> Optional[str]:
+    """The repository root that owns ``root``, or ``None`` if there is none.
+
+    ``git rev-parse`` walks up parent directories, so a directory nested inside
+    an unrelated checkout would otherwise report *that* checkout's HEAD. Binding
+    must be to the tree it was told about, so callers compare this against the
+    requested root and fail closed when they differ.
+    """
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    top = completed.stdout.strip()
+    return Path(top).resolve() if top else None
+
+
 def git_head(root: Path) -> Optional[str]:
-    """``git -C root rev-parse HEAD`` or ``None`` when unavailable."""
+    """``HEAD`` of the checkout that ``root`` *is the root of*.
+
+    Returns ``None`` when ``root`` is not itself a repository root, including the
+    case where it merely sits inside one. A HEAD belonging to some enclosing
+    repository is not provenance for this source root.
+    """
+    top = git_top_level(root)
+    if top is None or top != Path(root).resolve():
+        return None
     try:
         completed = subprocess.run(
             ["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -218,7 +249,9 @@ def verify_source_binding(
         head_status = HEAD_VERIFIED
         if actual_head is None:
             reasons.append(
-                "external source root is not a git checkout, cannot verify HEAD"
+                "external source root is not itself a git repository root, so its "
+                "HEAD cannot be verified (a directory nested inside another checkout "
+                "does not count)"
             )
         elif actual_head != expected_head:
             reasons.append(
@@ -229,7 +262,8 @@ def verify_source_binding(
         head_status = HEAD_VERIFIED
         if actual_head is None:
             reasons.append(
-                "require_head requested but source root is not a git checkout"
+                "require_head requested but the source root is not itself a git "
+                "repository root, so there is no HEAD to verify"
             )
         elif actual_head != expected_head:
             reasons.append(

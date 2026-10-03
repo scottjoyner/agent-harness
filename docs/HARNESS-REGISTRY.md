@@ -37,7 +37,7 @@ forward rather than rewritten:
 | atomic write: tempfile → fsync → `os.replace` → fsync dir | `fixgit_repro_v1.py:77-95` |
 | deadline discipline, process-group kill | `fixgit_repro_v1.py:24-28, :31-49, :52-75` |
 | git revision provenance stamp | `fixgit_repro_v1.py:122-134` |
-| always-emit invariant (a crashed run still leaves a result) | `fixgit_repro_v1.py:178-199, :386-421` |
+| always-emit invariant (a crashed run still leaves a result) | `fixgit_repro_v1.py:178-199, :386-421` — implemented in `realtask/runner.py` `_run_guarded` |
 | objective verifier overrides model judgement | `run_dual_4.py:12-20, :32` |
 | fixture loading convention (`Path(__file__).parent / ...`) | `cpm_tb2_bench.py:199` |
 | multi-step loop with feedback and repeat suppression | `cpm_tb2_bench.py:143-191` |

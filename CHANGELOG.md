@@ -30,7 +30,7 @@
   benchmark script, the reconciliation decision, what was carried forward, and
   the conclusively-dead-code findings.
 - **`docs/REAL-TASK-BENCHMARK.md`** — the harness guide.
-- **`test_realtask_*.py`** — 202 tests across fixtures/binding, roles, patches,
+- **`test_realtask_*.py`** — 220 tests across fixtures/binding, roles, patches,
   the runner, evidence, endpoint configuration and the CLI (including a full run
   against a loopback OpenAI-compatible endpoint). The 24 pre-existing
   `test_fixgit_repro_v1.py` cases still pass unmodified.
@@ -80,6 +80,31 @@ things claimed but not actually exercised, plus two real bugs. All are fixed:
 - Evaluation work trees were created inside the evidence root as `work/`, which
   made a listing of that root ambiguous. They now live in a per-run sibling
   `<run_id>.work/` directory and are removed when the run ends.
+
+A third pass found four more unproven claims and three more real defects:
+
+- **The always-emit invariant was claimed but never implemented.** The registry
+  listed it as carried forward from `fixgit_repro_v1.py:178-199`; the runner had
+  no crash handling at all, so one unexpected exception lost every artifact for
+  that task. Attempts now run under a guard: an unexpected failure terminates
+  that attempt with a recorded outcome and `harness_error`, evidence is still
+  written, later tasks still run, and the process exits 3 so a controller can
+  tell a bad harness from a bad model.
+- **`REGRESSION_FAILURE` needed a broader tier, which then needed the real
+  `models` module**, so the campaign fixture now snapshots five source files
+  rather than two.
+- **A hung acceptance command was reported as `TARGETED_TEST_FAILURE`.** Not
+  finished and finished-and-failed are different findings; a timed-out
+  acceptance command is now `TIMEOUT`, which the precedence order already ranked
+  correctly.
+- **`git_head` could bind to a parent repository.** `git rev-parse` walks up, so
+  a `--source-root` nested inside an unrelated checkout reported that checkout's
+  HEAD. The source root must now be a repository root itself.
+- **Attempt ids collided.** Repeated attempts of one strategy all used
+  `<task>::<strategy>`, making the best-single lookup ambiguous. Ids now carry an
+  ordinal.
+- **`--single-attempts`, `--max-source-bytes` and `--require-head` were
+  untested** despite all being documented. All three now have coverage.
 
 ### Known limitations
 

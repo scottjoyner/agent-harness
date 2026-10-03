@@ -59,7 +59,9 @@ the file) or by `REALTASK_ENDPOINT_BASE_URL` / `REALTASK_ENDPOINT_MODEL`. A test
 asserts all three inputs produce identical endpoint identity.
 
 The harness does **not** discover hosts, probe subnets, or start servers. It
-POSTs to the URL it is given.
+POSTs to the URL it is given. Exit codes: `0` clean, `1` bad arguments or
+fixtures, `2` an integrity failure (the authoritative source changed), `3` a
+harness error — see §9a.
 
 ## 2. Stages
 
@@ -152,6 +154,11 @@ Two modes:
   compared with `git rev-parse HEAD` and a mismatch fails closed. This is the
   mode that refuses to benchmark a different clone.
 
+`git rev-parse` walks up parent directories, so a source root merely *nested
+inside* an unrelated checkout would otherwise report that checkout's HEAD and
+appear to bind. The harness therefore requires the source root to be a repository
+root itself; anything else fails closed with an explicit reason.
+
 `--require-head` additionally forces live HEAD verification in snapshot mode
 (used when the snapshot is itself a git checkout).
 
@@ -237,7 +244,7 @@ Every attempt ends with exactly one of:
 | `GROUNDING_FAILURE` | the answer did not engage with the bound source |
 | `EMPTY_OUTPUT` | no usable content |
 | `TRUNCATED` | output ended early |
-| `TIMEOUT` | a call exceeded its deadline |
+| `TIMEOUT` | a bounded resource was exhausted: a model call exceeded its deadline, or an allow-listed acceptance command exceeded the test timeout |
 | `INVALID_PATCH` | not a well-formed unified diff, or refused by the safety screen |
 | `PATCH_DOES_NOT_APPLY` | well formed, but does not apply to the bound source |
 | `TARGETED_TEST_FAILURE` | targeted acceptance did not all pass |
@@ -288,6 +295,11 @@ addressable:
 Token counts are `null` when the endpoint does not report `usage`. They are never
 estimated. TTFT is `null` when streaming is disabled with `--no-stream`.
 
+Attempts are separately identified as `<task_id>::<strategy>`, with an ordinal
+suffix when a strategy runs more than once, so `metrics.json`,
+`TaskMetrics.attempt()` and the comparison's best-single lookup all address the
+same attempt unambiguously.
+
 The single grounding scalar, when present, is
 `expected_overlap * (1 - hallucinated_rate)`. It exists for ranking runs and is
 never used as a task verdict on its own.
@@ -331,6 +343,23 @@ in this repository.
 
 API keys are never written. The endpoint identity records `api_key_set: true|false`
 and nothing else.
+
+## 9a. When the harness itself fails
+
+A harness bug, a full disk, an unreadable fixture: none of those are the model's
+fault, and none of them should erase the attempts that already succeeded.
+
+- Every attempt runs under a guard. An unexpected exception terminates that
+  attempt with a recorded outcome and a populated `harness_error`, and the run
+  continues to the next task.
+- Evidence is still written: `metrics.json`, `test-results.json` and the per-role
+  directories all appear, with `harness_error` set.
+- If writing the task-level artifacts themselves fails, the failure is recorded
+  in `artifact-write-failure.json` rather than swallowed.
+- The run exits **3** when any attempt hit a harness error, distinct from 0 for
+  a clean run. `manifest.json` records `integrity.harness_errors`. A controller can
+  therefore tell "the models did badly" (exit 0, bad outcomes) from "the harness
+  did badly" (exit 3).
 
 ## 10. Single vs swarm comparison
 
@@ -399,13 +428,13 @@ python3 -m pytest test_realtask_*.py -q
 
 | Module | Covers |
 |---|---|
-| `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets |
+| `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
-| `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, and that the runner never modifies the authoritative fixture |
+| `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
 | `test_realtask_endpoint.py` | the three endpoint inputs (argv, config file, environment) agree; API keys come from the environment and never reach evidence; no fleet node is named anywhere in the harness or its entrypoint |
-| `test_realtask_cli.py` | validate/list/plan-command; each stage runnable standalone (`scout`, `implement`, `review --patch-file`); a multi-task run keeping per-task evidence; and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
+| `test_realtask_cli.py` | validate/list/plan-command; each stage runnable standalone (`scout`, `implement`, `review --patch-file`); a multi-task run keeping per-task evidence; exit-code semantics (0 clean, 3 harness error, model failure is neither); and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
 
 `test_realtask_cli.py` starts a `ThreadingHTTPServer` on `127.0.0.1:0` purely as
 a stand-in for a model runtime someone else started. It binds loopback only and

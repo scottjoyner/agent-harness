@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import unittest.mock
 import sys
 import tempfile
 import threading
@@ -205,6 +206,18 @@ class CliTestCase(HarnessTestCase):
     def cli_json(self, *args: str):
         return json.loads(self.cli(*args).stdout)
 
+    def run_dirs(self):
+        """Evidence run directories, excluding harness scratch directories."""
+        out = getattr(self, "out", None)
+        if out is None or not out.is_dir():
+            return []
+        return sorted(
+            p for p in out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()
+        )
+
+    def single_run_dir(self):
+        return self.run_dirs()[0]
+
 
 class ValidateAndListTests(CliTestCase):
     def test_validate_all_fixtures_without_an_endpoint(self):
@@ -302,12 +315,6 @@ class StandaloneStageTests(CliTestCase):
             "--model", "loopback-test-model",
             *extra,
         )
-
-    def single_run_dir(self):
-        return sorted(self.run_dirs())[0]
-
-    def run_dirs(self):
-        return [p for p in self.out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()]
 
     def test_scout_stage_runs_alone(self):
         server = self.endpoint({"scout": scout_payload()})
@@ -461,6 +468,83 @@ class MultiTaskRunTests(CliTestCase):
         )
 
 
+class ExitCodeTests(CliTestCase):
+    """The exit code must distinguish a bad model from a bad harness."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.tmp / "runs"
+
+    def test_clean_run_exits_zero(self):
+        server = LoopbackEndpoint({"single": patch_payload()})
+        self.addCleanup(server.close)
+        self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(self.out), "--base-url", server.base_url, "--model", "m",
+        )
+
+    def test_model_failure_is_not_a_harness_failure(self):
+        """A model that produces nothing usable is evidence, not a harness bug."""
+        server = LoopbackEndpoint({"single": "I am not JSON and there is no diff."})
+        self.addCleanup(server.close)
+        completed = self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(self.out), "--base-url", server.base_url, "--model", "m",
+        )
+        self.assertNotIn("HARNESS ERROR", completed.stderr)
+        self.assertIn("PROTOCOL_FAILURE", completed.stdout)
+        manifest = json.loads(
+            (self.single_run_dir() / "manifest.json").read_text()
+        )
+        self.assertEqual(manifest["integrity"]["harness_errors"], [])
+
+    def test_harness_error_exits_three_but_still_writes_evidence(self):
+        """An unexpected harness failure is exit 3, and evidence is intact.
+
+        Driven in-process rather than by corrupting a source file: the contract
+        under test is the CLI's reporting, not the fault itself. How a harness
+        fault actually arises is covered in test_realtask_runner.
+        """
+        import contextlib
+        import io
+
+        import realtime_bench
+        from realtask.runner import BenchmarkRunner
+
+        server = LoopbackEndpoint({"single": patch_payload()})
+        self.addCleanup(server.close)
+        real_run_task = BenchmarkRunner.run_task
+
+        def faulty(self, task, strategies, **kwargs):
+            result = real_run_task(self, task, strategies, **kwargs)
+            for state in result.attempts:
+                state.metrics.harness_error = "InjectedError: simulated fault"
+            return result
+
+        argv = [
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(self.out), "--base-url", server.base_url, "--model", "m",
+        ]
+        buffer = io.StringIO()
+        with unittest.mock.patch.object(BenchmarkRunner, "run_task", faulty):
+            with contextlib.redirect_stderr(buffer):
+                code = realtime_bench.main(argv)
+        stderr = buffer.getvalue()
+        self.assertEqual(code, 3)
+        self.assertIn("HARNESS ERROR: InjectedError", stderr)
+        self.assertIn("Exit 3", stderr)
+
+        run_dir = sorted(
+            p for p in self.out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()
+        )[0]
+        manifest = json.loads((run_dir / "manifest.json").read_text())
+        self.assertTrue(manifest["integrity"]["harness_errors"])
+        self.assertTrue(manifest["integrity"]["authoritative_source_unchanged"])
+        # The run is flagged, not erased: normal evidence is still on disk.
+        self.assertTrue((run_dir / "metrics.json").is_file())
+        self.assertTrue((run_dir / "single" / "metrics.json").is_file())
+
+
 class RunAgainstLoopbackTests(CliTestCase):
     def setUp(self):
         super().setUp()
@@ -488,13 +572,6 @@ class RunAgainstLoopbackTests(CliTestCase):
             "--node", "unit-test",
             *extra,
             expect=expect,
-        )
-
-    def run_dirs(self):
-        if not self.out.is_dir():
-            return []
-        return sorted(
-            p for p in self.out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()
         )
 
     def test_single_and_swarm_produce_a_complete_run_directory(self):

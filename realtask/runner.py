@@ -359,6 +359,16 @@ class BenchmarkRunner:
             hint = evaluation.apply_detail.get("outcome_hint")
             state.note(Outcome(hint) if hint in {o.value for o in Outcome} else Outcome.PATCH_DOES_NOT_APPLY)
             return
+        commands = list(evaluation.tests.targeted) + list(evaluation.tests.broader)
+        if any(c.timed_out for c in commands):
+            hung = [c for c in commands if c.timed_out]
+            state.note(Outcome.TIMEOUT)
+            state.metrics.notes.append(
+                "acceptance command exceeded the {}s test timeout: {}".format(
+                    self.options.test_timeout_s, " ".join(hung[0].argv)
+                )
+            )
+            return
         if evaluation.syntax_ok is False:
             state.note(Outcome.TARGETED_TEST_FAILURE)
             return
@@ -415,10 +425,12 @@ class BenchmarkRunner:
     # strategies
     # ------------------------------------------------------------------
 
-    def run_single(self, task: RealTask, binding: SourceBinding) -> AttemptState:
+    def run_single(
+        self, task: RealTask, binding: SourceBinding, state: Optional[AttemptState] = None
+    ) -> AttemptState:
         if task.deliverable == "analysis":
-            return self._run_single_analysis(task, binding)
-        state = self._new_state(task, "single")
+            return self._run_single_analysis(task, binding, state)
+        state = state or self._new_state(task, "single")
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
         prompt = role_contracts.single_prompt(
@@ -467,8 +479,10 @@ class BenchmarkRunner:
         state.metrics.notes.extend(self._context_notes(task, truncated))
         return state
 
-    def run_scout(self, task: RealTask, binding: SourceBinding) -> AttemptState:
-        state = self._new_state(task, "scout")
+    def run_scout(
+        self, task: RealTask, binding: SourceBinding, state: Optional[AttemptState] = None
+    ) -> AttemptState:
+        state = state or self._new_state(task, "scout")
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
         prompt = role_contracts.scout_prompt(
@@ -501,10 +515,13 @@ class BenchmarkRunner:
         return state
 
     def run_implement(
-        self, task: RealTask, binding: SourceBinding, scout: Optional[ScoutResult] = None
+        self,
+        task: RealTask,
+        binding: SourceBinding,
+        scout: Optional[ScoutResult] = None,
+        state: Optional[AttemptState] = None,
     ) -> AttemptState:
-        strategy = "implement"
-        state = self._new_state(task, strategy)
+        state = state or self._new_state(task, "implement")
         state.scout = scout
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
@@ -554,6 +571,7 @@ class BenchmarkRunner:
         refinement_round: int = 0,
         candidate_label: str = "CANDIDATE PATCH",
         allow_refinement: Optional[bool] = None,
+        state: Optional[AttemptState] = None,
     ) -> Tuple[AttemptState, Optional[EvaluationOutcome]]:
         """Review a candidate patch, optionally spending one refinement.
 
@@ -561,7 +579,7 @@ class BenchmarkRunner:
         refinement ran, the final validation evidence).
         """
         strategy = "review" if refinement_round == 0 else "swarm-refinement"
-        state = self._new_state(task, strategy)
+        state = state or self._new_state(task, strategy)
         state.scout = scout
 
         started = self._overhead_start()
@@ -690,9 +708,11 @@ class BenchmarkRunner:
             )
         state.refinements_used += 1
 
-    def _run_single_analysis(self, task: RealTask, binding: SourceBinding) -> AttemptState:
+    def _run_single_analysis(
+        self, task: RealTask, binding: SourceBinding, state: Optional[AttemptState] = None
+    ) -> AttemptState:
         """Single attempt on an analysis-only task: scout schema, no patch."""
-        state = self._new_state(task, "single")
+        state = state or self._new_state(task, "single")
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
         prompt = role_contracts.single_analysis_prompt(
@@ -734,10 +754,12 @@ class BenchmarkRunner:
         state.metrics.notes.extend(self._context_notes(task, truncated))
         return state
 
-    def run_swarm(self, task: RealTask, binding: SourceBinding) -> AttemptState:
+    def run_swarm(
+        self, task: RealTask, binding: SourceBinding, state: Optional[AttemptState] = None
+    ) -> AttemptState:
         if task.deliverable == "analysis":
-            return self._run_swarm_analysis(task, binding)
-        state = self._new_state(task, "swarm")
+            return self._run_swarm_analysis(task, binding, state)
+        state = state or self._new_state(task, "swarm")
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
         scout_prompt_text = role_contracts.scout_prompt(
@@ -811,7 +833,9 @@ class BenchmarkRunner:
         state.metrics.notes.extend(self._context_notes(task, truncated))
         return state
 
-    def _run_swarm_analysis(self, task: RealTask, binding: SourceBinding) -> AttemptState:
+    def _run_swarm_analysis(
+        self, task: RealTask, binding: SourceBinding, state: Optional[AttemptState] = None
+    ) -> AttemptState:
         """Swarm on an analysis-only task: scout, then independent review.
 
         There is no implementer and no refinement round here: a candidate
@@ -819,7 +843,7 @@ class BenchmarkRunner:
         terms of patch revision. A ``revise`` verdict therefore terminates the
         attempt as ``REVIEW_REJECTED``.
         """
-        state = self._new_state(task, "swarm")
+        state = state or self._new_state(task, "swarm")
         contents, truncated = self.load_sources(task, binding)
         sources = role_contracts.source_block(task.prompt_files(), contents, truncated)
         scout_prompt_text = role_contracts.scout_prompt(
@@ -914,13 +938,43 @@ class BenchmarkRunner:
             )
         return notes
 
-    def _new_state(self, task: RealTask, strategy: str) -> AttemptState:
+    def _new_state(self, task: RealTask, strategy: str, ordinal: int = 0) -> AttemptState:
+        """Create an attempt.
+
+        ``ordinal`` keeps attempt ids unique when a strategy runs more than once,
+        so ``metrics.json``, ``TaskMetrics.attempt()`` and the comparison's
+        best-single lookup all address the same attempt unambiguously.
+        """
+        attempt_id = "{}::{}".format(task.task_id, strategy)
+        if ordinal:
+            attempt_id = "{}#{}".format(attempt_id, ordinal + 1)
         metrics = AttemptMetrics(
-            attempt_id="{}::{}".format(task.task_id, strategy),
+            attempt_id=attempt_id,
             strategy=strategy,
             outcome=Outcome.PROTOCOL_FAILURE,
         )
-        return AttemptState(attempt_id=metrics.attempt_id, strategy=strategy, metrics=metrics)
+        return AttemptState(attempt_id=attempt_id, strategy=strategy, metrics=metrics)
+
+    def _run_guarded(self, state: AttemptState, call):
+        """Run one attempt, converting an unexpected failure into evidence.
+
+        Always-emit invariant, carried forward from
+        ``fixgit_repro_v1.py:178-199``. A harness bug, a full disk, an
+        unreadable fixture: none of those are the model's fault, and none of them
+        should erase the attempts that already succeeded. The attempt terminates
+        with a recorded outcome and ``harness_error`` set, and the run continues.
+        """
+        try:
+            return call()
+        except Exception as exc:  # noqa: BLE001 - deliberately broad, by design
+            state.metrics.harness_error = "{}: {}".format(type(exc).__name__, exc)
+            state.metrics.notes.append(
+                "harness error during {} attempt; evidence retained: {}".format(
+                    state.strategy, state.metrics.harness_error
+                )
+            )
+            state.note(Outcome.PROTOCOL_FAILURE)
+            return state
 
     def close(self) -> None:
         for worktree in self._worktrees:
@@ -974,27 +1028,62 @@ class BenchmarkRunner:
         )
 
         states: List[AttemptState] = []
+        seen: Dict[str, int] = {}
+
+        def ordinal(strategy: str) -> int:
+            """Attempt ids stay unique when a strategy runs more than once."""
+            index = seen.get(strategy, 0)
+            seen[strategy] = index + 1
+            return index
+
         for strategy in strategies:
             if strategy == "single":
-                for _ in range(max(1, single_attempts)):
-                    states.append(self.run_single(task, binding))
+                for index in range(max(1, single_attempts)):
+                    state = self._new_state(task, "single", ordinal=index)
+                    states.append(
+                        self._run_guarded(
+                            state, lambda: self.run_single(task, binding, state)
+                        )
+                    )
             elif strategy == "scout":
-                states.append(self.run_scout(task, binding))
+                state = self._new_state(task, "scout", ordinal("scout"))
+                states.append(
+                    self._run_guarded(
+                        state, lambda: self.run_scout(task, binding, state)
+                    )
+                )
             elif strategy == "implement":
-                states.append(self.run_implement(task, binding, scout_override))
+                state = self._new_state(task, "implement", ordinal("implement"))
+                states.append(
+                    self._run_guarded(
+                        state,
+                        lambda: self.run_implement(task, binding, scout_override, state),
+                    )
+                )
             elif strategy == "review":
                 if patch_override is None:
-                    state = self._new_state(task, "review")
+                    state = self._new_state(task, "review", ordinal("review"))
                     state.note(Outcome.PROTOCOL_FAILURE)
                     state.metrics.notes.append("review stage requires a candidate patch")
                     states.append(state)
                 else:
-                    state, _ = self.run_review(
-                        task, binding, patch_override, "", scout_override
+                    state = self._new_state(task, "review", ordinal("review"))
+                    states.append(
+                        self._run_guarded(
+                            state,
+                            lambda: self.run_review(
+                                task, binding, patch_override, "", scout_override,
+                                state=state,
+                            )[0],
+                        )
                     )
-                    states.append(state)
             elif strategy == "swarm":
-                states.append(self.run_swarm(task, binding))
+                state = self._new_state(task, "swarm", ordinal("swarm"))
+                states.append(
+                    self._run_guarded(
+                        state, lambda: self.run_swarm(task, binding, state)
+                    )
+                )
             else:
                 raise ValueError("unknown strategy {!r}".format(strategy))
 
@@ -1003,7 +1092,20 @@ class BenchmarkRunner:
             task_metrics.attempts.append(state.metrics)
             self._write_attempt_evidence(task, state, binding)
 
-        self._write_task_artifacts(task, task_metrics, states, time.monotonic() - started)
+        try:
+            self._write_task_artifacts(task, task_metrics, states, time.monotonic() - started)
+        except Exception as exc:  # noqa: BLE001
+            # metrics.json and test-results.json are the two artifacts a reader
+            # needs most; losing them to a serialisation bug would be the worst
+            # possible outcome, so record the failure in the manifest instead.
+            for state in states:
+                if state.metrics.harness_error is None:
+                    state.metrics.harness_error = "{}: {}".format(type(exc).__name__, exc)
+            self.run_dir.write_json(
+                "artifact-write-failure.json",
+                {"error": state.metrics.harness_error if states else None,
+                 "task_id": task.task_id},
+            )
         after = _tree_fingerprint(task)
         unchanged = before == after
         return TaskRunResult(

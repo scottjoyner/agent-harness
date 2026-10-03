@@ -239,6 +239,9 @@ class AttemptMetrics:
     harness_overhead_s: float = 0.0
     outcomes_seen: Tuple[Outcome, ...] = ()
     notes: List[str] = field(default_factory=list)
+    #: Set when the harness itself failed unexpectedly, as distinct from anything
+    #: the model did. The attempt still terminates and still writes evidence.
+    harness_error: Optional[str] = None
 
     # -- aggregates, all derived, none authoritative ----------------------
 
@@ -296,6 +299,7 @@ class AttemptMetrics:
             "total_tokens": self.total_tokens,
             "refinements_used": self.refinements_used,
             "refinement_budget": self.refinement_budget,
+            "harness_error": self.harness_error,
             "outcomes_seen": [o.value for o in self.outcomes_seen],
             "notes": list(self.notes),
             "calls": [c.to_dict() for c in self.calls],

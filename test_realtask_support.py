@@ -170,6 +170,19 @@ def empty_reply() -> ScriptedResponse:
     return ScriptedResponse(content="   \n  \n")
 
 
+def seal_quietly(root: Path) -> None:
+    """Re-seal a fixture copy after mutating its manifest."""
+    import contextlib
+    import io
+
+    import seal_realtask_fixture
+    from realtask.fixtures import load_task
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        seal_realtask_fixture.seal(root, "2026-10-02T00:00:00Z", write=True)
+    load_task(Path(root) / "task.json")
+
+
 def new_file_patch(rel: str, body: str) -> str:
     """Build a well-formed 'new file' unified diff for ``rel``."""
     lines = body.splitlines(keepends=True)
