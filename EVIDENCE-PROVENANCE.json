@@ -11,7 +11,7 @@
     "run_layout": [
       "manifest.json",
       "task.json",
-      "source-manifest.json",
+      "source-manifest.json  + source-manifest.verified.json",
       "single/",
       "scout/",
       "implementer/",
@@ -20,7 +20,7 @@
       "patch.diff",
       "test-results.json",
       "metrics.json",
-      "comparison-<task_id>.json"
+      "comparison.json  (per task; tasks/<task_id>/ when several)"
     ],
     "schema_markers": [
       "realtask.run_manifest.v1",
@@ -36,7 +36,8 @@
       "records agent-harness git SHA, fixture SHA, endpoint identity and timestamps",
       "keeps role-separated attempts addressable per role directory",
       "refuses to run on source mismatch rather than substituting another clone",
-      "writes every artifact atomically"
+      "writes every artifact atomically",
+      "separates targeted acceptance from a broader regression tier, and reports REGRESSION_FAILURE when a correct repair breaks the rest of the module"
     ]
   },
   "legacy_artifacts": [
@@ -44,105 +45,212 @@
       "path": "benchmark.py",
       "kind": "script",
       "producer_schema": "benchmark_<model>_<timestamp>.json (unversioned)",
-      "output_globs": ["benchmark_*.json"],
+      "output_globs": [
+        "benchmark_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["categorised prompt suite", "server-reported tok/s", "both usage halves"],
-      "gaps": ["hardcoded in-process task list", "no fixtures on disk", "no source binding", "no patch application", "no role separation", "no atomic writes", "no TTFT (no streaming)"],
+      "capabilities": [
+        "categorised prompt suite",
+        "server-reported tok/s",
+        "both usage halves"
+      ],
+      "gaps": [
+        "hardcoded in-process task list",
+        "no fixtures on disk",
+        "no source binding",
+        "no patch application",
+        "no role separation",
+        "no atomic writes",
+        "no TTFT (no streaming)"
+      ],
       "notes": "Only file in the pre-existing zoo that read both prompt and completion token counts plus both server timing fields. Shares its output glob with quick_benchmark.py."
     },
     {
       "path": "quick_benchmark.py",
       "kind": "script",
       "producer_schema": "benchmark_<name>_<timestamp>.json (unversioned)",
-      "output_globs": ["benchmark_*.json"],
+      "output_globs": [
+        "benchmark_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["5-prompt smoke comparison", "tool-call detection"],
-      "gaps": ["model identity only in filename", "request hardcoded to model 'test'", "no fixtures", "no binding", "no tests run"],
+      "capabilities": [
+        "5-prompt smoke comparison",
+        "tool-call detection"
+      ],
+      "gaps": [
+        "model identity only in filename",
+        "request hardcoded to model 'test'",
+        "no fixtures",
+        "no binding",
+        "no tests run"
+      ],
       "notes": "Collides with benchmark.py on the benchmark_*.json glob."
     },
     {
       "path": "fast_bench.py",
       "kind": "script",
       "producer_schema": "bench_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_????????.json"],
+      "output_globs": [
+        "bench_????????.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["single-shot bash extraction from <function> XML", "subprocess execution", "artifact assertions"],
-      "gaps": ["hardcoded port 1235", "no CLI args", "tasks hardcoded in-module", "assertions run in the repo cwd"],
+      "capabilities": [
+        "single-shot bash extraction from <function> XML",
+        "subprocess execution",
+        "artifact assertions"
+      ],
+      "gaps": [
+        "hardcoded port 1235",
+        "no CLI args",
+        "tasks hardcoded in-module",
+        "assertions run in the repo cwd"
+      ],
       "notes": "Origin of the committed junk artifacts in the repo root (test.txt, numbers.txt, count_lines.py, date_script.py, bench_test/)."
     },
     {
       "path": "fast_bench_v2.py",
       "kind": "script",
       "producer_schema": "bench_v2_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v2_*.json"],
+      "output_globs": [
+        "bench_v2_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["substring-based artifact checks", "subprocess timeout handling"],
-      "gaps": ["docstring promises multi-tool handling that was never implemented", "hardcoded port", "no fixtures", "no binding"]
+      "capabilities": [
+        "substring-based artifact checks",
+        "subprocess timeout handling"
+      ],
+      "gaps": [
+        "docstring promises multi-tool handling that was never implemented",
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ]
     },
     {
       "path": "fast_bench_v3.py",
       "kind": "script",
       "producer_schema": "bench_v3_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v3_*.json"],
+      "output_globs": [
+        "bench_v3_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["harder 8-task set with artifact checks"],
-      "gaps": ["checks reference artifacts the model must create in the repo root", "hardcoded port", "no fixtures", "no binding"]
+      "capabilities": [
+        "harder 8-task set with artifact checks"
+      ],
+      "gaps": [
+        "checks reference artifacts the model must create in the repo root",
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ]
     },
     {
       "path": "fast_bench_v4.py",
       "kind": "script",
       "producer_schema": "bench_v4_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v4_*.json"],
+      "output_globs": [
+        "bench_v4_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["CDATA unwrapping in the extractor"],
-      "gaps": ["hardcoded port", "no fixtures", "no binding"]
+      "capabilities": [
+        "CDATA unwrapping in the extractor"
+      ],
+      "gaps": [
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ]
     },
     {
       "path": "fast_bench_v5.py",
       "kind": "script",
       "producer_schema": "bench_v5_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v5_*.json"],
+      "output_globs": [
+        "bench_v5_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["multi-command extraction", "command chaining"],
-      "gaps": ["hardcoded port", "no fixtures", "no binding"]
+      "capabilities": [
+        "multi-command extraction",
+        "command chaining"
+      ],
+      "gaps": [
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ]
     },
     {
       "path": "fast_bench_v6.py",
       "kind": "script",
       "producer_schema": "bench_v6_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v6_*.json"],
+      "output_globs": [
+        "bench_v6_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["run_command helper with structured result", "repeat-attempt path"],
-      "gaps": ["the retry re-runs already-extracted commands, it does not re-call the model", "hardcoded port", "no fixtures", "no binding"]
+      "capabilities": [
+        "run_command helper with structured result",
+        "repeat-attempt path"
+      ],
+      "gaps": [
+        "the retry re-runs already-extracted commands, it does not re-call the model",
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ]
     },
     {
       "path": "fast_bench_v7.py",
       "kind": "script",
       "producer_schema": "bench_v7_<HHMMSS>.json (unversioned)",
-      "output_globs": ["bench_v7_*.json"],
+      "output_globs": [
+        "bench_v7_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["hardcoded per-task fallback command injection on model failure"],
-      "gaps": ["NOT MODEL-ATTRIBUTABLE: lines 166-173 substitute a correct command when the model fails, so its pass rates cannot be read as model quality", "hardcoded port", "no fixtures", "no binding"],
+      "capabilities": [
+        "hardcoded per-task fallback command injection on model failure"
+      ],
+      "gaps": [
+        "NOT MODEL-ATTRIBUTABLE: lines 166-173 substitute a correct command when the model fails, so its pass rates cannot be read as model quality",
+        "hardcoded port",
+        "no fixtures",
+        "no binding"
+      ],
       "notes": "Do not reuse bench_v7_*.json as model-performance evidence. Retained only for history."
     },
     {
       "path": "baremetal_bench.py",
       "kind": "script",
       "producer_schema": "baremetal_results_<HHMMSS>.json (unversioned)",
-      "output_globs": ["baremetal_results_*.json"],
+      "output_globs": [
+        "baremetal_results_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["loads tasks from benchmarks/baremetal/tasks.json", "richest command extractor in the zoo incl. reasoning_content", "three-type objective verifier incl. command_success", "artifact pre-clean", "reads reasoning_content for FP16 models"],
-      "gaps": ["endpoint hardcoded to a Tailscale host", "VIBETHINKER_URL/MODEL constants are dead: call_model hardcodes minicpm5-2b", "single-shot only", "existence+size verification only", "no source binding", "no patch application", "no role separation"],
+      "capabilities": [
+        "loads tasks from benchmarks/baremetal/tasks.json",
+        "richest command extractor in the zoo incl. reasoning_content",
+        "three-type objective verifier incl. command_success",
+        "artifact pre-clean",
+        "reads reasoning_content for FP16 models"
+      ],
+      "gaps": [
+        "endpoint hardcoded to a Tailscale host",
+        "VIBETHINKER_URL/MODEL constants are dead: call_model hardcodes minicpm5-2b",
+        "single-shot only",
+        "existence+size verification only",
+        "no source binding",
+        "no patch application",
+        "no role separation"
+      ],
       "notes": "Best pre-existing verifier and extractor. Its model constants being dead is why v2.0 identity claims in the header were never real."
     },
     {
@@ -152,19 +260,40 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["genuine plan/execute/verify three-phase structure across two models", "six real tools incl. edit_file and check_state", "tool-call confidence scoring", "context threading across steps"],
-      "gaps": ["writes no artifact at all", "tasks hardcoded in-module", "verify() is an LLM judgement with no deterministic state check", "plan's tool/params are parsed then ignored"],
+      "capabilities": [
+        "genuine plan/execute/verify three-phase structure across two models",
+        "six real tools incl. edit_file and check_state",
+        "tool-call confidence scoring",
+        "context threading across steps"
+      ],
+      "gaps": [
+        "writes no artifact at all",
+        "tasks hardcoded in-module",
+        "verify() is an LLM judgement with no deterministic state check",
+        "plan's tool/params are parsed then ignored"
+      ],
       "notes": "Imported by run_terminal_bench.py and run_dual_4.py. The only pre-existing genuine role separation, but unbounded and non-reproducible."
     },
     {
       "path": "toolcall_harness.py",
       "kind": "script",
       "producer_schema": "toolcall_harness_<HHMMSS>.json (unversioned)",
-      "output_globs": ["toolcall_harness_*.json"],
+      "output_globs": [
+        "toolcall_harness_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["XML <tool_call> protocol parsing", "loads benchmarks/baremetal/tasks.json", "whole usage dict captured"],
-      "gaps": ["closing-tag regex contains a zero-width character so its branch is unreachable for well-formed output", "verifier lost the command_success type baremetal_bench.py has", "no source binding", "no role separation"]
+      "capabilities": [
+        "XML <tool_call> protocol parsing",
+        "loads benchmarks/baremetal/tasks.json",
+        "whole usage dict captured"
+      ],
+      "gaps": [
+        "closing-tag regex contains a zero-width character so its branch is unreachable for well-formed output",
+        "verifier lost the command_success type baremetal_bench.py has",
+        "no source binding",
+        "no role separation"
+      ]
     },
     {
       "path": "dual_model_harness.py",
@@ -173,8 +302,15 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["cleanest role typing in the zoo: ModelRole enum plus ModelEndpoint dataclass", "only conditional native tools array"],
-      "gaps": ["never executes any tool: subprocess is not even imported", "evaluate()'s COMPLETE/CONTINUE verdict is discarded, so the advertised iterate-until-done loop does not exist", "no artifacts written"]
+      "capabilities": [
+        "cleanest role typing in the zoo: ModelRole enum plus ModelEndpoint dataclass",
+        "only conditional native tools array"
+      ],
+      "gaps": [
+        "never executes any tool: subprocess is not even imported",
+        "evaluate()'s COMPLETE/CONTINUE verdict is discarded, so the advertised iterate-until-done loop does not exist",
+        "no artifacts written"
+      ]
     },
     {
       "path": "synergistic_harness.py",
@@ -183,29 +319,61 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["only pre-existing script with an interactive REPL", "/v1/models health probe", "handles both XML and native tool-call formats in one loop"],
-      "gaps": ["reported token totals are always zero: the summed dicts have no 'tokens' key", "no artifacts written", "no fixtures", "no binding"],
+      "capabilities": [
+        "only pre-existing script with an interactive REPL",
+        "/v1/models health probe",
+        "handles both XML and native tool-call formats in one loop"
+      ],
+      "gaps": [
+        "reported token totals are always zero: the summed dicts have no 'tokens' key",
+        "no artifacts written",
+        "no fixtures",
+        "no binding"
+      ],
       "notes": "README.md at the repo root documents this script's architecture; the README predates every other script here."
     },
     {
       "path": "native_toolcall_bench.py",
       "kind": "script",
       "producer_schema": "native_toolcall_<model>_<HHMMSS>.json (unversioned)",
-      "output_globs": ["native_toolcall_*.json"],
+      "output_globs": [
+        "native_toolcall_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["OpenAI-native tools array", "best --model CLI of the non-fixgit set", "correct handling of arguments as either str or dict"],
-      "gaps": ["single-shot only", "verifier again lacks command_success", "endpoint hardcoded", "no source binding", "no role separation"]
+      "capabilities": [
+        "OpenAI-native tools array",
+        "best --model CLI of the non-fixgit set",
+        "correct handling of arguments as either str or dict"
+      ],
+      "gaps": [
+        "single-shot only",
+        "verifier again lacks command_success",
+        "endpoint hardcoded",
+        "no source binding",
+        "no role separation"
+      ]
     },
     {
       "path": "cpm_tb2_bench.py",
       "kind": "script",
       "producer_schema": "cpm_tb2_<HHMMSS>.json (unversioned)",
-      "output_globs": ["cpm_tb2_????????.json"],
+      "output_globs": [
+        "cpm_tb2_????????.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["most evolved pre-existing agent loop: cwd persistence across steps, bash -n syntax precheck, auto-run of created scripts, per-difficulty tool budget, repeat-command suppression, structured per-step traces, artifact pre-clean", "loads benchmarks/baremetal/tasks.json"],
-      "gaps": ["only --max and --tasks: no endpoint, model, temperature or seed flags", "no source binding", "no patch application", "prompt-selected pseudo-roles rather than real role contracts", "module-global CWD makes run_task non-reentrant"],
+      "capabilities": [
+        "most evolved pre-existing agent loop: cwd persistence across steps, bash -n syntax precheck, auto-run of created scripts, per-difficulty tool budget, repeat-command suppression, structured per-step traces, artifact pre-clean",
+        "loads benchmarks/baremetal/tasks.json"
+      ],
+      "gaps": [
+        "only --max and --tasks: no endpoint, model, temperature or seed flags",
+        "no source binding",
+        "no patch application",
+        "prompt-selected pseudo-roles rather than real role contracts",
+        "module-global CWD makes run_task non-reentrant"
+      ],
       "notes": "Twelve cpm_tb2_*.json artifacts are committed. They are cpm_tb2_bench.py output and are not realtask metrics."
     },
     {
@@ -215,8 +383,15 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["only cumulative in/out token accounting in the pre-existing zoo", "drives a tmux/pty session"],
-      "gaps": ["imports the terminal_bench package, which is not installed here, so the file is not importable", "its DONE-termination branch is unreachable", "not a benchmark entrypoint"],
+      "capabilities": [
+        "only cumulative in/out token accounting in the pre-existing zoo",
+        "drives a tmux/pty session"
+      ],
+      "gaps": [
+        "imports the terminal_bench package, which is not installed here, so the file is not importable",
+        "its DONE-termination branch is unreachable",
+        "not a benchmark entrypoint"
+      ],
       "notes": "Endpoint is configurable via -k endpoint=..., the only pre-existing CLI-configurable endpoint besides fixgit_repro_v1.py."
     },
     {
@@ -226,30 +401,57 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["keyword task classifier", "/v1/models health probe"],
-      "gaps": ["nothing in the repo imports it", "its 'both' endpoint is the unparseable string 'urlA + urlB'", "never calls a model"],
+      "capabilities": [
+        "keyword task classifier",
+        "/v1/models health probe"
+      ],
+      "gaps": [
+        "nothing in the repo imports it",
+        "its 'both' endpoint is the unparseable string 'urlA + urlB'",
+        "never calls a model"
+      ],
       "notes": "NOT the production auto-router. Unrelated subsystem; kept only because it is an artifact of the same era."
     },
     {
       "path": "run_dual_4.py",
       "kind": "script",
       "producer_schema": "dual_4_<HHMMSS>.json (unversioned)",
-      "output_globs": ["dual_4_*.json"],
+      "output_globs": [
+        "dual_4_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["the only in-repo importer of terminal_bench_harness", "independent file-existence cross-check ANDed with the harness's own LLM verdict"],
-      "gaps": ["hardcoded 4-task set", "no CLI", "file_check returns None for directory_exists and a None filecheck silently passes"],
+      "capabilities": [
+        "the only in-repo importer of terminal_bench_harness",
+        "independent file-existence cross-check ANDed with the harness's own LLM verdict"
+      ],
+      "gaps": [
+        "hardcoded 4-task set",
+        "no CLI",
+        "file_check returns None for directory_exists and a None filecheck silently passes"
+      ],
       "notes": "Its objective-verifier-overrides-model-judge pattern is the single most valuable idea in the pre-existing zoo and is carried forward in realtask (grounded acceptance commands decide the verdict, never a model judgement)."
     },
     {
       "path": "run_terminal_bench.py",
       "kind": "script",
       "producer_schema": "terminal_bench_<YYYYmmdd_HHMMSS>.json (unversioned)",
-      "output_globs": ["terminal_bench_*.json"],
+      "output_globs": [
+        "terminal_bench_*.json"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["aggregation and reporting layer for terminal_bench_harness", "pre-flight model check on both ports"],
-      "gaps": ["hardcoded ports", "no CLI args", "prints hardcoded SOTA figures as fact", "no source binding", "no patch application"]
+      "capabilities": [
+        "aggregation and reporting layer for terminal_bench_harness",
+        "pre-flight model check on both ports"
+      ],
+      "gaps": [
+        "hardcoded ports",
+        "no CLI args",
+        "prints hardcoded SOTA figures as fact",
+        "no source binding",
+        "no patch application"
+      ]
     },
     {
       "path": "simple_dual.py",
@@ -258,19 +460,43 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["minimal reasoner-plans/executor-runs demo"],
-      "gaps": ["extract_bash has an off-by-one that yields a garbage slice on a miss", "subprocess output is discarded", "no state verification at all", "no artifacts written"],
+      "capabilities": [
+        "minimal reasoner-plans/executor-runs demo"
+      ],
+      "gaps": [
+        "extract_bash has an off-by-one that yields a garbage slice on a miss",
+        "subprocess output is discarded",
+        "no state verification at all",
+        "no artifacts written"
+      ],
       "notes": "Conclusively the weakest dual-model script here. Retained for history; nothing depends on it."
     },
     {
       "path": "fixgit_repro_v1.py",
       "kind": "script",
       "producer_schema": "results.json + probe.jsonl (unversioned)",
-      "output_globs": ["results.json", "probe.jsonl"],
+      "output_globs": [
+        "results.json",
+        "probe.jsonl"
+      ],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["the ONLY pre-existing atomic writer in this repo", "deadline discipline: SIGALRM request budget plus process-group SIGKILL", "git HEAD/dirty provenance stamp", "git-state verifier (reflog recovery)", "always-emit results invariant", "deterministic sampling metadata recorded in output", "14 CLI flags including the only pre-existing --endpoint", "24 unittest cases, the only pre-existing tests"],
-      "gaps": ["single hardcoded task", "no usage token accounting", "context grows unbounded across --max-steps", "not a real repository task: it stages its own synthetic repo"],
+      "capabilities": [
+        "the ONLY pre-existing atomic writer in this repo",
+        "deadline discipline: SIGALRM request budget plus process-group SIGKILL",
+        "git HEAD/dirty provenance stamp",
+        "git-state verifier (reflog recovery)",
+        "always-emit results invariant",
+        "deterministic sampling metadata recorded in output",
+        "14 CLI flags including the only pre-existing --endpoint",
+        "24 unittest cases, the only pre-existing tests"
+      ],
+      "gaps": [
+        "single hardcoded task",
+        "no usage token accounting",
+        "context grows unbounded across --max-steps",
+        "not a real repository task: it stages its own synthetic repo"
+      ],
       "notes": "Its atomic-write pattern, deadline discipline, provenance stamp and always-emit invariant are all carried forward into realtask/evidence.py and the runner. Its results.json and probe.jsonl are NOT realtask artifacts."
     },
     {
@@ -280,8 +506,14 @@
       "output_globs": [],
       "status": "legacy",
       "equivalent_to_realtask": false,
-      "capabilities": ["20 tasks (BM-001..BM-020) across 7 categories, shared by baremetal_bench.py, toolcall_harness.py, native_toolcall_bench.py, cpm_tb2_bench.py and run_dual_4.py"],
-      "gaps": ["verification is exists plus a size floor: no content assertion, so a task passes if the file has N bytes", "no git identity, so a task cannot be bound to a source revision", "BM-019 references a path outside the fixture and is environment-coupled"],
+      "capabilities": [
+        "20 tasks (BM-001..BM-020) across 7 categories, shared by baremetal_bench.py, toolcall_harness.py, native_toolcall_bench.py, cpm_tb2_bench.py and run_dual_4.py"
+      ],
+      "gaps": [
+        "verification is exists plus a size floor: no content assertion, so a task passes if the file has N bytes",
+        "no git identity, so a task cannot be bound to a source revision",
+        "BM-019 references a path outside the fixture and is environment-coupled"
+      ],
       "notes": "Retained because four scripts read it. Not a RealTask fixture and cannot be loaded by realtask.fixtures."
     },
     {
@@ -466,19 +698,36 @@
   ],
   "other_unversioned_datasets": [
     {
-      "paths": ["cpm_iter3_train.jsonl", "cpm_iter4_train.jsonl", "cpm_iter5_train.jsonl", "cpm_iter6_train.jsonl", "cpm_iter7_train.jsonl"],
+      "paths": [
+        "cpm_iter3_train.jsonl",
+        "cpm_iter4_train.jsonl",
+        "cpm_iter5_train.jsonl",
+        "cpm_iter6_train.jsonl",
+        "cpm_iter7_train.jsonl"
+      ],
       "kind": "finetune-dataset",
       "status": "legacy",
       "note": "Training data, not benchmark evidence. Out of scope for real-task qualification."
     },
     {
-      "paths": ["k2_reflog_train.jsonl", "k2_reflog_train_v2.jsonl", "k2_reflog_train_v3.jsonl", "k2_reflog_heldout_v2.jsonl"],
+      "paths": [
+        "k2_reflog_train.jsonl",
+        "k2_reflog_train_v2.jsonl",
+        "k2_reflog_train_v3.jsonl",
+        "k2_reflog_heldout_v2.jsonl"
+      ],
       "kind": "finetune-dataset",
       "status": "legacy",
       "note": "Built by build_k2_reflog_dataset*.py. Training and held-out splits for the K2 reflog work, not real-task benchmark output."
     },
     {
-      "paths": ["test.txt", "numbers.txt", "count_lines.py", "date_script.py", "bench_test/file.txt"],
+      "paths": [
+        "test.txt",
+        "numbers.txt",
+        "count_lines.py",
+        "date_script.py",
+        "bench_test/file.txt"
+      ],
       "kind": "run-leftover",
       "status": "legacy",
       "note": "Artifacts a benchmark script wrote into the repo root by running its checks in cwd. Left in place deliberately as evidence of that behaviour; they are not inputs to anything."

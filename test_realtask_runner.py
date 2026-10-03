@@ -242,6 +242,68 @@ def cosmetic_patch(rel: str = "auto_ingest/shorts/cli.py", source_root=None) -> 
     return "diff --git a/{rel} b/{rel}\n".format(rel=rel) + body
 
 
+class BroaderAcceptanceTests(HarnessTestCase):
+    """Targeted acceptance is necessary but not sufficient.
+
+    A repair that fixes the defect while quietly changing the rest of the module
+    must be reported as a regression, not as success.
+    """
+
+    def test_canonical_repair_passes_targeted_and_broader(self):
+        _task, result = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
+        state = result.attempts[0]
+        self.assertOutcome(state, Outcome.SUCCESS)
+        self.assertTrue(state.metrics.tests.targeted_all_passed)
+        self.assertTrue(state.metrics.tests.broader_all_passed)
+        self.assertEqual(len(state.metrics.tests.broader), 1)
+
+    def test_broader_is_skipped_when_targeted_fails(self):
+        """Broader runs only after targeted passes, and the skip is recorded."""
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply(cosmetic_patch())], ["single"]
+        )
+        state = result.attempts[0]
+        self.assertOutcome(state, Outcome.TARGETED_TEST_FAILURE)
+        self.assertEqual(state.metrics.tests.broader, [])
+        self.assertIn(
+            "BROADER ACCEPTANCE: not run (targeted acceptance failed)",
+            state.test_evidence_text,
+        )
+
+    def test_regression_after_a_correct_repair_is_regression_failure(self):
+        from test_realtask_support import regression_on_repair
+
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply(regression_on_repair())], ["single"]
+        )
+        state = result.attempts[0]
+        self.assertOutcome(state, Outcome.REGRESSION_FAILURE)
+        self.assertTrue(state.metrics.patch.applied)
+        self.assertTrue(state.metrics.tests.targeted_all_passed,
+                        "the defect really was fixed; the regression is elsewhere")
+        self.assertFalse(state.metrics.tests.broader_all_passed)
+        self.assertEqual(state.metrics.tests.broader_failed[0].returncode, 1)
+        stdout = state.metrics.tests.broader_failed[0].stdout
+        self.assertIn("test_defaults_dirs_have_their_documented_fallbacks", stdout)
+        self.assertIn("test_plan_defaults_are_intact", stdout)
+
+    def test_broader_evidence_is_written_to_the_run(self):
+        self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
+        tests = json.loads((self.run_dir.path / "test-results.json").read_text())
+        attempt = tests["attempts"][0]["tests"]
+        self.assertEqual(attempt["broader_total"], 1)
+        self.assertEqual(attempt["broader_passed"], 1)
+        self.assertTrue(attempt["broader_all_passed"])
+        self.assertIn("BROADER ACCEPTANCE", (self.run_dir.path / "single" / "test-evidence.txt").read_text())
+
+    def test_metrics_expose_broader_separately_from_targeted(self):
+        _task, result = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
+        payload = result.attempts[0].metrics.tests.to_dict()
+        for key in ("targeted_total", "targeted_passed", "targeted_all_passed",
+                    "broader_total", "broader_passed", "broader_all_passed"):
+            self.assertIn(key, payload, key)
+
+
 class SwarmStageTests(HarnessTestCase):
     def test_swarm_calls_scout_implementer_reviewer_in_order(self):
         task, result = self.run_stages(

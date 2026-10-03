@@ -1018,12 +1018,24 @@ class BenchmarkRunner:
     # evidence
     # ------------------------------------------------------------------
 
+    #: Which evidence directory each attempt strategy writes into. Strategies are
+    #: not directory names: `implement` and `review` are single-role stages whose
+    #: payloads belong with those roles.
+    STRATEGY_DIRECTORIES = {
+        "single": "single",
+        "scout": "scout",
+        "implement": "implementer",
+        "review": "reviewer",
+        "swarm-refinement": "reviewer",
+        "swarm": "swarm",
+    }
+
     def _write_attempt_evidence(
         self, task: RealTask, state: AttemptState, binding: SourceBinding
     ) -> None:
-        directory = state.strategy
-        if directory.startswith("swarm-refinement"):
-            directory = "reviewer"
+        directory = self.STRATEGY_DIRECTORIES.get(state.strategy)
+        if directory is None:
+            raise ValueError("no evidence directory for strategy {!r}".format(state.strategy))
         self.run_dir.write_role_json(
             directory,
             "metrics.json",

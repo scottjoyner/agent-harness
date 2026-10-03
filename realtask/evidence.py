@@ -91,9 +91,16 @@ class RunDirectory:
 
     ROLE_DIRS = ("single", "scout", "implementer", "reviewer", "swarm")
 
-    def __init__(self, base: Path, run_id: str):
+    def __init__(self, base: Path, run_id: str, prefix: str = ""):
+        """``prefix`` nests this run's artifacts under a subdirectory.
+
+        A single-task run uses the flat documented layout. A multi-task run gives
+        each task its own subdirectory so one task's evidence can never overwrite
+        another's.
+        """
         self.run_id = run_id
-        self.path = Path(base) / run_id
+        self.prefix = prefix
+        self.path = Path(base) / run_id / prefix if prefix else Path(base) / run_id
         self.path.mkdir(parents=True, exist_ok=True)
         for name in self.ROLE_DIRS:
             (self.path / name).mkdir(exist_ok=True)
@@ -117,8 +124,9 @@ class RunDirectory:
     # -- writes ------------------------------------------------------------
 
     def _record(self, relative: str) -> None:
-        if relative not in self._written:
-            self._written.append(relative)
+        qualified = "{}{}".format(self.prefix, relative)
+        if qualified not in self._written:
+            self._written.append(qualified)
 
     def write_json(self, relative: str, payload: Any) -> Path:
         target = self.file(relative)
@@ -207,9 +215,12 @@ class RunDirectory:
         return target
 
     def finalize_manifest(self, extra: Optional[Dict[str, Any]] = None) -> Path:
+        """Index the run by walking the tree, so nested task evidence is included."""
         target = self.file("manifest.json")
         payload = json.loads(target.read_text(encoding="utf-8"))
-        payload["artifacts_written"] = sorted(self._written)
+        payload["artifacts_written"] = sorted(
+            str(p.relative_to(self.path)) for p in self.path.rglob("*") if p.is_file()
+        )
         payload["finalized_at"] = utc_now()
         if extra:
             payload.update(extra)

@@ -16,7 +16,9 @@
   `test_generation`, `code_review`, `small_refactor` and `contract_reasoning`.
   The campaign fixture freezes the `auto-ingest` driver-lifetime regression
   (`planner.plan_shorts(..., driver=driver)` executed after `driver.close()`)
-  from `scottjoyner/auto-ingest@d7d75ff`.
+  from `scottjoyner/auto-ingest@d7d75ff`, and is the only fixture with a
+  broader regression tier: a 14-check suite over the rest of the module that
+  passes both before and after the canonical repair.
 - **`seal_realtask_fixture.py`** — freezes a fixture: recomputes per-file
   SHA-256, writes `source-manifest.json`, stamps `task.json`. `--check` verifies
   without writing.
@@ -28,9 +30,10 @@
   benchmark script, the reconciliation decision, what was carried forward, and
   the conclusively-dead-code findings.
 - **`docs/REAL-TASK-BENCHMARK.md`** — the harness guide.
-- **`test_realtask_*.py`** — 177 tests across fixtures/binding, roles, patches,
-  the runner, evidence and the CLI (including a full run against a loopback
-  OpenAI-compatible endpoint).
+- **`test_realtask_*.py`** — 202 tests across fixtures/binding, roles, patches,
+  the runner, evidence, endpoint configuration and the CLI (including a full run
+  against a loopback OpenAI-compatible endpoint). The 24 pre-existing
+  `test_fixgit_repro_v1.py` cases still pass unmodified.
 
 ### Design decisions
 
@@ -54,6 +57,29 @@
 - **Independent of production scheduling.** No AssistX claiming, no task
   completion, no auto-router registration, no runtime projection, no dispatch, no
   push to any benchmark target repository.
+
+### Follow-up: gaps closed by review
+
+A second pass over the specification against the first implementation found four
+things claimed but not actually exercised, plus two real bugs. All are fixed:
+
+- **No fixture exercised `broader` acceptance**, so `REGRESSION_FAILURE` was
+  unreachable. The campaign fixture now carries a broader tier, and a crafted
+  "correct repair that also changes two defaults" patch proves the classification.
+- **`endpoint_from_config_file` and `endpoint_from_env` were untested**, and the
+  harness docstrings named specific nodes while claiming not to. The docstrings
+  now use generic placeholders and a test asserts no node name or address appears
+  anywhere in `realtask/` or the entrypoint.
+- **Standalone `--stage scout|implement|review` was untested**, and
+  `--stage review` crashed writing evidence (`'review'` was not an evidence
+  directory). Strategies now map explicitly onto evidence directories.
+- **A multi-task run let the last task overwrite earlier evidence**, and every
+  comparison was written under the final task's id. Each task now gets its own
+  `tasks/<task_id>/` subtree and its own `comparison.json`; the manifest indexes
+  the whole tree.
+- Evaluation work trees were created inside the evidence root as `work/`, which
+  made a listing of that root ambiguous. They now live in a per-run sibling
+  `<run_id>.work/` directory and are removed when the run ends.
 
 ### Known limitations
 

@@ -81,9 +81,19 @@ MALFORMED_PATCH = "I would fix the driver by moving the call. Here is my plan: <
 #: strict. Stored as a file so it stays reviewable.
 REFERENCE_REFRACTOR_PATH = REPO_ROOT / "test_realtask_reference_refactor.diff"
 
+#: A careless repair: it fixes the driver-lifetime ordering *and* quietly changes
+#: the plans-directory fallback and the --pool default. Targeted acceptance passes;
+#: the broader acceptance suite catches it. Used to prove REGRESSION_FAILURE is
+#: reachable and correctly classified.
+REFERENCE_REGRESSION_PATH = REPO_ROOT / "test_realtask_reference_regression.diff"
+
 
 def reference_refactor() -> str:
     return REFERENCE_REFRACTOR_PATH.read_text(encoding="utf-8")
+
+
+def regression_on_repair() -> str:
+    return REFERENCE_REGRESSION_PATH.read_text(encoding="utf-8")
 
 
 def patch_reply(patch: str = REFERENCE_REPAIR, confidence: float = 0.9) -> ScriptedResponse:

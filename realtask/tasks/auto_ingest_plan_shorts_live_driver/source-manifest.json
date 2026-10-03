@@ -3,9 +3,24 @@
   "captured_at": "2026-10-02T00:00:00Z",
   "files": [
     {
+      "path": "auto_ingest/shorts/backdrop.py",
+      "sha256": "0f1805c0377334302863792857399def4b25e8a757639b60a485a0766e5b9ed3",
+      "size_bytes": 4250
+    },
+    {
       "path": "auto_ingest/shorts/cli.py",
       "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
       "size_bytes": 32067
+    },
+    {
+      "path": "auto_ingest/shorts/curator.py",
+      "sha256": "c0e15d389a6d8f3fc7d2d041d73557167669cf29237320eb06db9cb32d03acac",
+      "size_bytes": 13161
+    },
+    {
+      "path": "auto_ingest/shorts/models.py",
+      "sha256": "afc9fd27c4984b5577ed2d9041ef04580b96767bd3c45f4f6d9325c74d9946b6",
+      "size_bytes": 6135
     },
     {
       "path": "auto_ingest/shorts/planner.py",

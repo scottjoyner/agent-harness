@@ -1,7 +1,17 @@
 {
   "acceptance": {
     "allow_programs": [],
-    "broader": [],
+    "broader": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_shorts_cli_surface.py"
+      ]
+    ],
     "required_answer_contains": [],
     "required_files_mentioned": [
       "auto_ingest/shorts/cli.py"
@@ -24,7 +34,8 @@
     "Do not change the public CLI surface (subcommands, flags, defaults, exit codes).",
     "Do not weaken or delete existing behaviour of _cmd_montage, _cmd_highlights, _cmd_trip, _cmd_iterate, _cmd_render or _cmd_list.",
     "Do not introduce a second driver or a reconnect inside planner.",
-    "Keep the S-G10 intent: real graph content must be mined through the live driver, not dropped."
+    "Keep the S-G10 intent: real graph content must be mined through the live driver, not dropped.",
+    "The broader acceptance suite guards the rest of the module (parser surface, plans-directory contract, Plan persistence, brand check, remaining driver-owning handlers). A repair that fixes the ordering while quietly changing any of those is a regression, not a fix."
   ],
   "deliverable": "patch",
   "fixture_version": 1,
@@ -43,9 +54,24 @@
   "source": {
     "files": [
       {
+        "path": "auto_ingest/shorts/backdrop.py",
+        "sha256": "0f1805c0377334302863792857399def4b25e8a757639b60a485a0766e5b9ed3",
+        "size_bytes": 4250
+      },
+      {
         "path": "auto_ingest/shorts/cli.py",
         "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
         "size_bytes": 32067
+      },
+      {
+        "path": "auto_ingest/shorts/curator.py",
+        "sha256": "c0e15d389a6d8f3fc7d2d041d73557167669cf29237320eb06db9cb32d03acac",
+        "size_bytes": 13161
+      },
+      {
+        "path": "auto_ingest/shorts/models.py",
+        "sha256": "afc9fd27c4984b5577ed2d9041ef04580b96767bd3c45f4f6d9325c74d9946b6",
+        "size_bytes": 6135
       },
       {
         "path": "auto_ingest/shorts/planner.py",
@@ -54,7 +80,7 @@
       }
     ],
     "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
-    "manifest_sha256": "b9e1d3642cbbbe94888c30cc3250c3c3324bbb5dd3622706d7e87c565ea42374",
+    "manifest_sha256": "587a42d0d1c1aedde837a8cbe15b2cdf49586e8985dce37c1d14eac6ca4cb5ae",
     "repository": "scottjoyner/auto-ingest",
     "writable_prefixes": []
   },

@@ -134,7 +134,7 @@ def analysis_payload() -> str:
     )
 
 
-def review_payload() -> str:
+def review_payload(verdict: str = "accept") -> str:
     return json.dumps(
         {
             "defects": [
@@ -142,7 +142,7 @@ def review_payload() -> str:
             ],
             "missing_coverage": ["driver liveness regression test"],
             "contract_violations": [],
-            "verdict": "accept",
+            "verdict": verdict,
             "confidence": 0.85,
         }
     )
@@ -280,6 +280,187 @@ class PlanCommandTests(CliTestCase):
         self.assertEqual(args.stage, ["single", "swarm"])
 
 
+class StandaloneStageTests(CliTestCase):
+    """Each stage must be runnable on its own, not only inside `swarm`."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.tmp / "runs"
+
+    def endpoint(self, by_role):
+        server = LoopbackEndpoint(by_role)
+        self.addCleanup(server.close)
+        return server
+
+    def run_stage(self, stage, server, *extra):
+        return self.cli(
+            "run",
+            "--task", AUTO_INGEST_BUG_FIX,
+            "--stage", stage,
+            "--out", str(self.out),
+            "--base-url", server.base_url,
+            "--model", "loopback-test-model",
+            *extra,
+        )
+
+    def single_run_dir(self):
+        return sorted(self.run_dirs())[0]
+
+    def run_dirs(self):
+        return [p for p in self.out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()]
+
+    def test_scout_stage_runs_alone(self):
+        server = self.endpoint({"scout": scout_payload()})
+        completed = self.run_stage("scout", server)
+        self.assertIn("outcome=", completed.stdout)
+        run_dir = self.single_run_dir()
+        self.assertTrue((run_dir / "scout" / "result.json").is_file())
+        result = json.loads((run_dir / "scout" / "result.json").read_text())
+        self.assertEqual(result["strategy"], "scout")
+        self.assertIn("root_cause", result["scout"])
+        self.assertNotIn("implementer", result)
+        self.assertEqual(len(server.requests), 1)
+        self.assertEqual(len(result["scout"]["relevant_files"]), 1)
+
+    def test_implement_stage_runs_alone_and_is_evaluated(self):
+        server = self.endpoint({"implementer": patch_payload()})
+        self.run_stage("implement", server)
+        run_dir = self.single_run_dir()
+        result = json.loads((run_dir / "implementer" / "result.json").read_text())
+        self.assertEqual(result["strategy"], "implement")
+        self.assertIn("patch", result["implementer"])
+        self.assertEqual(result["outcome"], "SUCCESS")
+        self.assertTrue((run_dir / "patch.diff").is_file())
+        self.assertTrue((run_dir / "test-results.json").is_file())
+
+    def test_review_stage_consumes_a_patch_file(self):
+        server = self.endpoint({"reviewer": review_payload()})
+        patch_file = self.tmp / "candidate.diff"
+        patch_file.write_text(REFERENCE_REPAIR)
+        self.run_stage("review", server, "--patch-file", str(patch_file))
+
+        run_dir = self.single_run_dir()
+        result = json.loads((run_dir / "reviewer" / "result.json").read_text())
+        self.assertEqual(result["strategy"], "review")
+        self.assertEqual(result["outcome"], "SUCCESS")
+        self.assertEqual(result["reviewer"]["verdict"], "accept")
+        reviewer_request = "\n".join(m["content"] for m in server.requests[0]["messages"])
+        self.assertIn("CANDIDATE PATCH (verbatim", reviewer_request)
+        self.assertIn("@@ -64,15 +64,16 @@ def _cmd_plan(args) -> int:", reviewer_request)
+        self.assertIn("SOURCE_BINDING (verified by the harness", reviewer_request)
+        self.assertEqual(result["binding"]["ok"], True)
+
+    def test_review_stage_records_a_rejected_candidate(self):
+        server = self.endpoint({"reviewer": review_payload("revise")})
+        patch_file = self.tmp / "candidate.diff"
+        patch_file.write_text(REFERENCE_REPAIR)
+        completed = self.run_stage(
+            "review", server, "--patch-file", str(patch_file), "--no-refinement"
+        )
+        self.assertIn("REVIEW_REJECTED", completed.stdout)
+        result = json.loads((self.single_run_dir() / "reviewer" / "result.json").read_text())
+        self.assertEqual(result["outcome"], "REVIEW_REJECTED")
+        self.assertEqual(result["reviewer"]["verdict"], "revise")
+
+    def test_review_stage_reports_an_unapplicable_candidate(self):
+        from test_realtask_support import NON_APPLYING_PATCH
+
+        server = self.endpoint({"reviewer": review_payload()})
+        patch_file = self.tmp / "candidate.diff"
+        patch_file.write_text(NON_APPLYING_PATCH)
+        completed = self.run_stage("review", server, "--patch-file", str(patch_file))
+        self.assertIn("PATCH_DOES_NOT_APPLY", completed.stdout)
+
+
+class MultiTaskRunTests(CliTestCase):
+    def test_two_tasks_in_one_run_get_separate_evidence(self):
+        from test_realtask_support import AUTO_INGEST_CONTRACT as CONTRACT
+
+        server = LoopbackEndpoint(
+            {
+                "single": patch_payload(),
+                "scout": analysis_payload(),
+                "implementer": patch_payload(),
+                "reviewer": review_payload(),
+            }
+        )
+        self.addCleanup(server.close)
+        out = self.tmp / "multi"
+        completed = self.cli(
+            "run",
+            "--task", AUTO_INGEST_BUG_FIX,
+            "--task", CONTRACT,
+            "--stage", "single",
+            "--out", str(out),
+            "--base-url", server.base_url,
+            "--model", "loopback-test-model",
+        )
+        self.assertIn(AUTO_INGEST_BUG_FIX, completed.stdout)
+        self.assertIn(CONTRACT, completed.stdout)
+
+        run_dirs = sorted(
+            p for p in out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()
+        )
+        self.assertEqual(len(run_dirs), 1)
+        run_dir = run_dirs[0]
+        manifest = json.loads((run_dir / "manifest.json").read_text())
+        self.assertIn(AUTO_INGEST_BUG_FIX, manifest["fixture"]["task_id"])
+        self.assertIn(CONTRACT, manifest["fixture"]["task_id"])
+        self.assertEqual(set(manifest["outcomes"]), {AUTO_INGEST_BUG_FIX, CONTRACT})
+
+        # Each task gets its own evidence directory; nothing is overwritten.
+        for task_id in (AUTO_INGEST_BUG_FIX, CONTRACT):
+            task_dir = run_dir / "tasks" / task_id
+            with self.subTest(task=task_id):
+                self.assertTrue((task_dir / "task.json").is_file())
+                self.assertTrue((task_dir / "metrics.json").is_file())
+                self.assertTrue((task_dir / "test-results.json").is_file())
+                self.assertTrue(
+                    (task_dir / "comparison.json").is_file(),
+                    "each task gets its own comparison",
+                )
+                payload = json.loads((task_dir / "task.json").read_text())
+                self.assertEqual(payload["task_id"], task_id)
+                self.assertEqual(payload["schema"], "realtask.task.v1")
+                metrics = json.loads((task_dir / "metrics.json").read_text())
+                self.assertEqual(metrics["task_id"], task_id)
+
+        # The manifest indexes the nested evidence.
+        indexed = manifest["artifacts_written"]
+        for expected in (
+            "tasks/{}/task.json".format(AUTO_INGEST_BUG_FIX),
+            "tasks/{}/comparison.json".format(CONTRACT),
+            "tasks/{}/metrics.json".format(CONTRACT),
+        ):
+            self.assertIn(expected, indexed, expected)
+
+        # A single-task run keeps the flat documented layout.
+        single_out = self.tmp / "single-layout"
+        single_server = LoopbackEndpoint({"single": patch_payload()})
+        self.addCleanup(single_server.close)
+        self.cli(
+            "run", "--task", AUTO_INGEST_BUG_FIX, "--stage", "single",
+            "--out", str(single_out),
+            "--base-url", single_server.base_url, "--model", "loopback-test-model",
+        )
+        only = sorted(
+            p for p in single_out.iterdir()
+            if p.is_dir() and (p / "manifest.json").is_file()
+        )[0]
+        self.assertTrue((only / "task.json").is_file())
+        self.assertTrue((only / "comparison.json").is_file())
+        self.assertFalse((only / "tasks").exists())
+
+        self.assertTrue(manifest["integrity"]["authoritative_source_unchanged"])
+        # Scratch work trees never appear inside the evidence root.
+        self.assertFalse(any(p.name.endswith(".work") for p in out.iterdir()))
+        self.assertEqual(
+            sorted(p.name for p in out.iterdir() if p.is_dir()),
+            [run_dir.name],
+            "the evidence root holds runs and nothing else",
+        )
+
+
 class RunAgainstLoopbackTests(CliTestCase):
     def setUp(self):
         super().setUp()
@@ -310,7 +491,11 @@ class RunAgainstLoopbackTests(CliTestCase):
         )
 
     def run_dirs(self):
-        return sorted(p for p in self.out.iterdir() if p.is_dir()) if self.out.is_dir() else []
+        if not self.out.is_dir():
+            return []
+        return sorted(
+            p for p in self.out.iterdir() if p.is_dir() and (p / "manifest.json").is_file()
+        )
 
     def test_single_and_swarm_produce_a_complete_run_directory(self):
         self.run_cli("--stage", "single", "--stage", "swarm")
@@ -323,8 +508,8 @@ class RunAgainstLoopbackTests(CliTestCase):
             self.assertTrue((run_dir / name).is_file(), name)
         self.assertTrue((run_dir / "single" / "result.json").is_file())
         self.assertTrue((run_dir / "swarm" / "result.json").is_file())
-        comparison = run_dir / "comparison-{}.json".format(AUTO_INGEST_BUG_FIX)
-        self.assertTrue(comparison.is_file())
+        self.assertTrue((run_dir / "comparison.json").is_file())
+        self.assertTrue((run_dir / "source-manifest.verified.json").is_file())
 
     def test_manifest_records_full_provenance(self):
         self.run_cli("--stage", "single")
@@ -341,7 +526,14 @@ class RunAgainstLoopbackTests(CliTestCase):
         self.assertTrue(manifest["started_at"])
         self.assertTrue(manifest["finalized_at"])
         self.assertIn("metrics.json", manifest["artifacts_written"])
+        self.assertIn("comparison.json", manifest["artifacts_written"])
+        self.assertIn("single/result.json", manifest["artifacts_written"])
         self.assertTrue(manifest["integrity"]["authoritative_source_unchanged"])
+        # Scratch work trees are removed and never left inside the evidence root.
+        self.assertFalse(
+            [p.name for p in self.out.iterdir() if p.name.endswith(".work")],
+            "a .work scratch directory survived the run",
+        )
         self.assertFalse(manifest["authority"]["authoritative_repo_mutated"])
         self.assertFalse(manifest["authority"]["assistx_task_state_mutated"])
         self.assertFalse(manifest["authority"]["routing_or_admission_mutated"])
@@ -394,9 +586,7 @@ class RunAgainstLoopbackTests(CliTestCase):
     def test_comparison_artifact_is_component_wise(self):
         self.run_cli("--stage", "single", "--stage", "swarm")
         run_dir = self.run_dirs()[0]
-        comparison = json.loads(
-            (run_dir / "comparison-{}.json".format(AUTO_INGEST_BUG_FIX)).read_text()
-        )
+        comparison = json.loads((run_dir / "comparison.json").read_text())
         self.assertEqual(comparison["schema"], "realtask.comparison.v1")
         self.assertEqual(comparison["quality_difference"]["composite_score"], None)
         components = comparison["quality_difference"]["components"]

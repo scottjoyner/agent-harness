@@ -48,21 +48,31 @@ python3 realtime_bench.py plan-command \
 ```
 
 `--label` and `--node` are free-form operator strings. They are recorded in
-evidence for attribution and are never interpreted. No node names are hardcoded
-anywhere in `realtask/`; a test enforces this.
+evidence for attribution and are never interpreted. The harness has no list of
+known runtimes and must never grow one: a test asserts that no node name or node
+address appears anywhere in `realtask/` or in the entrypoint, including in
+documentation examples.
+
+The endpoint may equally be supplied by `--endpoint-config <file>` (a private
+JSON file; the API key is named indirectly via `api_key_env` so it never lives in
+the file) or by `REALTASK_ENDPOINT_BASE_URL` / `REALTASK_ENDPOINT_MODEL`. A test
+asserts all three inputs produce identical endpoint identity.
 
 The harness does **not** discover hosts, probe subnets, or start servers. It
 POSTs to the URL it is given.
 
 ## 2. Stages
 
-| Stage | Calls | Shape |
-|---|---|---|
-| `single` | 1 | one model, full bounded task context, one reply |
-| `scout` | 1 | locate and explain the defect |
-| `implement` | 1 (+1) | produce a candidate patch; optionally informed by a prior scout result |
-| `review` | 1 (+1) | adjudicate an exact candidate; optionally spend the single refinement |
-| `swarm` | 3 or 4 | scout → implement → evaluate → review → optional ONE refinement → final validation |
+| Stage | Calls | Shape | Evidence dir |
+|---|---|---|---|
+| `single` | 1 | one model, full bounded task context, one reply | `single/` |
+| `scout` | 1 | locate and explain the defect | `scout/` |
+| `implement` | 1 | produce a candidate patch, which is then evaluated | `implementer/` |
+| `review` | 1 (+1) | adjudicate a patch supplied via `--patch-file`; optionally spend the single refinement | `reviewer/` |
+| `swarm` | 3 or 4 | scout → implement → evaluate → review → optional ONE refinement → final validation | `swarm/` |
+
+Every stage runs standalone as well as inside `swarm`. `--stage review` requires
+`--patch-file` because there is nothing to review otherwise.
 
 `swarm` in full:
 
@@ -203,6 +213,13 @@ argv must resolve to the interpreter running the harness or to a program the
 fixture explicitly allows; `bash`, `sh` and `curl` are refused by default. Three
 placeholders are substituted: `${PYTHON}`, `${WORKTREE}`, `${ANSWER}`.
 
+A fixture declares two tiers. `targeted` is the acceptance gate: it must all
+pass. `broader` is the regression guard — everything the candidate could plausibly
+break while fixing the defect — and runs only after targeted acceptance passes.
+When it is skipped, `test-evidence.txt` records
+`BROADER ACCEPTANCE: not run (targeted acceptance failed)` rather than silently
+omitting it.
+
 For `deliverable: analysis` the patch slot is empty and the candidate's answer
 text is written to `_realtask_answer.txt` so a fixture-provided checker can
 assert on it.
@@ -279,21 +296,32 @@ never used as a task verdict on its own.
 
 ```
 runs/<run_id>/
-    manifest.json              harness git SHA + dirty flag, fixture SHA, endpoint
-                               identity, argv, host, options, timestamps, integrity,
-                               authority assertions, artifact index
-    task.json                  the frozen fixture, verbatim
-    source-manifest.json       frozen manifest + binding verification verdict
+    manifest.json                  harness git SHA + dirty flag, fixture SHA,
+                                   endpoint identity, argv, host, options,
+                                   timestamps, integrity, authority assertions,
+                                   and an index of every artifact written
+    task.json                      the frozen fixture, verbatim
+    source-manifest.json           the frozen manifest, verbatim
+    source-manifest.verified.json  that manifest plus the binding verdict
     single/  scout/  implementer/  reviewer/  swarm/
-        result.json            parsed role results + binding + notes
-        metrics.json           that attempt's component metrics
-        <role>.txt             the model's raw reply, verbatim
-        test-evidence.txt      the exact acceptance transcript
-    patch.diff                 every candidate patch, verbatim and labelled
-    test-results.json          every command and its output, per attempt
-    metrics.json               all attempts
-    comparison-<task_id>.json  single vs swarm
+        result.json                parsed role results + binding + notes
+        metrics.json               that attempt's component metrics
+        <role>.txt                 the model's raw reply, verbatim
+        test-evidence.txt          the exact acceptance transcript
+    patch.diff                     every candidate patch, verbatim and labelled
+    test-results.json              every command and its output, per attempt
+    metrics.json                   all attempts
+    comparison.json                single vs swarm, component-wise
 ```
+
+Running several tasks in one invocation (`--task` repeated) keeps every artifact
+above but nests each task's evidence under `tasks/<task_id>/`, so one task can
+never overwrite another's. `manifest.json` stays at the run root and indexes the
+nested artifacts.
+
+Evaluation work trees are scratch, not evidence. They are created under a
+per-run sibling directory (`<out>/<run_id>.work/`) and removed when the run
+finishes, so a listing of the evidence root shows runs and nothing else.
 
 Every write is atomic: temp file in the destination directory, `flush`, `fsync`,
 `os.replace`, then `fsync` on the directory. A reader never sees a half-written
@@ -333,6 +361,14 @@ generalisation, and the artifact is built so it cannot be read as one.
 | `auto_ingest_shorts_driver_helper` | `small_refactor` | patch | behaviour-preserving driver-lifetime helper |
 | `auto_ingest_plan_shorts_contract` | `contract_reasoning` | analysis | the driver-lifetime contract and what a repair must preserve |
 
+`auto_ingest_plan_shorts_live_driver` is the only fixture with a `broader` tier:
+a 14-check suite over the rest of the module — parser surface, the
+plans-directory contract, real `Plan` persistence, the brand check, and the
+remaining driver-owning handlers — using the real `models` module from the
+snapshot. It passes both before and after the canonical repair, so a repair that
+fixes the ordering while quietly changing anything else is reported as
+`REGRESSION_FAILURE`, not as success.
+
 The campaign fixture is frozen from `scottjoyner/auto-ingest` at
 `d7d75fff9e97e6f27056677205a75cbcb49ca48d`. The auto-ingest repository itself is
 not modified by anything here.
@@ -355,7 +391,7 @@ repair that regresses `--discusses` cleanup or leaks the driver is caught.
 ```bash
 python3 -m unittest test_fixgit_repro_v1 test_realtask_binding \
     test_realtask_roles test_realtask_patch test_realtask_runner \
-    test_realtask_evidence test_realtask_cli
+    test_realtask_evidence test_realtask_endpoint test_realtask_cli
 
 # or
 python3 -m pytest test_realtask_*.py -q
@@ -366,9 +402,10 @@ python3 -m pytest test_realtask_*.py -q
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
-| `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, and that the runner never modifies the authoritative fixture |
+| `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, and that the runner never modifies the authoritative fixture |
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
-| `test_realtask_cli.py` | validate/list/plan-command, and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
+| `test_realtask_endpoint.py` | the three endpoint inputs (argv, config file, environment) agree; API keys come from the environment and never reach evidence; no fleet node is named anywhere in the harness or its entrypoint |
+| `test_realtask_cli.py` | validate/list/plan-command; each stage runnable standalone (`scout`, `implement`, `review --patch-file`); a multi-task run keeping per-task evidence; and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
 
 `test_realtask_cli.py` starts a `ThreadingHTTPServer` on `127.0.0.1:0` purely as
 a stand-in for a model runtime someone else started. It binds loopback only and

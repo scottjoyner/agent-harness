@@ -29,8 +29,8 @@ Print the exact command for a given endpoint, then run it::
 
     python3 realtime_bench.py plan-command \\
         --task auto_ingest_plan_shorts_live_driver \\
-        --base-url http://100.64.43.123:1234/v1 --model minicpm5-2b \\
-        --label optiplex --out ./runs
+        --base-url http://<host>:<port>/v1 --model <model-id> \\
+        --label <label> --out ./runs
 
 Nothing here discovers nodes, starts servers, claims tasks, registers providers,
 or writes to any repository other than this one's ``runs/`` directory.
@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import platform
+import shutil
 import socket
 import sys
 from pathlib import Path
@@ -348,6 +349,9 @@ def command_run(args: argparse.Namespace) -> int:
         utc_stamp(),
     )
     run_dir = RunDirectory(args.out, run_id)
+    # Evaluation work trees are harness scratch, not evidence. Keep them out of
+    # the evidence root so a directory listing there shows runs and nothing else.
+    work_root = Path(args.out) / (run_id + ".work")
 
     options = RunnerOptions(
         max_source_bytes=args.max_source_bytes,
@@ -357,18 +361,23 @@ def command_run(args: argparse.Namespace) -> int:
     )
     options.max_refinements = min(args.max_refinements, MAX_REFINEMENTS)
 
-    run_dir.copy_fixture(
-        tasks[0].task_path,
-        tasks[0].source_manifest_path,
-    )
-    for extra in tasks[1:]:
-        run_dir.write_text("tasks/{}/task.json".format(extra.task_id), json.dumps(extra.to_dict(), indent=2))
-    run_dir.write_json(
-        "source-manifest.json",
-        source_manifest_artifact(
-            load_source_manifest(tasks[0]), None, {"note": "per-task binding written to metrics.json"}
-        ),
-    )
+    # One task keeps the flat documented layout. Several tasks each get their own
+    # subdirectory, so evidence for one can never overwrite another's.
+    multi = len(tasks) > 1
+    task_dirs = [
+        RunDirectory(args.out, run_id, prefix="tasks/{}/".format(t.task_id)) if multi
+        else run_dir
+        for t in tasks
+    ]
+    for task, task_dir in zip(tasks, task_dirs):
+        task_dir.copy_fixture(task.task_path, task.source_manifest_path)
+        task_dir.write_json(
+            "source-manifest.verified.json",
+            source_manifest_artifact(
+                load_source_manifest(task), None,
+                {"note": "per-task binding verdict is in metrics.json"},
+            ),
+        )
 
     run_dir.write_run_manifest(
         harness_sha=provenance["git_sha"],
@@ -395,12 +404,13 @@ def command_run(args: argparse.Namespace) -> int:
 
     results = []
     integration_overhead = 0.0
-    for task in tasks:
+    comparisons = []
+    for task, task_dir in zip(tasks, task_dirs):
         runner = BenchmarkRunner(
             adapter,
-            run_dir,
+            task_dir,
             options,
-            work_root=Path(args.out) / "work",
+            work_root=work_root,
             harness_root=HERE,
             source_root=args.source_root,
         )
@@ -438,10 +448,11 @@ def command_run(args: argparse.Namespace) -> int:
             run_dir.finalize_manifest(
                 {"integrity": {"authoritative_source_unchanged": False}}
             )
+            shutil.rmtree(work_root, ignore_errors=True)
             return 2
 
     if not args.no_comparison:
-        for result in results:
+        for task, task_dir, result in zip(tasks, task_dirs, results):
             singles = [a for a in result.attempts if a.strategy == "single"]
             swarms = [a for a in result.attempts if a.strategy == "swarm"]
             comparison = build_comparison(
@@ -456,7 +467,10 @@ def command_run(args: argparse.Namespace) -> int:
                     "external controller orchestration is not measured by this tool",
                 ],
             )
-            run_dir.write_json("comparison-{}.json".format(task.task_id), comparison)
+            # The task directory already identifies the task, so the artifact
+            # keeps the documented name in both the flat and nested layouts.
+            task_dir.write_json("comparison.json", comparison)
+            comparisons.append("{}/comparison.json".format(task_dir.prefix).lstrip("/"))
 
     run_dir.finalize_manifest(
         {
@@ -476,7 +490,10 @@ def command_run(args: argparse.Namespace) -> int:
             },
         }
     )
+    shutil.rmtree(work_root, ignore_errors=True)
     print("evidence: {}".format(run_dir.path))
+    for path in comparisons:
+        print("  comparison: {}".format(path))
     return 0
 
 

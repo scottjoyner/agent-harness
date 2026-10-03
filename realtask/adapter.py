@@ -35,8 +35,9 @@ class AdapterError(RuntimeError):
 class EndpointConfig:
     """One already-running OpenAI-compatible endpoint.
 
-    ``label`` is free-form operator text used only to attribute metrics
-    ("optiplex", "destroyer", a laptop name). It is never interpreted.
+    ``label`` and ``node`` are free-form operator text used only to attribute
+    metrics to whatever runtime the operator pointed at. The harness has no list
+    of known runtimes, never interprets these strings, and must never grow one.
     """
 
     label: str
