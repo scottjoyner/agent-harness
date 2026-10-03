@@ -48,6 +48,15 @@
 
 ### Fixed
 
+- **The campaign oracle was passable by sniffing its own test double.** A patch
+  that planned early only when `type(driver).__name__ == "FakeDriver"` passed
+  9/9 targeted checks and left the real defect completely intact -- for that
+  stub the behaviour genuinely is correct, so no behavioural assertion could
+  catch it. The double is now instantiated under three class names
+  (`FakeDriver`, `_GraphDriverStandIn`, `Session`), so a repair has to hold for
+  every name rather than one remembered from reading the oracle. The attack now
+  fails 10 checks, the frozen snapshot fails 15, the reference passes all 27.
+  `test_realtask_overfit_live_driver.diff` keeps the attack.
 - **The settings oracle was passable by memorisation.** A patch that
   special-cased the single literal URL the fixture names
   (`sqlite:///data/router.sqlite3`) and changed nothing else passed 13/13

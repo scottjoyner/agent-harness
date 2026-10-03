@@ -149,8 +149,32 @@ def _plan_args(tmp_path, *extra):
     )
 
 
+#: The double is instantiated under several class names on purpose.
+#:
+#: A production path that inspects ``type(driver).__name__`` -- reordering the
+#: plan call only for the oracle's own stub while leaving the real driver broken
+#: -- satisfies every behavioural assertion in this file, because for that stub
+#: the behaviour really is correct. Renaming the double is what makes the
+#: assertion general: a repair has to hold for every name, not one remembered
+#: from reading this file.
+DRIVER_CLASS_NAMES = ("FakeDriver", "_GraphDriverStandIn", "Session")
+
+_DRIVER_CLASS_NAME = DRIVER_CLASS_NAMES[0]
+
+
+@pytest.fixture(autouse=True, params=DRIVER_CLASS_NAMES)
+def _double_name(request):
+    """Run every lifecycle check once per double name."""
+    global _DRIVER_CLASS_NAME
+    previous = _DRIVER_CLASS_NAME
+    _DRIVER_CLASS_NAME = request.param
+    yield request.param
+    _DRIVER_CLASS_NAME = previous
+
+
 def _install_driver():
-    driver = FakeDriver(EVENTS)
+    klass = type(_DRIVER_CLASS_NAME, (FakeDriver,), {})
+    driver = klass(EVENTS)
     shorts_cli._driver = lambda: (driver, "neo4j")
     return driver
 

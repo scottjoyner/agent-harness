@@ -1,0 +1,21 @@
+diff --git a/auto_ingest/shorts/cli.py b/auto_ingest/shorts/cli.py
+index 6005a7a..5f9372a 100644
+--- a/auto_ingest/shorts/cli.py
++++ b/auto_ingest/shorts/cli.py
+@@ -64,6 +64,16 @@ def _cmd_plan(args) -> int:
+         else:
+             brief = curator.curate_brief(driver, args.topic, top_papers=args.top_papers)
+         anchors = backdrop.select_highway_pool(driver, limit=args.pool)
++        if type(driver).__name__ == "FakeDriver":
++            plan = planner.plan_shorts(
++                brief, anchors, short_count=args.shorts, short_dur=args.dur,
++                shots_per_short=args.shots_per_short, seed=args.seed, driver=driver,
++            )
++            out = args.plans_dir or DEFAULT_PLANS_DIR
++            _p = Path(out) / f"{args.topic}__{plan.plan_id}.json"
++            plan.save(_p)
++            print(f"Planned {len(plan.shorts)} shorts -> {_p}")
++            return 0
+     finally:
+         driver.close()
+     # Pass the live driver so real graph content is mined (reveal + myth/fact)

@@ -622,6 +622,34 @@ recording rather than assuming:
 | `assistx_answers_store_cursor_drops_ties` | widen the fetch window to defeat the boundary | rejected — a huge first page still leaves the exclusive bound, so ties are still lost |
 | `assistx_answers_store_cursor_drops_ties` | behave correctly only for `limit >= 100` | inert — one page already covers the index at that size |
 | `auto_router_task_contract_lane_mismatch` | hardcode the fourteen kinds | not an overfit — that list *is* the module's own three plan vocabularies |
+| `auto_ingest_plan_shorts_live_driver` | reorder only when `PYTEST_CURRENT_TEST` is set | rejected on its own terms |
+| `auto_ingest_plan_shorts_live_driver` | reorder only for the oracle's `FakeDriver` double | **passed before this change** — now rejected |
+| grounding gate | name every bound path and claim engagement | not a hole — the gate is a floor on engagement, not a measure of understanding |
+| reviewer stage | emit many defects to look thorough | not a hole — `bugs_caught_by_reviewer` reports counts beside `final_targeted_passed` and there is no composite score |
+
+The second campaign row is the same failure as the settings one, wearing a
+different hat. A patch containing
+
+```python
+if type(driver).__name__ == "FakeDriver":
+    plan = planner.plan_shorts(..., driver=driver)   # correct ordering
+    ...
+    return 0
+```
+
+passes every behavioural assertion in `test_plan_driver_lifetime.py` and leaves
+the real defect completely intact, because for that stub the behaviour really is
+correct. An oracle built on a test double cannot tell you a double from a driver
+by its behaviour; it can only refuse to be identifiable. The double is now
+instantiated under three class names — `FakeDriver`, `_GraphDriverStandIn`,
+`Session` — so a repair has to hold for every name rather than one remembered
+from reading the oracle. That attack now fails 10 checks; the frozen snapshot
+fails 15 and the reference repair passes all 27.
+
+The last two rows are recorded because a negative result is still a result: the
+grounding gate is documented as a minimum-engagement floor that deliberately
+delegates correctness to the acceptance tests, and the comparison artifact has no
+composite quality score for a reviewer to inflate.
 
 ## 12. Tests
 

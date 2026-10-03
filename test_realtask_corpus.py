@@ -61,6 +61,7 @@ COLLATERAL_DAMAGE: Dict[str, str] = {
 #: test file, not engineering.
 OVERFIT_PATCHES: Dict[str, str] = {
     "auto_router_settings_latency_cache_path": "test_realtask_overfit_settings.diff",
+    "auto_ingest_plan_shorts_live_driver": "test_realtask_overfit_live_driver.diff",
 }
 
 PATCH_TASKS = tuple(REFERENCE_SOLUTIONS)
