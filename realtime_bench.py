@@ -504,6 +504,8 @@ def command_run(args: argparse.Namespace) -> int:
     print("evidence: {}".format(run_dir.path))
     for path in comparisons:
         print("  comparison: {}".format(path))
+    for note in adapter.degradations():
+        print("  endpoint note: {}".format(note))
     if harness_errors:
         # Evidence was still emitted for every task. Exit 3 so a controller
         # distinguishes "the models did badly" from "the harness did badly".

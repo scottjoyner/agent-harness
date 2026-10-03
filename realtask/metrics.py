@@ -37,6 +37,8 @@ class CallMetric:
     stream_used: bool
     server_timings: Dict[str, Any] = field(default_factory=dict)
     raw_request_sha256: str = ""
+    request_profile: Dict[str, Any] = field(default_factory=dict)
+    retries: int = 0
 
     @classmethod
     def from_response(cls, response: ChatResponse, role: Role) -> "CallMetric":
@@ -56,6 +58,8 @@ class CallMetric:
             stream_used=response.stream_used,
             server_timings=dict(response.server_timings),
             raw_request_sha256=response.raw_request_sha256,
+            request_profile=dict(response.request_profile),
+            retries=response.retries,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -75,6 +79,8 @@ class CallMetric:
             "stream_used": self.stream_used,
             "server_timings": self.server_timings,
             "raw_request_sha256": self.raw_request_sha256,
+            "request_profile": self.request_profile,
+            "retries": self.retries,
         }
 
 

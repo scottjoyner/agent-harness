@@ -23,6 +23,36 @@ from typing import Any, Dict, List, Optional, Sequence
 from .taxonomy import Outcome
 
 
+class _EndpointRejected(Exception):
+    """The endpoint refused this request *shape*.
+
+    Almost always an optional parameter it does not implement. Carries the body
+    so the caller can decide what, if anything, to drop.
+    """
+
+    def __init__(self, code: int, body: str):
+        super().__init__("HTTP {}: {}".format(code, body[:400]))
+        self.code = code
+        self.body = body
+
+
+class _TransientFailure(Exception):
+    """A failure that may simply not recur: timeout, reset connection, 5xx."""
+
+    def __init__(self, message: str, is_timeout: bool = False):
+        super().__init__(message)
+        self.is_timeout = is_timeout
+
+
+#: HTTP codes worth a second attempt. Deliberately excludes 4xx: a rejected
+#: request is a configuration problem, and retrying only burns the deadline.
+TRANSIENT_CODES = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
+
+#: Codes meaning "this request shape is not acceptable here". Only these drive
+#: the capability ladder.
+REJECTION_CODES = frozenset({400, 422})
+
+
 class AdapterError(RuntimeError):
     """Model invocation failed in a way that maps onto the taxonomy."""
 
@@ -50,6 +80,8 @@ class EndpointConfig:
     max_tokens: int = 1600
     stream: bool = True
     node: str = ""
+    max_retries: int = 1
+    retry_backoff_s: float = 0.5
 
     def __post_init__(self) -> None:
         if not self.base_url:
@@ -74,6 +106,8 @@ class EndpointConfig:
             "seed": self.seed,
             "max_tokens": self.max_tokens,
             "stream": self.stream,
+            "max_retries": self.max_retries,
+            "retry_backoff_s": self.retry_backoff_s,
         }
 
     def redacted(self) -> "EndpointConfig":
@@ -178,6 +212,9 @@ class ChatResponse:
     identity: Dict[str, Any] = field(default_factory=dict)
     stream_used: bool = False
     raw_request_sha256: str = ""
+    #: What was actually asked of the endpoint, after any degradation, and why.
+    request_profile: Dict[str, Any] = field(default_factory=dict)
+    retries: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -197,6 +234,8 @@ class ChatResponse:
             "identity": self.identity,
             "stream_used": self.stream_used,
             "raw_request_sha256": self.raw_request_sha256,
+            "request_profile": self.request_profile,
+            "retries": self.retries,
         }
 
 
@@ -209,7 +248,33 @@ class ChatAdapter:
         raise NotImplementedError
 
 
-def _build_payload(config: EndpointConfig, request: ChatRequest) -> Dict[str, Any]:
+@dataclass
+class RequestProfile:
+    """What the harness asks of the endpoint, and what it had to give up.
+
+    A private OpenAI-compatible runtime need not implement every part of the
+    specification. Rather than probing -- which would edge into discovering
+    runtimes the operator never mentioned -- the harness starts from the full
+    request and narrows it only when the endpoint actively refuses it. The
+    resulting profile is recorded on every call, so a real-endpoint run stays
+    diagnosable instead of merely working.
+    """
+
+    stream: bool = True
+    stream_options: bool = True
+    seed: bool = True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "stream": self.stream,
+            "stream_options": self.stream_options,
+            "seed": self.seed,
+        }
+
+
+def build_payload(
+    config: EndpointConfig, request: ChatRequest, profile: RequestProfile
+) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": config.model,
         "messages": [
@@ -218,11 +283,11 @@ def _build_payload(config: EndpointConfig, request: ChatRequest) -> Dict[str, An
         ],
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
-        "stream": bool(config.stream),
+        "stream": bool(profile.stream),
     }
-    if config.seed is not None:
+    if config.seed is not None and profile.seed:
         payload["seed"] = config.seed
-    if config.stream:
+    if profile.stream and profile.stream_options:
         payload["stream_options"] = {"include_usage": True}
     return payload
 
@@ -252,7 +317,17 @@ class OpenAIChatAdapter(ChatAdapter):
 
     def __init__(self, config: EndpointConfig):
         self.config = config
+        self._profile = RequestProfile(
+            stream=bool(config.stream),
+            stream_options=bool(config.stream),
+            seed=config.seed is not None,
+        )
+        self._degradations: List[str] = []
         self.identity = dict(config.identity(), adapter="openai-compatible")
+
+    def degradations(self) -> List[str]:
+        """Everything the harness had to give up to get this endpoint to answer."""
+        return list(self._degradations)
 
     def _request(self, url: str, payload: Dict[str, Any], timeout: float):
         body = json.dumps(payload).encode("utf-8")
@@ -262,21 +337,101 @@ class OpenAIChatAdapter(ChatAdapter):
         return urllib.request.Request(url, data=body, headers=headers, method="POST")
 
     def complete(self, request: ChatRequest) -> ChatResponse:
+        """One bounded role call.
+
+        Two independent recovery paths, neither of which guesses:
+
+        * capability degradation -- on HTTP 400/422 the offending optional
+          parameter is dropped and the call reissued with the narrower shape;
+        * transient retry -- on timeout, connection reset or 5xx the call is
+          retried up to ``max_retries`` times.
+
+        Both record what they did. A degraded request that succeeds is not
+        silently equivalent to the request we wanted to make.
+        """
         import hashlib
 
-        payload = _build_payload(self.config, request)
-        raw_sha = hashlib.sha256(
-            json.dumps(payload, sort_keys=True).encode("utf-8")
-        ).hexdigest()
-        started_wall = time.time()
-        start = time.monotonic()
-        if self.config.stream:
+        transient_retries = 0
+        while True:
+            payload = build_payload(self.config, request, self._profile)
+            raw_sha = hashlib.sha256(
+                json.dumps(payload, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            start = time.monotonic()
+            started_wall = time.time()
             try:
-                return self._complete_stream(request, payload, raw_sha, start, started_wall)
-            except AdapterError as exc:
-                if exc.outcome is not Outcome.TIMEOUT:
-                    raise
-                raise
+                response = self._send(
+                    request, payload, raw_sha, start, started_wall, transient_retries
+                )
+            except _EndpointRejected as rejected:
+                if not self._degrade(rejected):
+                    raise AdapterError(
+                        "endpoint rejected the request and nothing further could be "
+                        "dropped: {}".format(rejected),
+                        Outcome.PROTOCOL_FAILURE,
+                    ) from rejected
+                continue
+            except _TransientFailure as failure:
+                if transient_retries >= max(0, self.config.max_retries):
+                    raise AdapterError(
+                        str(failure),
+                        Outcome.TIMEOUT if failure.is_timeout else Outcome.PROTOCOL_FAILURE,
+                    ) from failure
+                transient_retries += 1
+                self._degradations.append(
+                    "transient failure, will retry: {}".format(failure)
+                )
+                if self.config.retry_backoff_s:
+                    time.sleep(self.config.retry_backoff_s)
+                continue
+            profile = self._profile.to_dict()
+            profile["degradations"] = list(self._degradations)
+            response.request_profile = profile
+            response.retries = transient_retries
+            return response
+
+    def _degrade(self, rejected: _EndpointRejected) -> bool:
+        """Drop one unsupported parameter. True when the profile changed.
+
+        Order matters: ``stream_options`` is checked before ``stream`` because
+        the former contains the latter as a substring.
+        """
+        body = (rejected.body or "").lower()
+        if self._profile.stream_options and (
+            "stream_options" in body or "stream options" in body
+        ):
+            self._profile.stream_options = False
+            self._degradations.append(
+                "endpoint rejected stream_options; asking without it, so token "
+                "usage may be absent"
+            )
+            return True
+        if self._profile.seed and "seed" in body:
+            self._profile.seed = False
+            self._degradations.append(
+                "endpoint rejected seed; determinism now rests on temperature alone"
+            )
+            return True
+        if self._profile.stream and "stream" in body:
+            self._profile.stream = False
+            self._degradations.append(
+                "endpoint rejected streaming; falling back to a blocking request, "
+                "so time-to-first-token is not measurable"
+            )
+            return True
+        return False
+
+    def _send(
+        self,
+        request: ChatRequest,
+        payload: Dict[str, Any],
+        raw_sha: str,
+        start: float,
+        started_wall: float,
+        retries: int,
+    ) -> ChatResponse:
+        if payload.get("stream"):
+            return self._complete_stream(request, payload, raw_sha, start, started_wall)
         return self._complete_blocking(request, payload, raw_sha, start, started_wall)
 
     def _complete_stream(
@@ -329,20 +484,15 @@ class OpenAIChatAdapter(ChatAdapter):
                         if ttft is None:
                             ttft = time.monotonic() - start
                         chunks.append(piece)
-        except (urllib.error.HTTPError, ) as exc:
-            raise AdapterError(
-                "endpoint returned HTTP {}: {}".format(exc.code, _short(exc.read())),
-                Outcome.PROTOCOL_FAILURE,
-            ) from exc
+        except urllib.error.HTTPError as exc:
+            raise _classify_http(exc.code, _short(exc.read())) from exc
         except socket.timeout as exc:
-            raise AdapterError("endpoint read timed out", Outcome.TIMEOUT) from exc
+            raise _TransientFailure("endpoint read timed out", is_timeout=True) from exc
         except urllib.error.URLError as exc:
             reason = getattr(exc, "reason", exc)
             if isinstance(reason, socket.timeout):
-                raise AdapterError("endpoint read timed out", Outcome.TIMEOUT) from exc
-            raise AdapterError(
-                "endpoint unreachable: {}".format(reason), Outcome.PROTOCOL_FAILURE
-            ) from exc
+                raise _TransientFailure("endpoint read timed out", is_timeout=True) from exc
+            raise _TransientFailure("endpoint unreachable: {}".format(reason)) from exc
 
         elapsed = time.monotonic() - start
         content = "".join(chunks)
@@ -378,28 +528,22 @@ class OpenAIChatAdapter(ChatAdapter):
         start: float,
         started_wall: float,
     ) -> ChatResponse:
-        payload = dict(payload)
-        payload["stream"] = False
-        payload.pop("stream_options", None)
         http = self._request(self.config.chat_url, payload, self.config.timeout_s)
         try:
             with urllib.request.urlopen(http, timeout=self.config.timeout_s) as response:
                 data = json.loads(response.read().decode("utf-8", errors="replace"))
         except urllib.error.HTTPError as exc:
-            raise AdapterError(
-                "endpoint returned HTTP {}: {}".format(exc.code, _short(exc.read())),
-                Outcome.PROTOCOL_FAILURE,
-            ) from exc
+            raise _classify_http(exc.code, _short(exc.read())) from exc
         except socket.timeout as exc:
-            raise AdapterError("endpoint timed out", Outcome.TIMEOUT) from exc
+            raise _TransientFailure("endpoint timed out", is_timeout=True) from exc
         except urllib.error.URLError as exc:
-            raise AdapterError(
-                "endpoint unreachable: {}".format(getattr(exc, "reason", exc)),
-                Outcome.PROTOCOL_FAILURE,
+            raise _TransientFailure(
+                "endpoint unreachable: {}".format(getattr(exc, "reason", exc))
             ) from exc
         except json.JSONDecodeError as exc:
             raise AdapterError(
-                "endpoint returned non-JSON body", Outcome.PROTOCOL_FAILURE
+                "endpoint returned a non-JSON body: {}".format(exc)[:400],
+                Outcome.PROTOCOL_FAILURE,
             ) from exc
 
         elapsed = time.monotonic() - start
@@ -430,6 +574,22 @@ class OpenAIChatAdapter(ChatAdapter):
             stream_used=False,
             raw_request_sha256=raw_sha,
         )
+
+
+def _classify_http(code: int, body: str):
+    """Route an HTTP failure to the right recovery path.
+
+    400/422 mean the request shape is unacceptable here, which the capability
+    ladder can narrow. 5xx and friends may simply not have happened yet. Anything
+    else is a real configuration problem and must surface rather than be retried.
+    """
+    if code in REJECTION_CODES:
+        return _EndpointRejected(code, body)
+    if code in TRANSIENT_CODES:
+        return _TransientFailure("endpoint returned HTTP {}: {}".format(code, body))
+    return AdapterError(
+        "endpoint returned HTTP {}: {}".format(code, body), Outcome.PROTOCOL_FAILURE
+    )
 
 
 def _short(payload: bytes, limit: int = 400) -> str:
