@@ -1,0 +1,15 @@
+{
+  "capture_note": "Bounded snapshot of the files this fixture binds. Produced by reading the named checkout; the fixture never depends on that checkout remaining available or unmodified.",
+  "captured_at": "2026-10-02T00:00:00Z",
+  "files": [
+    {
+      "path": "auto_router/task_contract.py",
+      "sha256": "2c82cc77649987f424dd69824c9c8a548b7615e023d3ffa364fddc26e22ea506",
+      "size_bytes": 6647
+    }
+  ],
+  "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+  "repository": "scottjoyner/auto-router",
+  "root_dir": "source",
+  "schema": "realtask.source_manifest.v1"
+}

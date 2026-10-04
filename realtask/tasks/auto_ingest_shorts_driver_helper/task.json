@@ -1,0 +1,62 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_ingest/shorts/cli.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_driver_helper_refactor.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Behaviour-preserving. Every subcommand must still close its driver exactly once on every exit path, including the --discusses early return and any exception.",
+    "Do not change the public CLI surface: subcommands, flags, defaults, printed messages and exit codes stay as they are.",
+    "Do not fix the driver-lifetime ordering defect in `plan`; that is a different task.",
+    "The driver lifetime must end up stated in one place, not merely moved between handlers.",
+    "Change only auto_ingest/shorts/cli.py."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "The naive version of this refactor silently also repairs the `plan` ordering defect, which changes the task under test. The acceptance suite therefore includes an explicit check that `plan_shorts` is still called at function-body indentation, outside the driver's live scope. A version that returns the driver instead of yielding it reintroduces the ordering hazard in a new place; a version that only moves the repetition around leaves the repetition in place and is rejected by the close-stated-once check.",
+  "problem": "auto_ingest/shorts/cli.py repeats the same `driver, _ = _driver()` / `try: ... finally: driver.close()` shape in seven subcommand handlers, and one of them (plan) additionally uses the driver after the finally block has already closed it, which is exactly the kind of mistake that repetition invites. Introduce a single module-level helper that owns the driver lifetime and yields a live driver, then route the subcommands through it. This is a behaviour-preserving refactor: every subcommand must keep closing its driver exactly once on every exit path, and the public CLI surface must be unchanged. The driver-lifetime ordering defect in `plan` is a separate bug; leave it exactly as you found it.",
+  "prompt_source_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "relevant_source_files": [
+    "auto_ingest/shorts/cli.py",
+    "auto_ingest/shorts/planner.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_ingest/shorts/cli.py",
+        "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
+        "size_bytes": 32067
+      },
+      {
+        "path": "auto_ingest/shorts/planner.py",
+        "sha256": "6531c64d9620e2fd3b9e01e3cdaf065105d4827506d027752ce68c230236d323",
+        "size_bytes": 31103
+      }
+    ],
+    "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
+    "manifest_sha256": "b9e1d3642cbbbe94888c30cc3250c3c3324bbb5dd3622706d7e87c565ea42374",
+    "repository": "scottjoyner/auto-ingest",
+    "writable_prefixes": []
+  },
+  "task_family": "small_refactor",
+  "task_id": "auto_ingest_shorts_driver_helper",
+  "title": "Factor the repeated driver try/finally block in the shorts CLI"
+}

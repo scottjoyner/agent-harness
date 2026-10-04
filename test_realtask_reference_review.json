@@ -1,0 +1,14 @@
+{
+  "root_cause": "auto_ingest/shorts/cli.py closes the driver in a finally block and then calls plan_shorts with the already-closed driver. The content mining in planner.plan_shorts is wrapped in a blanket except, so the command still exits 0 and silently falls back to templated text. A correct repair must keep the finally close so --discusses cleanup and the exception path still close the driver exactly once.",
+  "relevant_files": [
+    "auto_ingest/shorts/cli.py"
+  ],
+  "plan": [
+    "plan while the driver is still live",
+    "retain the finally close"
+  ],
+  "risks": [
+    "leaking the driver when planning raises"
+  ],
+  "confidence": 0.85
+}

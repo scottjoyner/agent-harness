@@ -1,0 +1,20 @@
+{
+  "capture_note": "Bounded snapshot of the files this fixture binds. Produced by reading the named checkout; the fixture never depends on that checkout remaining available or unmodified.",
+  "captured_at": "2026-10-02T00:00:00Z",
+  "files": [
+    {
+      "path": "auto_ingest/shorts/cli.py",
+      "sha256": "911206f08bfa96c9a55f9cd243854f1063ab0cc0bb0005b6eb736c68beb9cafe",
+      "size_bytes": 32067
+    },
+    {
+      "path": "auto_ingest/shorts/planner.py",
+      "sha256": "6531c64d9620e2fd3b9e01e3cdaf065105d4827506d027752ce68c230236d323",
+      "size_bytes": 31103
+    }
+  ],
+  "head": "d7d75fff9e97e6f27056677205a75cbcb49ca48d",
+  "repository": "scottjoyner/auto-ingest",
+  "root_dir": "source",
+  "schema": "realtask.source_manifest.v1"
+}

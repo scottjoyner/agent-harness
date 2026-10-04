@@ -1,0 +1,13 @@
+diff --git a/auto_router/settings.py b/auto_router/settings.py
+index e05bb0d..c60f025 100644
+--- a/auto_router/settings.py
++++ b/auto_router/settings.py
+@@ -104,6 +104,8 @@ class Settings(BaseSettings):
+     @property
+     def latency_cache_path(self) -> str:
+         db = self.database_url
++        if db == "sqlite:///data/router.sqlite3":
++            return "/data/latency_ema.json"
+         if db.startswith("sqlite:///"):
+             db_path = db[len("sqlite:///"):]
+             if not os.path.isabs(db_path):

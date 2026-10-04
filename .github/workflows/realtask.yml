@@ -1,0 +1,102 @@
+name: realtask
+
+# The harness's whole value is that its checks are trustworthy, and 345 of them
+# were only ever run on one machine. This workflow makes them somebody else's
+# problem too, on a clean checkout, with no access to anything private.
+#
+# It needs no secrets. Anything that would talk to a real endpoint is either
+# faked with a ScriptedAdapter or bound to an ephemeral localhost port, so a run
+# that reaches the network is a bug, not a feature.
+
+on:
+  push:
+    branches: [master, "bench/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: realtask-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harness:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # The source uses PEP 604 unions, so 3.10 is the floor; 3.12 is what the
+        # fixtures were developed against.
+        python-version: ["3.11", "3.12"]
+
+    env:
+      # Deliberately blank. If a test ever starts depending on an ambient
+      # endpoint it must fail here rather than silently succeed against
+      # whatever the runner happens to expose.
+      REALTASK_ENDPOINT: ""
+      REALTASK_ENDPOINT_BASE_URL: ""
+      PYTHONDONTWRITEBYTECODE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test dependency
+        # The harness itself is standard library only. pytest is needed because
+        # the fixture oracles are pytest files that the runner executes.
+        run: python -m pip install --disable-pip-version-check --quiet pytest
+
+      - name: Fixtures validate without an endpoint
+        run: python realtime_bench.py validate
+
+      - name: Fixtures are sealed and undrifted
+        # `validate` already fails on drift -- verified by editing a snapshot.
+        # This step is kept for what the summary does not give you: a per-fixture
+        # verdict naming which fixture went stale, which is the difference
+        # between a red CI run and a fixable one.
+        run: |
+          python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          failures = []
+          for root in sorted(Path("realtask/tasks").iterdir()):
+              if not (root / "task.json").is_file():
+                  continue
+              done = subprocess.run(
+                  [sys.executable, "seal_realtask_fixture.py", "--check", str(root)],
+                  capture_output=True, text=True,
+              )
+              status = "ok" if done.returncode == 0 else "DRIFT"
+              print("{:<6} {}".format(status, root.name))
+              if done.returncode != 0:
+                  failures.append((root.name, done.stdout + done.stderr))
+          for name, detail in failures:
+              print("\n{} drifted:\n{}".format(name, detail), file=sys.stderr)
+          sys.exit(1 if failures else 0)
+          PY
+
+      - name: unittest
+        run: python -m unittest discover -s . -p 'test_*.py'
+
+      - name: pytest
+        run: python -m pytest test_realtask_*.py -q
+
+      - name: Working tree is unchanged by the run
+        # A test that writes into the repository is a test that can make the next
+        # run depend on this one.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "the test run modified tracked files:" >&2
+            git status --porcelain >&2
+            exit 1
+          fi
+          echo "clean"

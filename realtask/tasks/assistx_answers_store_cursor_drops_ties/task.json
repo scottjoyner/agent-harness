@@ -1,0 +1,68 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_store_broader.py"
+      ]
+    ],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "assistx/answers_store.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_cursor_completeness.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Change only assistx/answers_store.py.",
+    "Paginating to exhaustion must return every indexed answer, for any limit and any distribution of tied updated_at values.",
+    "Pagination must terminate; do not introduce an unbounded loop or a cursor that can revisit a page.",
+    "Ordering must stay newest-first, and the cursor must remain the documented '<score>:<id>' string, so existing clients keep working.",
+    "The index score is observable state and must remain float(updated_at in milliseconds). Do not make the score composite, add tie-breaker counters, or sort on anything else.",
+    "Keep the status filter, the substring query filter, the lazy cleanup of stale index entries and the items/count/next_cursor response shape unchanged.",
+    "Prefer resuming from the last member actually examined over resuming from the last one fetched: a page that stops early must not skip the remainder of its window."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "The obvious way to stop dropping tied members is to widen the score, so the acceptance tier pins updated_at as the index score, which rules that out. The subtler trap is resuming from the last *fetched* member rather than the last *examined* one: a page that stops after filling its limit would then skip the rest of the window, which is a different flavour of the same loss. A third trap is getting the comparison direction wrong when filtering the resumed window -- pages are newest-first, so 'after the cursor' means a strictly lower score.",
+  "problem": "assistx/answers_store.py indexes answers in a Redis sorted set scored by `updated_at` in integer milliseconds, and serves newest-first pages through `list_answers_paginated(status, q, limit, cursor)`. The score is not unique: bulk enqueues, a set_status immediately followed by set_result, and SSE bursts all land several answers on the same millisecond. The cursor is documented as the composite '<score>:<id>' and `_parse_cursor` returns both halves, but the pagination loop uses only the score half and advances an *exclusive* score bound -- Redis' '(' syntax -- instead of the composite key. The consequence is that the moment a page boundary falls inside a group of tied scores, every remaining member of that group is skipped, and because the cursor can never re-enter a group it already half-crossed, those answers are lost permanently. They are not missing from the store, so the loss survives restarts and retries: the answers list simply omits them, and how many are omitted depends on page size and update timing rather than on the data. Repair the pagination so that walking every page returns every indexed answer, whatever the tie distribution.",
+  "prompt_source_files": [
+    "assistx/answers_store.py"
+  ],
+  "relevant_source_files": [
+    "assistx/answers_store.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "assistx/answers_store.py",
+        "sha256": "816d6d8c5f9b32a0bb3cee1f8b51aa88dae57c54329e774dcdc6edb40c1d2567",
+        "size_bytes": 7896
+      }
+    ],
+    "head": "e872ed64531d308af9a0e02ad3c813ee0671a7bf",
+    "manifest_sha256": "bcedac2c8624d004cd6f548679bf9869846e400508cca0f095cc67ba628e0a21",
+    "repository": "scottjoyner/auto-assist",
+    "writable_prefixes": []
+  },
+  "task_family": "bug_fix",
+  "task_id": "assistx_answers_store_cursor_drops_ties",
+  "title": "answers_store pagination silently drops every answer sharing a millisecond"
+}

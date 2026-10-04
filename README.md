@@ -1,5 +1,27 @@
 # Synergistic Agent Harness
 
+> **New in this branch: the real-task benchmark harness.**
+>
+> The sections below document the original dual-model synergistic harness and
+> are kept as historical record. For frozen repository-task benchmarking and
+> bounded swarm experiments, start here:
+>
+> - [`docs/REAL-TASK-BENCHMARK.md`](docs/REAL-TASK-BENCHMARK.md) — the harness
+> - [`docs/HARNESS-REGISTRY.md`](docs/HARNESS-REGISTRY.md) — what every older
+>   script in this repo actually does, and why `realtime_bench.py` is canonical
+> - [`EVIDENCE-PROVENANCE.md`](EVIDENCE-PROVENANCE.md) — which artifacts are
+>   legacy and which are current
+>
+> ```bash
+> python3 realtime_bench.py validate                       # no endpoint needed
+> python3 realtime_bench.py run --task <task_id> \
+>     --stage single --stage swarm \
+>     --base-url http://<host>:<port>/v1 --model <model-id>
+> ```
+>
+> The benchmark scripts described below all still work and still produce their
+> own artifact formats. None of them was modified or removed.
+
 ## Overview
 
 A dual-model agent system using VibeThinker-3B and MiniCPM5-2B LoRA working synergistically on the OptiPlex-9030-AIO.

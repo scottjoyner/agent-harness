@@ -1,0 +1,85 @@
+diff --git a/auto_router/settings.py b/auto_router/settings.py
+index e05bb0d..e5073c9 100644
+--- a/auto_router/settings.py
++++ b/auto_router/settings.py
+@@ -5,6 +5,26 @@ from typing import Any
+ from pydantic_settings import BaseSettings, SettingsConfigDict
+ 
+ 
++_SQLITE_PREFIX = "sqlite:///"
++
++
++def _resolve_sqlite_path(configured_url: str) -> str | None:
++    """Resolve a ``sqlite:///`` URL to a filesystem path, or ``None``.
++
++    The deployment contract used by Compose: ``sqlite:///data/x`` means
++    ``/data/x``, while ``sqlite:///./data/x`` remains workdir-relative. This is
++    the single owner of that grammar so every reader agrees.
++    """
++    if not configured_url.startswith(_SQLITE_PREFIX):
++        return None
++    raw_path = configured_url[len(_SQLITE_PREFIX):]
++    if raw_path == ":memory:":
++        return ":memory:"
++    if raw_path.startswith(("/", "./", "../")):
++        return os.path.abspath(raw_path)
++    return os.path.abspath(os.path.join(os.sep, raw_path))
++
++
+ def validate_database_placement(
+     configured_url: str,
+     *,
+@@ -19,8 +39,8 @@ def validate_database_placement(
+     process workdir so the historical ``/app/data`` mistake is visible.
+     """
+     root = os.path.abspath(expected_root)
+-    prefix = "sqlite:///"
+-    if not configured_url.startswith(prefix):
++    resolved_path = _resolve_sqlite_path(configured_url)
++    if resolved_path is None:
+         return {
+             "configured_url": configured_url,
+             "resolved_path": None,
+@@ -29,18 +49,6 @@ def validate_database_placement(
+             "supported": False,
+         }
+ 
+-    raw_path = configured_url[len(prefix):]
+-    if raw_path == ":memory:":
+-        resolved_path = ":memory:"
+-    elif raw_path.startswith("/"):
+-        resolved_path = os.path.abspath(raw_path)
+-    elif raw_path.startswith(("./", "../")):
+-        resolved_path = os.path.abspath(raw_path)
+-    else:
+-        # This is the deployment contract used by Compose: sqlite:///data/x
+-        # means /data/x, while sqlite:///./data/x remains workdir-relative.
+-        resolved_path = os.path.abspath(os.path.join(os.sep, raw_path))
+-
+     persistent = resolved_path != ":memory:" and (
+         resolved_path == root or resolved_path.startswith(root + os.sep)
+     )
+@@ -103,13 +111,16 @@ class Settings(BaseSettings):
+ 
+     @property
+     def latency_cache_path(self) -> str:
+-        db = self.database_url
+-        if db.startswith("sqlite:///"):
+-            db_path = db[len("sqlite:///"):]
+-            if not os.path.isabs(db_path):
+-                db_path = os.path.join(os.getcwd(), db_path)
+-            return os.path.join(os.path.dirname(os.path.abspath(db_path)), "latency_ema.json")
+-        return os.path.join(os.getcwd(), "data", "latency_ema.json")
++        # Resolve through the same helper the placement guard uses, so the two
++        # can never disagree about what a configured URL means. The EMA file must
++        # land in the same directory as router.sqlite3 or it is lost whenever the
++        # writable layer is.
++        resolved = _resolve_sqlite_path(self.database_url)
++        if resolved is None:
++            return os.path.join(os.getcwd(), "data", "latency_ema.json")
++        if resolved == ":memory:":
++            return os.path.join(os.getcwd(), "data", "latency_ema.json")
++        return os.path.join(os.path.dirname(resolved), "latency_ema.json")
+     live_model_cache_ttl_seconds: int = 3600
+     live_model_poll_interval_seconds: float = 5.0
+     assistx_event_sink_url: str | None = None
