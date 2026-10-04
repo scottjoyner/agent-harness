@@ -759,6 +759,25 @@ A benchmark that cannot tell a slow machine from a wrong patch is not measuring
 anything, and the only reason this was caught is that the suite now runs somewhere
 I do not control.
 
+### The roll-up cannot silently pick the wrong attempt
+
+`build_comparison` names a "best single" so a controller has something concrete
+to compare a swarm against. It ranks attempts by a table in
+`_select_best_single`, and anything absent from that table falls back to rank 99
+— worse than every real outcome. That default is only safe while the table
+happens to match the `Outcome` enum, and nothing enforced that: add an outcome
+member and it sorts last, the artifact names the wrong attempt as best, and no
+other test goes red. The same silent-drift shape as the derived artifacts, in the
+one place a wrong answer becomes a headline number.
+
+`test_the_best_single_ranking_covers_every_outcome` asserts the table and the
+enum have not diverged, that no outcome is ranked twice, and that ranks are
+contiguous from zero so nothing can tie with the fallback. A companion test pins
+the orderings that are decisions rather than accidents: `SUCCESS` beats
+everything, `TIMEOUT` beats `SOURCE_MISMATCH` (an attempt against a fixture that
+would not bind measured nothing, which is worse than a hang), and a harness bug
+is worse than a wrong answer.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request

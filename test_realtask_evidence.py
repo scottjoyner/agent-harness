@@ -28,6 +28,7 @@ from realtask.compare import (
     QUALITY_COMPONENTS,
     build_comparison,
 )
+from realtask.metrics import AttemptMetrics
 from realtask.evidence import (
     RunDirectory,
     atomic_write_json,
@@ -321,6 +322,73 @@ class ComparisonTests(HarnessTestCase):
         self.assertEqual(len(comparison["single_attempts_considered"]), 2)
         self.assertIn("failure-rank", comparison["best_single_selection_rule"])
         self.assertEqual(comparison["best_single"]["quality"]["outcome"], "SUCCESS")
+
+    def test_the_best_single_ranking_covers_every_outcome(self):
+        """A new Outcome must not be ranked worst without anyone noticing.
+
+        ``_select_best_single`` falls back to rank 99 for any outcome missing
+        from its table. That is a safe default only while the table is complete,
+        and completeness is not a property the type system enforces: add a
+        member and it silently sorts worse than every real outcome, so the
+        comparison artifact can name the wrong attempt as best. Nothing else
+        would go red.
+        """
+        import inspect
+        import re
+
+        from realtask.compare import _select_best_single
+        from realtask.taxonomy import Outcome
+
+        source = inspect.getsource(_select_best_single)
+        ranked = re.findall(r"Outcome\.([A-Z_]+):\s*(\d+)", source)
+        names = [name for name, _rank in ranked]
+        ranks = [int(rank) for _name, rank in ranked]
+
+        self.assertEqual(
+            sorted(names), sorted({o.name for o in Outcome}),
+            "the best-single ranking and the Outcome enum have diverged",
+        )
+        self.assertEqual(
+            len(names), len(set(names)),
+            "an outcome is ranked twice: {}".format(
+                sorted({n for n in names if names.count(n) > 1})
+            ),
+        )
+        self.assertEqual(
+            sorted(ranks), list(range(len(ranks))),
+            "ranks must be contiguous from 0 so no outcome ties with the "
+            "fallback: {}".format(sorted(ranks)),
+        )
+
+    def test_the_ranking_order_that_is_a_judgement_call_is_pinned(self):
+        """Some orderings are decisions, so changing one must be deliberate."""
+        from realtask.compare import _select_best_single
+        from realtask.taxonomy import Outcome
+
+        def best_of(better, worse):
+            def attempt(outcome, attempt_id):
+                return AttemptMetrics(
+                    attempt_id=attempt_id, strategy="single", outcome=outcome
+                )
+
+            chosen, _rule = _select_best_single(
+                [attempt(worse, "worse"), attempt(better, "better")]
+            )
+            return chosen.attempt_id == "better"
+
+        # SUCCESS is the best outcome, full stop.
+        for other in Outcome:
+            if other is Outcome.SUCCESS:
+                continue
+            with self.subTest(against=other.name):
+                self.assertTrue(best_of(Outcome.SUCCESS, other))
+
+        # A fixture that would not bind is worse evidence than a hang: the
+        # attempt never measured anything.
+        self.assertTrue(best_of(Outcome.TIMEOUT, Outcome.SOURCE_MISMATCH))
+        # A harness bug is worse than a wrong answer.
+        self.assertTrue(best_of(Outcome.TARGETED_TEST_FAILURE,
+                                Outcome.PROTOCOL_FAILURE))
 
     def test_comparison_handles_a_missing_side(self):
         _t, single = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])

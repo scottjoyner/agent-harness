@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **The best-single ranking had no completeness check.** `_select_best_single`
+  falls back to rank 99 for any outcome missing from its table. That is a safe
+  default only while the table happens to match the `Outcome` enum, and
+  completeness is not a property the type system enforces: add a member and it
+  silently sorts worse than every real outcome, so the comparison artifact can
+  name the wrong attempt as best, with nothing else going red. Two tests now
+  assert the table covers every outcome exactly once with contiguous ranks, and
+  pin the orderings that are judgement calls — `SUCCESS` beats everything,
+  `TIMEOUT` beats `SOURCE_MISMATCH` because an unbound fixture is worse
+  evidence than a hang, and a harness bug is worse than a wrong answer.
+  Verified by adding a `PARTIAL_SUCCESS` member and watching the check fail.
 - **Acceptance depended on whether Pillow happened to be installed.**
   `cli._brand_check` opens with `from PIL import Image` before it inspects
   anything, so the campaign fixture's broader tier raised `ModuleNotFoundError`
