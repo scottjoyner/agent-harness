@@ -778,6 +778,39 @@ everything, `TIMEOUT` beats `SOURCE_MISMATCH` (an attempt against a fixture that
 would not bind measured nothing, which is worse than a hang), and a harness bug
 is worse than a wrong answer.
 
+### What the first live run found
+
+Every check in this document was verified against the harness. One defect was
+found only by pointing it at a real model, and it was in the cost accounting.
+
+```python
+started = self._overhead_start()
+response, failure = self._call(state, Role.SINGLE, ...)   # the model call
+self._charge_overhead(state, started)                       # billed as overhead
+```
+
+Nine call sites had this shape, so the model's wall time was added to
+`harness_overhead_s` *as well as* to `model_wall_s`, and `total_wall_s` came out
+at exactly twice the model time. Against the 3B model on LM Studio the first run
+reported `overhead/model = 1.00`; the same measurement after the fix is `0.00`.
+
+That corrupted `controller_integration_overhead.harness_owned_seconds` and the
+cost difference between single and swarm — the numbers the comparison artifact
+exists to produce. A harness cannot answer "is role separation worth its
+overhead?" while billing the model's own latency to the overhead.
+
+No test could have caught it. `ScriptedAdapter` reports a constant 1.0s per call,
+so every scripted run has had a fabricated model wall time and the arithmetic
+error is invisible at that scale. `OverheadAccountingTests` therefore uses an
+adapter that reports real elapsed latency, and asserts overhead stays below model
+time, that total is not double-counted, and that a three-role swarm does not bill
+its three calls twice. All three fail when the fix is reverted.
+
+The lesson generalises past this bug: **a test double that reports plausible but
+fixed numbers will hide every defect that lives in those numbers.** Anything the
+harness asserts about cost, latency or throughput needs a double that can produce
+a range, not a point.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request
