@@ -17,6 +17,14 @@
   must now be stubbed by that fixture's oracles or recorded in
   `UNREACHABLE_DEPENDENCIES` with a specific reason. A new dependency cannot be
   added quietly, and a bare module name does not satisfy the check.
+- **A fixture oracle I wrote was itself racy.**
+  `test_index_score_is_updated_at_in_milliseconds` compared the index score
+  captured at write time against a *second* `_now_ms()` call, so it failed
+  whenever the clock ticked over between them — one CI run in about twenty, on
+  one Python version, reproducing nowhere. It now compares the score against the
+  record's own `updated_at`, plus a magnitude bound and a one-minute freshness
+  bound. Under an adversarial clock the old formulation mismatched on 400 of 400
+  straddling ticks; the new one reads the clock zero times in the equality.
 - **Acceptance failures said only that a boolean was false.**
   `assertTrue(tests.broader_all_passed)` on a fourteen-check suite costs a bisect
   through a four-minute run to locate. `assertTestsPassed` now fails with the

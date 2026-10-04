@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -39,11 +40,22 @@ def store():
 # -- index invariants ----------------------------------------------------
 
 def test_index_score_is_updated_at_in_milliseconds(store):
-    """The score is observable state; a repair must not quietly change it."""
+    """The score is observable state; a repair must not quietly change it.
+
+    Asserted against the record's own ``updated_at``, not against a second
+    ``_now_ms()`` call. Those differ whenever the clock ticks over between the
+    two, which is a race in the test rather than a property of the code -- it
+    failed roughly one run in twenty on CI before this was rewritten.
+    """
     module, client = store
     module.init_answer("a", "q")
-    score = client.zsets[module.INDEX_ALL]["a"]
-    assert float(score) == float(module._now_ms())
+    score = float(client.zsets[module.INDEX_ALL]["a"])
+    obj = module.get_answer("a")
+    assert score == float(obj["updated_at"])
+    # Milliseconds, not seconds and not microseconds.
+    assert 1e12 < score < 1e14, "score is not a millisecond epoch: {}".format(score)
+    # And current, with a minute of slack so a slow machine cannot flake it.
+    assert abs(score - time.time() * 1000.0) < 60_000.0
 
 
 def test_new_answers_enter_the_global_index(store):

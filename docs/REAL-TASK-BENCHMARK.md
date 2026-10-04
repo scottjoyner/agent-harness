@@ -740,6 +740,25 @@ campaign snapshot but only drive the plan path, and the analysis fixtures that
 never execute the CLI at all, are listed with why those imports are unreachable
 for them.
 
+### An oracle can be racy too
+
+Worth recording because it is the one attack in this document that the harness
+aimed at itself. `test_index_score_is_updated_at_in_milliseconds` compared the
+index score captured at write time against a *second* `_now_ms()` call, so it
+failed whenever the clock ticked over between the two — roughly one CI run in
+twenty, on one Python version, reproducing on no machine I could reach. Under an
+adversarial clock the old formulation mismatched on 400 of 400 straddling ticks.
+
+It now compares the score against the record's own `updated_at` — two values
+captured together, so the clock is never read in the equality — plus a magnitude
+bound proving the score is a millisecond epoch rather than seconds or
+microseconds, and a one-minute freshness bound with enough slack that a slow
+machine cannot flake it.
+
+A benchmark that cannot tell a slow machine from a wrong patch is not measuring
+anything, and the only reason this was caught is that the suite now runs somewhere
+I do not control.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request
