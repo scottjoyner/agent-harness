@@ -498,6 +498,13 @@ Same stance as `comparison.json`:
   than raising: a corpus should never fail to summarise because one run died. A
   manifest whose schema is not `realtask.run_manifest.v1` is skipped, so legacy
   `bench_*` artifacts can never be silently pooled in.
+- Runs from **more than one harness revision** are pooled, but the artifact says
+  so: `mixed_harness_revisions` is a structured flag and an additive scope limit
+  names the revisions and points a reader at the per-run `metrics.json`. Refusing
+  across schemas is not enough on its own, because the *meaning* of a component
+  can change between two revisions that share one. Found by summarising the first
+  real evidence directories, where the totals carried 53.95s of harness overhead
+  that was really model latency, recorded before the cost double-count was fixed.
 - Exits `1` when the runs root holds no evidence at all -- "nothing to report" is
   a configuration mistake, not a result.
 
