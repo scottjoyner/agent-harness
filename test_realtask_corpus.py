@@ -500,6 +500,59 @@ class ReferenceSolutionHygieneTests(unittest.TestCase):
                 "is not reviewable".format(filename),
             )
 
+#: Artifacts in this repository that are *generated* from something else and
+#: then tracked, so they can be reviewed in a diff. Each entry names the file and
+#: a zero-argument callable that regenerates its expected contents.
+#:
+#: These are the corpus's silent-drift hazard. The test_generation reference
+#: solution is a copy of the campaign oracle; the campaign reference diff is a
+#: copy of ``REFERENCE_REPAIR``; the two analysis graders share a hardening
+#: block. All three were consistent only because they were regenerated in the
+#: same commit that changed their source. Nothing enforced that, and the failure
+#: mode is not a clean error -- a desynced reference either fails somewhere
+#: unrelated or, worse, stops discriminating without anything going red.
+#:
+#: Adding a derived artifact means adding a row here. The registry is the only
+#: thing standing between a reviewer and a corpus that quietly stops measuring.
+def _reference_repair() -> str:
+    from test_realtask_support import REFERENCE_REPAIR
+
+    return REFERENCE_REPAIR
+
+
+def _regenerated_regression_test_diff() -> str:
+    from test_realtask_support import AUTO_INGEST_BUG_FIX, TASKS_ROOT, new_file_patch
+
+    body = (
+        TASKS_ROOT / AUTO_INGEST_BUG_FIX / "tests" / "test_plan_driver_lifetime.py"
+    ).read_text(encoding="utf-8")
+    return new_file_patch("_realtask_tests/test_candidate_lifetime.py", body)
+
+
+def _grader_hardening_block() -> str:
+    """The shared hardening logic, as it appears in either grader."""
+
+    path = (
+        TASKS_ROOT / "auto_ingest_shorts_plan_review" / "tests" / "check_answer.py"
+    )
+    text = path.read_text(encoding="utf-8")
+    start = text.index("#: A finding must be carried")
+    end = text.index("\ndef main(argv) -> int:")
+    return text[start:end]
+
+
+DERIVED_ARTIFACTS: List = [
+    (
+        "test_realtask_reference_live_driver.diff",
+        _reference_repair,
+        "the inline REFERENCE_REPAIR in test_realtask_support.py",
+    ),
+    (
+        "test_realtask_reference_regression_test.diff",
+        _regenerated_regression_test_diff,
+        "the campaign oracle test_plan_driver_lifetime.py",
+    ),
+]
 
 def load_grader(task_id: str):
     """Import a fixture's answer grader as a module, the way a candidate runs it."""
@@ -792,6 +845,74 @@ class MemorisationTests(HarnessTestCase):
         self.assertTrue(sizes, "the page-size sweep disappeared")
         self.assertIn("11", sizes[0])
         self.assertIn("100", sizes[0])
+
+
+class DerivedArtifactTests(unittest.TestCase):
+    """Generated-but-tracked files must still match what they were generated from.
+
+    Every artifact here is committed so a reviewer can read it in a diff, and
+    regenerated so it cannot rot. A desync does not announce itself: the
+    test_generation reference silently stops discriminating, or the analysis
+    graders drift apart and one of them quietly becomes passable again.
+    """
+
+    def test_derived_artifacts_match_their_source(self):
+        for name, regenerate, source in DERIVED_ARTIFACTS:
+            path = REPO_ROOT / name
+            with self.subTest(artifact=name):
+                self.assertTrue(path.is_file(), name)
+                self.assertEqual(
+                    path.read_text(encoding="utf-8"),
+                    regenerate(),
+                    "{} is out of date with {}; regenerate it before "
+                    "committing".format(name, source),
+                )
+
+    def test_both_graders_carry_identical_hardening(self):
+        """A fix to one grader's hardening must land in the other.
+
+        The graders legitimately differ in docstring, findings and forbidden
+        list; the hardening block must not. A grader that lost it would be
+        passable by keyword stuffing again.
+        """
+        expected = _grader_hardening_block()
+        self.assertIn("MAX_CLAUSE_KEYWORD_DENSITY", expected)
+        self.assertIn("MIN_SUBSTANTIVE_TOKENS", expected)
+        for task_id in ("auto_ingest_shorts_plan_review",
+                        "auto_ingest_plan_shorts_contract"):
+            path = TASKS_ROOT / task_id / "tests" / "check_answer.py"
+            with self.subTest(task=task_id):
+                text = path.read_text(encoding="utf-8")
+                self.assertIn(
+                    expected, text,
+                    "{} does not carry the shared hardening block".format(task_id),
+                )
+                start = text.index("#: A finding must be carried")
+                stop = text.index("\ndef main(argv) -> int:")
+                self.assertEqual(
+                    text[start:stop], expected,
+                    "{} has drifted from the shared hardening block".format(task_id),
+                )
+
+    def test_the_reference_solutions_are_all_derived_or_handwritten(self):
+        """Every tracked reference must be reachable, not orphaned.
+
+        An artifact nothing regenerates is a deliberate one; an artifact that
+        claims to be generated but is not registered is how drift starts.
+        """
+        registered = {name for name, _f, _s in DERIVED_ARTIFACTS}
+        on_disk = {
+            p.name for p in REPO_ROOT.glob("test_realtask_reference_*.diff")
+        }
+        self.assertLessEqual(
+            on_disk - registered,
+            {"test_realtask_reference_refactor.diff",
+             "test_realtask_reference_regression.diff",
+             "test_realtask_reference_settings.diff",
+             "test_realtask_reference_task_contract.diff",
+             "test_realtask_reference_answers_store.diff"},
+            "a reference diff appeared that no test can regenerate",
+        )
 
 
 if __name__ == "__main__":

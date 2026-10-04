@@ -48,6 +48,16 @@
 
 ### Fixed
 
+- **Generated-but-tracked corpus artifacts could silently drift.** The
+  test_generation reference solution is a copy of the campaign oracle, the
+  campaign reference diff is a copy of the inline `REFERENCE_REPAIR`, and the two
+  analysis graders share a hardening block. All three were consistent only
+  because they happened to be regenerated in the same commit that changed their
+  source. `DerivedArtifactTests` regenerates each one and compares, naming both
+  the artifact and its source in the failure. Neither drift mode announces itself
+  otherwise: a desynced reference stops discriminating, or one grader becomes
+  passable by keyword stuffing again while every other test stays green. Both
+  failure modes were verified before the check was trusted.
 - **The campaign oracle was passable by sniffing its own test double.** A patch
   that planned early only when `type(driver).__name__ == "FakeDriver"` passed
   9/9 targeted checks and left the real defect completely intact -- for that

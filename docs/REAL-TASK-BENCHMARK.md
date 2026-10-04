@@ -651,6 +651,28 @@ grounding gate is documented as a minimum-engagement floor that deliberately
 delegates correctness to the acceptance tests, and the comparison artifact has no
 composite quality score for a reviewer to inflate.
 
+### Derived artifacts cannot drift
+
+Some files here are *generated* from something else and then committed, so a
+reviewer can read them in a diff. Three of them are duplicated content:
+
+| artifact | generated from |
+|---|---|
+| `test_realtask_reference_live_driver.diff` | the inline `REFERENCE_REPAIR` in `test_realtask_support.py` |
+| `test_realtask_reference_regression_test.diff` | a copy of the campaign oracle `test_plan_driver_lifetime.py` |
+| the hardening block in both `check_answer.py` graders | itself — the block must match across the two files |
+
+All three were consistent only because they were regenerated in the same commit
+that changed their source. Nothing enforced it, and the failure mode is not a
+clean error: a desynced test_generation reference quietly stops discriminating,
+or one grader drifts and becomes passable by keyword stuffing again while every
+other test stays green.
+
+`DerivedArtifactTests` regenerates each one and compares, and the failure message
+names both the artifact and its source. Both drift modes are verified to fail:
+weakening `MIN_SUBSTANTIVE_TOKENS` in one grader, and editing the campaign oracle
+without regenerating its reference.
+
 ## 12. Tests
 
 ```bash
@@ -666,7 +688,7 @@ python3 -m pytest test_realtask_*.py -q
 | Module | Covers |
 |---|---|
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
-| `test_realtask_corpus.py` | corpus-level guarantees, including attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
+| `test_realtask_corpus.py` | corpus-level guarantees, including checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
