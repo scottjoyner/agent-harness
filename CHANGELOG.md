@@ -4,6 +4,16 @@
 
 ### Added
 
+- **`.github/workflows/realtask.yml`** — the harness had 345 tests and no CI, so
+  every guarantee in this file was enforced only on one machine. The workflow
+  runs on every push and pull request, on Python 3.11 and 3.12: fixture
+  validation, a per-fixture seal check that names which fixture went stale,
+  `unittest discover`, `pytest`, and a guard that the run left no tracked file
+  modified. It needs no secrets. `REALTASK_ENDPOINT` and
+  `REALTASK_ENDPOINT_BASE_URL` are set to empty strings on purpose, so a test
+  that ever starts depending on a live endpoint fails instead of quietly
+  succeeding against whatever the runner exposes.
+
 - **Three cross-repository fixtures** — the corpus no longer derives from a single
   defect. All three were found by reading frozen source and all three fail on
   their own untouched snapshot:

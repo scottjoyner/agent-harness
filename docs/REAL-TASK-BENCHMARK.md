@@ -712,6 +712,10 @@ without regenerating its reference.
 
 ## 12. Tests
 
+Everything here runs in CI on every push and pull request
+(`.github/workflows/realtask.yml`), so none of it depends on one machine's
+state. Locally:
+
 ```bash
 python3 -m unittest test_fixgit_repro_v1 test_realtask_binding \
     test_realtask_roles test_realtask_patch test_realtask_runner \
@@ -728,6 +732,7 @@ python3 -m pytest test_realtask_*.py -q
 | `test_realtask_corpus.py` | corpus-level guarantees, including checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_containment.py` | the worktree boundary: a symlink patch is refused, the refusal is visible in the evidence, no run leaves a link pointing outward, and the linked module is proven importable so the non-execution check is not vacuous |
+| `.github/workflows/realtask.yml` | the same checks on a clean checkout, on Python 3.11 and 3.12: fixture validation, a per-fixture seal check, the full suite, and a guard that the run did not modify tracked files. No secrets; the endpoint variables are blanked so a test that starts depending on a live endpoint fails rather than silently succeeding |
 | `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename, symlink and gitlink file modes), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
