@@ -16,6 +16,7 @@ class Outcome(str, Enum):
     GROUNDING_FAILURE = "GROUNDING_FAILURE"
     EMPTY_OUTPUT = "EMPTY_OUTPUT"
     TRUNCATED = "TRUNCATED"
+    TOOL_CALL_REQUESTED = "TOOL_CALL_REQUESTED"
     TIMEOUT = "TIMEOUT"
     INVALID_PATCH = "INVALID_PATCH"
     PATCH_DOES_NOT_APPLY = "PATCH_DOES_NOT_APPLY"
@@ -39,10 +40,14 @@ class Outcome(str, Enum):
 #: actionable fact and "you did not engage with the source" is a quality signal
 #: that would only obscure it. Grounding still outranks test failures, so an
 #: ungrounded answer is never quietly graded as if it were a real attempt.
+#: Tool calls are ranked ahead of truncation for the same reason: calling a tool
+#: this harness does not offer is the diagnosis, running out of tokens while
+#: doing it is the symptom.
 OUTCOME_PRECEDENCE = (
     Outcome.SOURCE_MISMATCH,
     Outcome.TIMEOUT,
     Outcome.EMPTY_OUTPUT,
+    Outcome.TOOL_CALL_REQUESTED,
     Outcome.TRUNCATED,
     Outcome.PROTOCOL_FAILURE,
     Outcome.INVALID_PATCH,
@@ -55,6 +60,12 @@ OUTCOME_PRECEDENCE = (
 )
 
 _EXPLANATIONS: Dict[Outcome, str] = {
+    Outcome.TOOL_CALL_REQUESTED: (
+        "Model asked for a tool the harness does not provide. The harness is "
+        "read-only by construction and passes the bound source in the prompt, so "
+        "there is nothing to call; the role contract says so and the reply "
+        "addressed a tool anyway."
+    ),
     Outcome.PROTOCOL_FAILURE: "Model output could not be parsed into the role schema.",
     Outcome.GROUNDING_FAILURE: "Model did not ground its answer in the bound source files.",
     Outcome.EMPTY_OUTPUT: "Model returned no usable content.",

@@ -50,7 +50,14 @@ def blocking_defect():
 
 
 class TaxonomyTests(unittest.TestCase):
-    def test_exactly_the_eleven_specified_outcomes_exist(self):
+    def test_exactly_the_specified_outcomes_exist(self):
+        """The taxonomy is a published contract, so it is enumerated, not derived.
+
+        ``TOOL_CALL_REQUESTED`` was added after the first live run: a tool-tuned
+        model answered with a tool call, which was being filed as TRUNCATED --
+        true, but it pointed an operator at the token budget instead of at the
+        role contract that already says no tools exist.
+        """
         self.assertEqual(
             sorted(o.value for o in Outcome),
             sorted(
@@ -58,10 +65,24 @@ class TaxonomyTests(unittest.TestCase):
                     "PROTOCOL_FAILURE", "GROUNDING_FAILURE", "EMPTY_OUTPUT", "TRUNCATED",
                     "TIMEOUT", "INVALID_PATCH", "PATCH_DOES_NOT_APPLY",
                     "TARGETED_TEST_FAILURE", "REGRESSION_FAILURE", "SOURCE_MISMATCH",
-                    "REVIEW_REJECTED", "SUCCESS",
+                    "REVIEW_REJECTED", "SUCCESS", "TOOL_CALL_REQUESTED",
                 ]
             ),
         )
+
+    def test_a_tool_call_reply_is_classified_not_mistaken_for_truncation(self):
+        from realtask.roles import requested_tools
+
+        self.assertEqual(
+            requested_tools('<tool_call name="read_file" call_id="abc">'),
+            ("read_file",),
+        )
+        self.assertEqual(requested_tools("I have no tools to offer."), ())
+        self.assertEqual(
+            requested_tools('{"root_cause": "no tool call here"}'), ()
+        )
+
+
 
     def test_precedence_is_deterministic(self):
         self.assertEqual(OUTCOME_PRECEDENCE[0], Outcome.SOURCE_MISMATCH)
@@ -1100,6 +1121,85 @@ class AuthorityTests(HarnessTestCase):
         self.assertEqual(
             seal_realtask_fixture.main([str(TASKS_ROOT / AUTO_INGEST_BUG_FIX), "--check"]), 0
         )
+
+
+class ToolCallClassificationTests(HarnessTestCase):
+    """A reply that calls a tool is a different fact from one that ran long.
+
+    Added after the first live run against a tool-tuned model, which answered
+    with a 900-token ``<tool_call name="read_file">``. The attempt was filed as
+    TRUNCATED, which is true -- but the note said "contained no JSON object", so
+    the evidence sent an operator to the token budget when the actual cause was
+    that the role contract's "you have NO tools" had been ignored.
+    """
+
+    def reply(self, content):
+        from realtask.adapter import ScriptedResponse
+
+        return ScriptedResponse(content=content, finish_reason="length")
+
+    def test_a_tool_call_is_recorded_as_its_own_outcome(self):
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [self.reply('<tool_call name="read_file" call_id="aaaa">')],
+            ["single"],
+        )
+        state = result.attempts[0]
+        seen = [o.value for o in state.metrics.outcomes_seen]
+        self.assertIn(Outcome.TOOL_CALL_REQUESTED.value, seen)
+
+    def test_the_note_names_the_tool_and_says_why_it_is_unavailable(self):
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [self.reply('<tool_call name="read_file" call_id="aaaa">')],
+            ["single"],
+        )
+        notes = " ".join(result.attempts[0].metrics.notes)
+        self.assertIn("read_file", notes)
+        self.assertIn("read-only", notes)
+
+    def test_truncation_is_still_reported_when_it_also_happened(self):
+        """A reply can be both; the outcome precedence decides, not the guess."""
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [self.reply('<tool_call name="write_file" call_id="aaaa">')],
+            ["single"],
+        )
+        seen = [o.value for o in result.attempts[0].metrics.outcomes_seen]
+        self.assertIn(Outcome.TOOL_CALL_REQUESTED.value, seen)
+        self.assertIn(Outcome.TRUNCATED.value, seen)
+
+    def test_the_headline_outcome_is_the_diagnosis_not_the_symptom(self):
+        """A tool call ranks ahead of the truncation it causes.
+
+        The harness orders outcomes by which fact is actionable. "The model asked
+        for a tool that does not exist here" is the diagnosis; "it ran out of
+        tokens" is what happened while it was doing that.
+        """
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [self.reply('<tool_call name="read_file" call_id="aaaa">')],
+            ["single"],
+        )
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.outcome, Outcome.TOOL_CALL_REQUESTED)
+        self.assertEqual(
+            metrics.outcome.value,
+            result.attempts[0].metrics.outcomes_seen[0].value,
+            "the highest-precedence outcome should be the one reported",
+        )
+
+    def test_a_plain_json_reply_is_not_mistaken_for_a_tool_call(self):
+        """Detection must not fire on ordinary prose that mentions tools."""
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [ScriptedResponse(
+                content='{"diff": "diff --git a/x b/x\n", "notes": '
+                        '"no tool call here", "confidence": 0.5}')],
+            ["single"],
+        )
+        seen = [o.value for o in result.attempts[0].metrics.outcomes_seen]
+        self.assertNotIn(Outcome.TOOL_CALL_REQUESTED.value, seen)
 
 
 if __name__ == "__main__":

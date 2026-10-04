@@ -43,6 +43,7 @@ from .roles import (
     Role,
     RoleProtocolError,
     ScoutResult,
+    requested_tools,
 )
 from .taxonomy import Outcome
 from .version import MAX_REFINEMENTS, SCHEMA_ROLE_RESULT, SCHEMA_TEST_RESULTS
@@ -249,6 +250,21 @@ class BenchmarkRunner:
         if not response.content.strip():
             state.note(Outcome.EMPTY_OUTPUT)
             return response, Outcome.EMPTY_OUTPUT
+
+        # A reply that calls a tool is addressing an interface this harness does
+        # not offer, and that is a different fact from "ran out of tokens". The
+        # first live run against a tool-tuned model produced a 900-token tool
+        # call, which was filed as TRUNCATED -- true, but it sent an operator
+        # looking at the token budget instead of at the role contract.
+        tools = requested_tools(response.content)
+        if tools:
+            state.metrics.notes.append(
+                "model requested unavailable tool(s): {}. The harness is "
+                "read-only and passes the bound source in the prompt; the role "
+                "contract states this.".format(", ".join(tools))
+            )
+            state.note(Outcome.TOOL_CALL_REQUESTED)
+
         if response.finish_reason == "length":
             state.note(Outcome.TRUNCATED)
         return response, None

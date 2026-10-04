@@ -255,10 +255,11 @@ def _select_best_single(
         Outcome.INVALID_PATCH: 5,
         Outcome.PATCH_DOES_NOT_APPLY: 6,
         Outcome.PROTOCOL_FAILURE: 7,
-        Outcome.TRUNCATED: 8,
-        Outcome.EMPTY_OUTPUT: 9,
-        Outcome.TIMEOUT: 10,
-        Outcome.SOURCE_MISMATCH: 11,
+        Outcome.TOOL_CALL_REQUESTED: 8,
+        Outcome.TRUNCATED: 9,
+        Outcome.EMPTY_OUTPUT: 10,
+        Outcome.TIMEOUT: 11,
+        Outcome.SOURCE_MISMATCH: 12,
     }
 
     def key(metrics: AttemptMetrics):

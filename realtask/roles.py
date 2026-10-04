@@ -13,6 +13,7 @@ unbounded agent conversation anywhere in this harness.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -394,6 +395,35 @@ _CONTRACT_PREAMBLE = (
     "other text. Do not include commentary, markdown fences, or reasoning "
     "outside the object. Do not ask questions."
 )
+
+
+#: Envelopes that mean "I am calling a tool" rather than "here is my answer".
+#: The harness offers no tools -- the bound source is in the prompt -- and every
+#: role contract says so, so these are a model addressing an interface that does
+#: not exist here. They are recognised so the evidence can say that, instead of
+#: filing a tool call under whichever outcome the truncation happened to produce.
+_TOOL_CALL_PATTERNS = (
+    re.compile(r"<\s*tool_call\b", re.IGNORECASE),
+    re.compile(r"<\s*\|?\s*(?:tool_call|function_call)\s*\|?\s*>", re.IGNORECASE),
+    re.compile(r"<tool_call>", re.IGNORECASE),
+)
+
+_TOOL_NAME = re.compile(r"""name\s*=\s*["']([A-Za-z_][\w.\-]{0,64})["']""")
+
+
+def requested_tools(text: str) -> Tuple[str, ...]:
+    """Names of tools the reply asked to call, in order, without duplicates."""
+    found: List[str] = []
+    for pattern in _TOOL_CALL_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            tail = text[match.start(): match.start() + 400]
+            name = _TOOL_NAME.search(tail)
+            found.append(name.group(1) if name else "(unnamed)")
+    out: List[str] = []
+    for name in found:
+        if name not in out:
+            out.append(name)
+    return tuple(out)
 
 
 def _json_only_instruction(role: Role) -> str:
