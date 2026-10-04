@@ -243,6 +243,131 @@ def cosmetic_patch(rel: str = "auto_ingest/shorts/cli.py", source_root=None) -> 
     return "diff --git a/{rel} b/{rel}\n".format(rel=rel) + body
 
 
+class OverheadAccountingTests(HarnessTestCase):
+    """Harness overhead must not include the model call it wraps.
+
+    Found by the first live run against a real endpoint, not by any test: the
+    scripted adapter returns instantly, so model wall time is ~0ms and
+    double-counting it is invisible. Against a real 3B model that took 54
+    seconds, ``harness_overhead_s`` came out at 53.95 -- the same figure as
+    ``model_wall_s`` -- and ``total_wall_s`` was exactly twice ``model_wall_s``.
+
+    That corrupts the number the comparison artifact exists to report:
+    ``controller_integration_overhead.harness_owned_seconds`` and the cost
+    difference between single and swarm. A harness cannot measure whether role
+    separation is worth its overhead while billing the model's own latency to
+    the overhead.
+
+    The test is a *difference*, not a threshold. Running the acceptance suite
+    costs about two seconds of genuine harness work whatever the model does, so
+    "overhead is small" is not the property. The property is that overhead does
+    not move when the model gets slower -- which is exactly what double-counting
+    would change.
+    """
+
+    def run_with_latency(self, latency, responses, stages, task_id):
+        """One attempt whose model calls each take ``latency`` seconds.
+
+        The adapter must *report* the latency, not merely spend it: ``model_wall_s``
+        sums ``CallMetric.wall_s``, which comes from the adapter's own
+        ``ChatResponse``. ``ScriptedAdapter`` reports a constant 1.0s per call, so
+        a scripted run has never had a realistic model wall time -- which is why
+        double-counting it went unnoticed for the whole life of the harness.
+        """
+        import dataclasses
+        import time as _time
+
+        from realtask.adapter import ChatAdapter, ScriptedAdapter
+        from realtask.runner import BenchmarkRunner, RunnerOptions
+
+        inner = ScriptedAdapter(responses)
+
+        class _Slow(ChatAdapter):
+            identity = dict(inner.identity, adapter="scripted-slow")
+
+            def complete(self, request):
+                _time.sleep(latency)
+                response = inner.complete(request)
+                return dataclasses.replace(response, wall_s=latency)
+
+        runner = BenchmarkRunner(
+            _Slow(),
+            self.run_dir,
+            RunnerOptions(test_timeout_s=180.0),
+            work_root=self.tmp / "work",
+            harness_root=REPO_ROOT,
+        )
+        self.addCleanup(runner.close)
+        return runner.run_task(self.task(task_id), stages).attempts[0].metrics
+
+    def test_a_slow_model_is_not_billed_to_the_harness(self):
+        from test_realtask_support import AUTO_INGEST_BUG_FIX, patch_reply
+
+        # The live symptom was harness_overhead_s == model_wall_s. Make the
+        # model slow enough that genuine harness work (~1.7s of pytest) cannot
+        # be mistaken for it.
+        slow = self.run_with_latency(
+            3.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+        )
+        self.assertGreaterEqual(slow.model_wall_s, 2.5)
+        self.assertLess(
+            slow.harness_overhead_s, slow.model_wall_s,
+            "harness overhead {} is not less than the {}s the model spent; "
+            "the window around _call is billing model time to the harness, "
+            "exactly as the first live run showed".format(
+                slow.harness_overhead_s, slow.model_wall_s
+            ),
+        )
+
+    def test_total_wall_does_not_double_count_the_model(self):
+        from test_realtask_support import AUTO_INGEST_BUG_FIX, patch_reply
+
+        metrics = self.run_with_latency(
+            3.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+        )
+        self.assertAlmostEqual(
+            metrics.total_wall_s,
+            metrics.model_wall_s + metrics.harness_overhead_s,
+            places=3,
+        )
+        # With the model time removed from overhead, total is model + genuine
+        # harness work. Before the fix it was very close to 2x the model time.
+        self.assertLess(
+            metrics.total_wall_s - metrics.model_wall_s,
+            metrics.model_wall_s,
+            "total_wall_s minus model_wall_s is {} while the model took {}; "
+            "the model's time is being counted twice".format(
+                metrics.total_wall_s - metrics.model_wall_s,
+                metrics.model_wall_s,
+            ),
+        )
+
+    def test_a_swarm_charges_each_role_call_once(self):
+        from test_realtask_support import (
+            AUTO_INGEST_BUG_FIX, patch_reply, review_reply, scout_reply,
+        )
+
+        metrics = self.run_with_latency(
+            2.0,
+            [scout_reply(), patch_reply(), review_reply("accept")],
+            ["swarm"],
+            AUTO_INGEST_BUG_FIX,
+        )
+        self.assertEqual(
+            [c.role.value for c in metrics.calls],
+            ["scout", "implementer", "reviewer"],
+            "the swarm did not make all three role calls",
+        )
+        self.assertGreaterEqual(metrics.model_wall_s, 5.5)
+        self.assertLess(
+            metrics.harness_overhead_s, metrics.model_wall_s,
+            "a swarm's harness overhead {} exceeds its {}s of model time; "
+            "every role call is being billed twice".format(
+                metrics.harness_overhead_s, metrics.model_wall_s
+            ),
+        )
+
+
 class BroaderAcceptanceTests(HarnessTestCase):
     """Targeted acceptance is necessary but not sufficient.
 

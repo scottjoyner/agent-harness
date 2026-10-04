@@ -191,27 +191,57 @@ class BenchmarkRunner:
         self.harness_root = Path(harness_root) if harness_root else Path(__file__).resolve().parent.parent
         self.source_root = Path(source_root) if source_root else None
         self._worktrees: List[EvaluationWorktree] = []
+        #: Wall time spent inside the adapter, accumulated across calls. Kept
+        #: separately so harness overhead can exclude it: a model call that
+        #: takes 54 seconds is not 54 seconds of harness overhead.
+        self._model_wall_s = 0.0
+        #: One entry per open overhead window: the model time at the moment the
+        #: window opened. Overhead windows are strictly nested (LIFO), so a
+        #: stack is enough to subtract the model time each window contains.
+        self._overhead_marks: List[float] = []
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
 
     def _overhead_start(self) -> float:
-        return time.monotonic()
+        started = time.monotonic()
+        self._overhead_marks.append(self._model_wall_s)
+        return started
 
     def _record_overhead(self, state: AttemptState, started: float) -> None:
-        state.metrics.harness_overhead_s += time.monotonic() - started
+        """Charge elapsed wall time to the harness, minus any model time in it.
+
+        Call sites wrap ``self._call`` in an overhead window, which is what they
+        did before this existed -- and it billed the model's own wall time to the
+        harness a second time, so ``total_wall_s`` came out at exactly twice
+        ``model_wall_s`` and the cost comparison in the comparison artifact was
+        inflated by the model it was trying to measure. Subtracting the model time
+        inside the window fixes every call site at once, including any added
+        later.
+        """
+        mark = (
+            self._overhead_marks.pop()
+            if self._overhead_marks
+            else self._model_wall_s
+        )
+        elapsed = time.monotonic() - started
+        inside_model = max(0.0, self._model_wall_s - mark)
+        state.metrics.harness_overhead_s += max(0.0, elapsed - inside_model)
 
     def _call(self, state: AttemptState, role: Role, system: str, user: str):
         """One bounded model call. Returns ``(response, outcome_or_None)``."""
+        call_started = time.monotonic()
         try:
             response = self.adapter.complete(
                 ChatRequest(role=role.value, system=system, user=user)
             )
         except AdapterError as exc:
+            self._model_wall_s += time.monotonic() - call_started
             state.note(exc.outcome)
             state.metrics.notes.append("{} call failed: {}".format(role.value, exc))
             return None, exc.outcome
+        self._model_wall_s += time.monotonic() - call_started
 
         state.metrics.calls.append(CallMetric.from_response(response, role))
         state.raw[role.value] = response.content
