@@ -228,6 +228,85 @@ class HonestyTests(RollupTestCase):
         self.assertEqual(payload["tasks"], [])
 
 
+class MixedHarnessRevisionTests(RollupTestCase):
+    """A roll-up must not present cross-revision totals as like-for-like.
+
+    The harness already refuses to pool across artifact *schemas*, so a legacy
+    ``bench_*`` run can never be silently mixed into a ``realtask.*.v1`` total.
+    The same discipline was missing one level in: revisions *within* a schema.
+
+    That is not theoretical here. Nine call sites once billed the model's own
+    latency to ``harness_overhead_s``. A roll-up spanning that fix sums a number
+    that meant one thing before it and another after, and nothing said so. Found
+    by running ``summarize`` over the first real evidence directories, where the
+    totals carried 53.95s of harness overhead that was really model latency.
+    """
+
+    def test_one_revision_is_not_reported_as_mixed(self):
+        self.seed()
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertFalse(payload["mixed_harness_revisions"])
+        self.assertFalse(
+            any("different harness revisions" in lim for lim in payload["scope_limits"]),
+            "a single-revision roll-up must not carry the mixing warning",
+        )
+
+    def test_two_revisions_are_flagged_and_explained(self):
+        self.write_run(
+            "r1",
+            manifest("r1", sha="a" * 40),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        self.write_run(
+            "r2",
+            manifest("r2", sha="b" * 40),
+            metrics("t2", "bug_fix", [
+                attempt("t2::single", "single", Outcome.SUCCESS.value)]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertTrue(payload["mixed_harness_revisions"])
+        self.assertEqual(len(payload["harness_git_shas"]), 2)
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("different harness revisions", joined)
+        self.assertIn("a" * 12, joined)
+        self.assertIn("b" * 12, joined)
+        self.assertIn("rather than a like-for-like measurement", joined)
+
+    def test_the_flag_is_structured_not_only_prose(self):
+        """A controller should be able to check this without parsing English."""
+        self.write_run(
+            "r1", manifest("r1", sha="a" * 40),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        self.write_run(
+            "r2", manifest("r2", sha="b" * 40),
+            metrics("t2", "bug_fix", [
+                attempt("t2::single", "single", Outcome.SUCCESS.value)]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertIs(payload["mixed_harness_revisions"], True)
+
+    def test_the_standing_limits_still_apply_when_mixed(self):
+        """The new limit is additive, not a replacement."""
+        self.write_run(
+            "r1", manifest("r1", sha="a" * 40),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        self.write_run(
+            "r2", manifest("r2", sha="b" * 40),
+            metrics("t2", "bug_fix", [
+                attempt("t2::single", "single", Outcome.SUCCESS.value)]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("does not establish that a model qualifies", joined)
+        self.assertIn("never estimated and never partially summed", joined)
+        self.assertIn("belongs to an authoritative controller", joined)
+
+
 class RobustnessTests(RollupTestCase):
     def test_a_corrupt_manifest_is_skipped_not_fatal(self):
         self.seed()

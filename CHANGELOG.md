@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **A roll-up pooled totals across harness revisions without saying so.** The
+  harness refuses to pool across artifact *schemas*, so a legacy `bench_*` run can
+  never be silently mixed into a `realtask.*.v1` total — but the same discipline
+  was missing one level in, across revisions *within* a schema. That is not
+  theoretical: the meaning of `harness_overhead_s` changed when the cost
+  double-count was fixed, so a roll-up spanning that fix sums a number that meant
+  one thing before and another after. Found by running `summarize` over the first
+  real evidence directories, where the totals carried 53.95s of harness overhead
+  that was really model latency. The roll-up now carries a structured
+  `mixed_harness_revisions` flag and an additive scope limit naming the revisions
+  and pointing a reader at the per-run `metrics.json` instead.
+
 - **Swarm evidence reported the wrong candidate's safety verdict.**
   `_merge_review` copied a hand-listed set of patch fields from the review
   attempt into the swarm attempt, and `safety_ok` / `safety_reason` were not on

@@ -50,12 +50,51 @@ class Rollup:
     integrity: Dict[str, Any] = field(default_factory=dict)
     harness_errors: List[str] = field(default_factory=list)
 
+    def _scope_limits(self) -> List[str]:
+        """The standing limits, plus one earned by what actually got pooled.
+
+        The harness already refuses to pool across artifact *schemas*, so legacy
+        ``bench_*`` runs can never be silently mixed in. It did not apply the same
+        discipline across harness *revisions* within one schema, and that matters
+        more than it sounds: the meaning of a component can change between two
+        revisions that are both schema-compatible. Nine call sites once billed the
+        model's own latency to ``harness_overhead_s``, so a roll-up spanning that
+        fix sums a number that meant one thing before it and another after.
+
+        Found by running ``summarize`` over the first real evidence directories:
+        the totals carried 53.95s of harness overhead that was really model
+        latency, because that run predated the fix.
+        """
+        limits = [
+            "A roll-up describes runs that already happened. It does not establish "
+            "that a model qualifies for anything.",
+            "Task families are not equally hard and are not equally represented; the "
+            "counts below are a record of what was run, not a difficulty weighting.",
+            "Token totals are null when any attempt's endpoint omitted usage. They "
+            "are never estimated and never partially summed.",
+            "This artifact records evidence only. What to do with it belongs to an "
+            "authoritative controller.",
+        ]
+        shas = sorted(set(self.harness_shas))
+        if len(shas) > 1:
+            limits.append(
+                "These runs came from {} different harness revisions ({}). A "
+                "component's meaning can change between revisions that share a "
+                "schema, so the aggregate figures below record what was reported "
+                "rather than a like-for-like measurement. Compare the per-run "
+                "metrics.json files instead of these totals.".format(
+                    len(shas), ", ".join(sha[:12] for sha in shas)
+                )
+            )
+        return limits
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema": SCHEMA_ROLLUP,
             "runs_root": self.runs_root,
             "run_ids": list(self.run_ids),
             "harness_git_shas": sorted(set(self.harness_shas)),
+            "mixed_harness_revisions": len(set(self.harness_shas)) > 1,
             "model_runtimes": self.endpoint_identities,
             "runs_with_integrity_failures": sorted(self.integrity.get("dirty_runs", [])),
             "harness_errors": list(self.harness_errors),
@@ -69,16 +108,7 @@ class Rollup:
                 "that applies cleanly and a review that catches a defect are not "
                 "commensurable. Compare them individually, as metrics.json does."
             ),
-            "scope_limits": [
-                "A roll-up describes runs that already happened. It does not establish "
-                "that a model qualifies for anything.",
-                "Task families are not equally hard and are not equally represented; the "
-                "counts below are a record of what was run, not a difficulty weighting.",
-                "Token totals are null when any attempt's endpoint omitted usage. They "
-                "are never estimated and never partially summed.",
-                "This artifact records evidence only. What to do with it belongs to an "
-                "authoritative controller.",
-            ],
+            "scope_limits": self._scope_limits(),
         }
 
     # -- aggregate ---------------------------------------------------------
