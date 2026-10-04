@@ -4,6 +4,31 @@
 
 ### Fixed
 
+- **A model asking for a tool was filed as `TRUNCATED`.** The second live run,
+  against a tool-tuned model, answered with a 900-token
+  `<tool_call name="read_file">` whose `call_id` padding consumed the whole
+  budget, and the attempt was recorded as `TRUNCATED` with the note "contained no
+  JSON object". Both statements are true, and together they send an operator to
+  the token budget when the cause is a role-contract violation — the contract
+  already opens with "You have NO tools, NO shell and NO filesystem access". New
+  outcome `TOOL_CALL_REQUESTED`, detected from the reply and ranked ahead of
+  truncation because the harness orders outcomes by which fact is actionable.
+  The same run now reports `outcome=TOOL_CALL_REQUESTED` and names the tool.
+- **The model's own wall time was billed to the harness a second time.** Nine
+  call sites wrapped `self._call` in an overhead window, so the model's latency
+  was added to `harness_overhead_s` as well as to `model_wall_s`, and
+  `total_wall_s` came out at exactly twice the model time. Found by the first
+  live run, where `overhead/model` was `1.00` to two decimal places; the same
+  measurement after the fix is `0.00`. This corrupted
+  `controller_integration_overhead.harness_owned_seconds` and the cost difference
+  between single and swarm — the numbers the comparison artifact exists to report.
+
+  No test could have caught it: `ScriptedAdapter` reports a constant 1.0s per
+  call, so scripted runs have never had a realistic model wall time.
+  `OverheadAccountingTests` uses an adapter that reports real elapsed latency and
+  asserts overhead stays below model time, that total is not double-counted, and
+  that a three-role swarm does not bill its calls twice. All three fail with the
+  fix reverted.
 - **The best-single ranking had no completeness check.** `_select_best_single`
   falls back to rank 99 for any outcome missing from its table. That is a safe
   default only while the table happens to match the `Outcome` enum, and

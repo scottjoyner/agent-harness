@@ -811,6 +811,36 @@ fixed numbers will hide every defect that lives in those numbers.** Anything the
 harness asserts about cost, latency or throughput needs a double that can produce
 a range, not a point.
 
+### Two failure modes only a real model produces
+
+The second live run produced something no synthetic test had: a reply that was not
+a bad answer but a call to an interface that does not exist here.
+
+```
+<tool_call name="read_file" call_id="call_0657...4444...">
+```
+
+The harness offers no tools — the bound source is in the prompt — and every role
+contract opens with "You have NO tools, NO shell and NO filesystem access". The
+model ignored it, then spent its entire 900-token budget padding a `call_id`, so
+the attempt was recorded as `TRUNCATED` with the note "contained no JSON object".
+
+Both statements are true, and together they are misleading: an operator reading
+that evidence goes to the token budget, when the fix is nowhere near the budget.
+
+`TOOL_CALL_REQUESTED` now names it, and outranks `TRUNCATED` in
+`OUTCOME_PRECEDENCE` — the harness orders outcomes by which fact is actionable,
+and the diagnosis beats the symptom. Truncation is still recorded in
+`outcomes_seen` because it also happened.
+
+Detection is narrow on purpose: three envelope spellings, and a test asserting
+that a JSON reply merely *mentioning* tools is not flagged. A classifier loose
+enough to fire on the word "tool" would be its own kind of dishonest evidence.
+
+Note what this is not. The harness does not retry, strip the envelope, or offer
+the tool. Each of those would paper over a role-contract violation. It records
+precisely what happened and lets a reader judge it.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request
