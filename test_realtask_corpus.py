@@ -1165,5 +1165,129 @@ UNREACHABLE_DEPENDENCIES: Dict[str, Dict[str, str]] = {
 }
 
 
+class DocumentationCoverageTests(unittest.TestCase):
+    """Documentation drift is a defect, and it is silent.
+
+    Twice on this branch a write raised *after* the code was committed, so the
+    commit looked complete while the changelog was missing an entry for a bug
+    just fixed. Nothing was red. A reader of the record would have believed a
+    fix was undocumented -- or, worse, that no fix had happened.
+
+    These tests make the three tables a reader actually consults fail loudly
+    instead: the failure taxonomy, the shipped-fixture list, and the test-module
+    index. They are derived from the code, so a new outcome or fixture cannot be
+    added without a reader being able to find it.
+    """
+
+    DOC = "docs/REAL-TASK-BENCHMARK.md"
+
+    def doc_text(self) -> str:
+        return (REPO_ROOT / self.DOC).read_text(encoding="utf-8")
+
+    def test_every_outcome_appears_in_the_failure_taxonomy_table(self):
+        """The table an operator reads to interpret a result must be complete."""
+        rows = set(
+            re.findall(r"^\|\s*`([A-Z_]+)`\s*\|", self.doc_text(), re.MULTILINE)
+        )
+        missing = sorted(o.value for o in Outcome if o.value not in rows)
+        self.assertEqual(
+            missing, [],
+            "{} defines outcomes the documented taxonomy does not explain: "
+            "{}. An operator reading the table cannot interpret a run that "
+            "produced one.".format(self.DOC, missing),
+        )
+
+    def test_every_outcome_has_a_taxonomy_explanation_in_code(self):
+        from realtask.taxonomy import _EXPLANATIONS
+
+        missing = sorted(
+            o.value for o in Outcome
+            if not _EXPLANATIONS.get(o, "").strip()
+        )
+        self.assertEqual(missing, [])
+
+    def test_the_taxonomy_table_does_not_invent_outcomes(self):
+        """The other direction: a row for an outcome that no longer exists."""
+        rows = set(
+            re.findall(r"^\|\s*`([A-Z_]+)`\s*\|", self.doc_text(), re.MULTILINE)
+        )
+        known = {o.value for o in Outcome}
+        invented = sorted(r for r in rows if r.endswith(("_FAILURE", "_MISMATCH", "OUTPUT")) and r not in known)
+        self.assertEqual(invented, [], "documented outcomes that do not exist")
+
+    def test_every_shipped_fixture_is_listed(self):
+        text = self.doc_text()
+        missing = sorted(
+            root.parent.name
+            for root in TASKS_ROOT.glob("*/task.json")
+            if "`{}`".format(root.parent.name) not in text
+        )
+        self.assertEqual(
+            missing, [],
+            "fixtures on disk that the shipped-fixtures table does not "
+            "list: {}".format(missing),
+        )
+
+    def test_every_test_module_is_listed(self):
+        text = self.doc_text()
+        missing = sorted(
+            path.stem
+            for path in REPO_ROOT.glob("test_*.py")
+            if "`{}.py`".format(path.stem) not in text
+        )
+        self.assertEqual(
+            missing, [],
+            "test modules that the test index does not list: {}".format(missing),
+        )
+
+    def test_the_docs_state_exactly_what_has_and_has_not_been_verified(self):
+        """The document must not overclaim, and must not underclaim either.
+
+        Two failure modes, both seen on this branch. Claiming less than is true
+        hides that a live run happened and what it found. Claiming more hides
+        that no model has yet solved a fixture, which is the fact a reader needs
+        most when weighing a single non-SUCCESS run from a small model.
+
+        So both halves are asserted: the harness has been run against a live
+        endpoint, and it has never produced a SUCCESS.
+        """
+        # Markdown hard-wraps, so a phrase can straddle a newline. Collapse
+        # whitespace before matching or this test fails on reflow alone.
+        text = " ".join(self.doc_text().lower().split())
+
+        # Assert on a boolean, not on the substring: assertIn would dump the
+        # whole document into the failure message, which is 900 lines of noise
+        # around a one-line problem.
+        self.assertTrue(
+            "run against a real openai-compatible server" in text,
+            "the document no longer records that a live endpoint was used; if "
+            "that is no longer true, say so here rather than deleting it",
+        )
+        self.assertTrue(
+            "ever produced a `success`" in text,
+            "the document must keep stating that no model has yet solved a "
+            "fixture; without it a reader may take one small-model failure as "
+            "evidence about the benchmark rather than about the model",
+        )
+
+    def test_the_docs_do_not_stale_counts(self):
+        """A count in prose is a claim that decays quietly."""
+        from realtask.taxonomy import Outcome
+
+        count = len(list(Outcome))
+        # "the eleven outcomes" and friends.
+        flat = " ".join(self.doc_text().lower().split())
+        for word in ("eleven", "twelve"):
+            self.assertNotIn(
+                "the {} outcomes".format(word), flat,
+                "the layout section names a fixed number of outcomes; there are "
+                "{} now".format(count),
+            )
+
+    def test_the_changelog_documents_the_current_taxonomy(self):
+        """Whatever the newest entry is, it must not predate a live finding."""
+        changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("TOOL_CALL_REQUESTED", changelog)
+        self.assertIn("billed to the harness a second time", changelog)
 if __name__ == "__main__":
     unittest.main()

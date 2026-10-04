@@ -61,7 +61,8 @@ asserts all three inputs produce identical endpoint identity.
 ### What a real runtime may not implement
 
 A private OpenAI-compatible runtime need not implement every part of the
-specification, and the harness has never been run against one. Rather than
+specification, and the harness narrows to what an endpoint actually offers.
+Rather than
 probing -- which would edge into discovering runtimes the operator never
 mentioned -- it starts from the full request and narrows only when the endpoint
 actively refuses it:
@@ -87,8 +88,9 @@ had to degrade prints `endpoint note:` lines and carries the same detail in
 `metrics.json`.
 
 This path is tested against loopback handlers that reject specific parameters
-and fail transiently. It has **not** been exercised against real hardware;
-proving it needs a node.
+and fail transiently. It has been exercised against a real OpenAI-compatible
+server (LM Studio) since, where the full profile was accepted with no
+degradation and no retries. No fleet node has ever been involved.
 
 The harness does **not** discover hosts, probe subnets, or start servers. It
 POSTs to the URL it is given. Exit codes: `0` clean, `1` bad arguments or
@@ -331,6 +333,7 @@ Every attempt ends with exactly one of:
 | `GROUNDING_FAILURE` | the answer did not engage with the bound source |
 | `EMPTY_OUTPUT` | no usable content |
 | `TRUNCATED` | output ended early |
+| `TOOL_CALL_REQUESTED` | the reply called a tool this harness does not provide; it is read-only and passes the bound source in the prompt |
 | `TIMEOUT` | a bounded resource was exhausted: a model call exceeded its deadline, or an allow-listed acceptance command exceeded the test timeout |
 | `INVALID_PATCH` | not a well-formed unified diff, or refused by the safety screen |
 | `PATCH_DOES_NOT_APPLY` | well formed, but does not apply to the bound source |
@@ -343,7 +346,8 @@ Every attempt ends with exactly one of:
 When several conditions hold, the first match in `OUTCOME_PRECEDENCE` wins, so a
 run is reproducible regardless of execution order. The order is by specificity:
 patch-mechanics failures outrank grounding, because "you did not produce a
-usable diff" is the actionable fact.
+usable diff" is the actionable fact. A tool call outranks the truncation it
+caused, for the same reason: the diagnosis beats the symptom.
 
 **Candidate-scoped outcomes vs attempt-level outcomes.** An attempt's terminal
 verdict is decided by its final candidate. When the refinement round produces a
@@ -841,6 +845,25 @@ Note what this is not. The harness does not retry, strip the envelope, or offer
 the tool. Each of those would paper over a role-contract violation. It records
 precisely what happened and lets a reader judge it.
 
+### What the live runs have and have not shown
+
+The harness has been run against a real OpenAI-compatible server (LM Studio, on
+loopback) four times: two fixtures, two models, `single` strategy only. Two
+defects were found that no test could have found, both described above — the cost
+double-count and the tool-call classification.
+
+What has **not** happened is a `SUCCESS`. No attempt has ever produced a
+`SUCCESS`, and that is a fact about the models available rather than about the
+fixtures: the two models on offer are 0.8B and 3B parameters, against defects
+that took a human reading to find. Both runs recorded `completion_tokens`
+exactly at the cap with `finish_reason: "length"`, which is the harness reporting
+a real truncation honestly instead of dressing it up.
+
+So the honest summary is: the pipeline works against a live endpoint and the
+evidence is truthful, and nothing has yet demonstrated that a model can pass
+these fixtures. A reader should treat a single non-`SUCCESS` run from a small
+model as evidence about that model, not about the benchmark.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request
@@ -859,6 +882,7 @@ python3 -m pytest test_realtask_*.py -q
 
 | Module | Covers |
 |---|---|
+| `test_fixgit_repro_v1.py` | the pre-existing k2 reflog-correction reproduction harness this repo already carried, kept running so the historical evidence stays reproducible; not part of the `realtask.*.v1` family |
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
 | `test_realtask_corpus.py` | corpus-level guarantees, including proving no acceptance tier depends on an undeclared third-party package, checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
@@ -890,7 +914,7 @@ It runs experiments and writes evidence.
 ```
 realtask/
     version.py        schema markers, MAX_REFINEMENTS
-    taxonomy.py       the eleven outcomes and their precedence
+    taxonomy.py       the outcomes and their precedence
     fixtures.py       RealTask, strict validation, sealing hashes
     binding.py        source binding verification
     roles.py          role contracts, prompts, parsing
