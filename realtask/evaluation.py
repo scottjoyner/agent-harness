@@ -205,13 +205,21 @@ class EvaluationWorktree:
         before = self.hashes()
         safety = screen_patch(patch_text, self.known_paths, self.writable_prefixes)
         if not safety.ok:
-            hint = "INVALID_PATCH" if safety.binary else "INVALID_PATCH"
+            # Report *why* here rather than only that it failed. An attempt
+            # refused by this screen and one refused by a malformed diff are
+            # different findings, and the evidence has to be able to tell them
+            # apart -- otherwise a containment refusal reads as a parse error.
             return ApplyResult(
                 ok=False,
-                outcome_hint=hint,
+                outcome_hint="INVALID_PATCH",
                 reason=safety.reason or "patch rejected by safety screen",
                 before_hashes=before,
                 after_hashes=before,
+                safety_ok=False,
+                safety_reason=safety.reason or "patch rejected by safety screen",
+                modes=safety.modes,
+                outside_worktree=safety.outside_worktree,
+                unknown_paths=safety.unknown_paths,
             )
 
         chosen = applier

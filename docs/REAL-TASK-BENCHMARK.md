@@ -263,6 +263,43 @@ harness executes — that is the task. Those runs:
   is removed;
 - are disclosed in the fixture manifest and in this document.
 
+#### A path inside the worktree is not containment
+
+The safety screen originally screened *path strings*: not absolute, no `..`,
+declared by the fixture or under a writable prefix. That is not sufficient,
+because a patch can create a **symlink** whose header path satisfies all three
+while its target is anywhere on the host:
+
+```
+diff --git a/_realtask_tests/test_linked.py b/_realtask_tests/test_linked.py
+new file mode 120000
+--- /dev/null
++++ b/_realtask_tests/test_linked.py
+@@ -0,0 +1 @@
++/home/scott/git/auto-ingest/auto_ingest/shorts/cli.py
+```
+
+`git apply` creates the link, and pytest — which imports what it collects —
+executes the target's module body at collection time, outside the worktree and
+outside the model's read-only guarantee. This was verified end to end before it
+was fixed: the linked module's import-time side effect ran.
+
+`screen_patch` now screens declared file modes and admits only `100644` and
+`100755`. `120000` (symlink) and `160000` (submodule gitlink) are refused, and
+the refusal is reported with the offending mode in octal.
+
+A second defect surfaced while fixing the first: the safety screen's refusal path
+never set `safety_ok=False` or `safety_reason`, so the evidence artifact reported
+`safety_ok: true` for a patch the screen had just refused — a containment refusal
+was indistinguishable from a parse error. Both the outcome and the reason are now
+carried through `ApplyResult`.
+
+`test_realtask_containment.py` covers the boundary. One of its tests proves the
+linked module really is imported by pytest, because otherwise "nothing executed"
+would pass for the wrong reason — it did, until it was replaced with the
+property that holds unconditionally: no symlink exists in the worktree after a
+run. Four of the five fail with the mode screen neutralised.
+
 ## 6. Acceptance is grounded, never a model judgement
 
 Acceptance commands are argv vectors, never shell strings. The program of each
@@ -690,7 +727,8 @@ python3 -m pytest test_realtask_*.py -q
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
 | `test_realtask_corpus.py` | corpus-level guarantees, including checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
-| `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
+| `test_realtask_containment.py` | the worktree boundary: a symlink patch is refused, the refusal is visible in the evidence, no run leaves a link pointing outward, and the linked module is proven importable so the non-execution check is not vacuous |
+| `test_realtask_patch.py` | extraction strategies, safety screen (undeclared files, traversal, absolute paths, binary, rename, symlink and gitlink file modes), writable prefixes, `INVALID_PATCH` vs `PATCH_DOES_NOT_APPLY`, trailing-newline regression, program allow-list, worktree guard |
 | `test_realtask_runner.py` | the taxonomy, grounding gate, every stage, reviewer receives the exact patch and exact binding, **binding drift stops the reviewer**, one-refinement enforcement, review rejection, analysis deliverables, test-generation discrimination, satisfiable-oracle proofs for `small_refactor`, targeted-vs-broader separation, **`REGRESSION_FAILURE`**, **hung acceptance commands are `TIMEOUT`**, **always-emit on harness failure**, multiple single attempts and best-single selection, source-context truncation, `--require-head`, and that the runner never modifies the authoritative fixture |
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
 | `test_realtask_endpoint.py` | the three endpoint inputs (argv, config file, environment) agree; API keys come from the environment and never reach evidence; no fleet node is named anywhere in the harness or its entrypoint |

@@ -70,6 +70,7 @@ class PatchSafetyReport:
     reason: Optional[str] = None
     paths: Tuple[str, ...] = ()
     outside_worktree: Tuple[str, ...] = ()
+    modes: Tuple[int, ...] = ()
     unknown_paths: Tuple[str, ...] = ()
     binary: bool = False
 
@@ -79,6 +80,7 @@ class PatchSafetyReport:
             "reason": self.reason,
             "paths": list(self.paths),
             "outside_worktree": list(self.outside_worktree),
+            "modes": list(self.modes),
             "unknown_paths": list(self.unknown_paths),
             "binary": self.binary,
         }
@@ -98,6 +100,33 @@ def parse_patch_paths(patch_text: str) -> Set[str]:
     return paths
 
 
+#: Git file modes the harness is willing to create inside a disposable
+#: worktree. Anything else is a way out: 120000 is a symlink whose target is
+#: arbitrary, 160000 is a submodule gitlink.
+REGULAR_FILE_MODES = frozenset({0o100644, 0o100755})
+
+#: Header lines that declare a file mode, as (new file|old|new|deleted file) mode NNNN
+_MODE_HEADER = re.compile(
+    r"^(?:new file mode|old mode|new mode|deleted file mode)[ =](\d+)\s*$",
+    re.MULTILINE,
+)
+
+
+def _declared_file_modes(patch_text: str) -> set:
+    """Every file mode the patch declares, as integers.
+
+    A patch that creates a symlink has to say so in a mode header; there is no
+    way to smuggle one in without one.
+    """
+    modes = set()
+    for raw in _MODE_HEADER.findall(patch_text):
+        try:
+            modes.add(int(raw, 8))
+        except ValueError:  # pragma: no cover - findall guarantees octal digits
+            continue
+    return modes
+
+
 def screen_patch(
     patch_text: str,
     known_paths: Iterable[str],
@@ -110,6 +139,11 @@ def screen_patch(
     ``writable_prefixes`` -- the fixture's own bounded scratch area, used for
     example by ``test_generation`` tasks where the candidate must add a new
     test file. Prefixes are always relative and never escape the worktree.
+
+    Path strings alone are not containment. A patch may create a *symlink*
+    whose header path is comfortably inside the worktree while its target is
+    anywhere on the host, and the acceptance tier imports what it finds there.
+    So file modes are screened too, and only regular files are allowed in.
     """
     known = set(known_paths)
     prefixes = tuple(writable_prefixes)
@@ -117,6 +151,24 @@ def screen_patch(
         return PatchSafetyReport(ok=False, reason="binary patch is not supported", binary=True)
     if "rename from" in patch_text or "rename to" in patch_text:
         return PatchSafetyReport(ok=False, reason="renames are not supported")
+
+    modes = _declared_file_modes(patch_text)
+    irregular = sorted(m for m in modes if m not in REGULAR_FILE_MODES)
+    if irregular:
+        return PatchSafetyReport(
+            ok=False,
+            reason=(
+                "patch declares non-regular file mode(s) {}; only {} are "
+                "accepted. A symlink inside the worktree can point anywhere on "
+                "the host, and the acceptance tier imports what it finds "
+                "there".format(
+                    ", ".join(format(m, "06o") for m in irregular),
+                    ", ".join(format(m, "06o") for m in sorted(REGULAR_FILE_MODES)),
+                )
+            ),
+            paths=(),
+            modes=tuple(sorted(modes)),
+        )
 
     paths = parse_patch_paths(patch_text)
     if not paths:
@@ -148,7 +200,9 @@ def screen_patch(
             unknown_paths=tuple(unknown),
         )
 
-    return PatchSafetyReport(ok=True, paths=tuple(sorted(paths)))
+    return PatchSafetyReport(
+        ok=True, paths=tuple(sorted(paths)), modes=tuple(sorted(modes))
+    )
 
 
 @dataclass
@@ -161,6 +215,9 @@ class ApplyResult:
     safety_reason: str = ""
     stdout: str = ""
     stderr: str = ""
+    modes: Tuple[int, ...] = ()
+    outside_worktree: Tuple[str, ...] = ()
+    unknown_paths: Tuple[str, ...] = ()
     before_hashes: Dict[str, str] = field(default_factory=dict)
     after_hashes: Dict[str, str] = field(default_factory=dict)
 
@@ -182,6 +239,9 @@ class ApplyResult:
             "applier": self.applier,
             "safety_ok": self.safety_ok,
             "safety_reason": self.safety_reason,
+            "modes": list(self.modes),
+            "outside_worktree": list(self.outside_worktree),
+            "unknown_paths": list(self.unknown_paths),
             "stdout": self.stdout[:8000],
             "stderr": self.stderr[:8000],
             "changed_files": list(self.changed_files),

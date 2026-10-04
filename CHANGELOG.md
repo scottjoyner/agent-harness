@@ -48,6 +48,23 @@
 
 ### Fixed
 
+- **A symlink patch escaped the evaluation worktree.** The patch safety screen
+  screened path strings -- not absolute, no `..`, declared or under a writable
+  prefix -- but a patch can create a symlink satisfying all three while pointing
+  anywhere on the host. `git apply` creates the link and pytest imports what it
+  collects, so the target's module body executed at collection time, outside the
+  worktree and outside the model's read-only guarantee. Verified end to end
+  before fixing: the linked module's import-time side effect ran.
+  `screen_patch` now admits only file modes `100644` and `100755`, refusing
+  `120000` (symlink) and `160000` (gitlink) and naming the mode in octal.
+  New `test_realtask_containment.py`; four of its five tests fail with the mode
+  screen neutralised, and one of them proves the linked module really is
+  imported, so the non-execution check cannot pass for the wrong reason.
+- **A safety-screen refusal was reported as a clean screen.** The refusal path
+  never set `safety_ok=False` or `safety_reason`, so evidence claimed
+  `safety_ok: true` for a patch the screen had just refused, making a
+  containment refusal indistinguishable from a parse error. Both now travel
+  through `ApplyResult`, along with the offending modes and paths.
 - **Generated-but-tracked corpus artifacts could silently drift.** The
   test_generation reference solution is a copy of the campaign oracle, the
   campaign reference diff is a copy of the inline `REFERENCE_REPAIR`, and the two

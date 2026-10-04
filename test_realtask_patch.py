@@ -118,6 +118,84 @@ class PatchSafetyTests(unittest.TestCase):
     def test_prose_with_no_paths_is_refused(self):
         self.assertFalse(screen_patch("just some prose\n", KNOWN).ok)
 
+    def test_symlink_creation_is_refused(self):
+        """A path inside the worktree is not containment if it is a symlink.
+
+        The header path is comfortably relative and has no ``..``, so a
+        path-string screen waves it through -- and the acceptance tier then
+        imports whatever the link points at, at collection time, outside the
+        worktree and outside the model's read-only guarantee.
+        """
+        patch = (
+            "diff --git a/_realtask_tests/test_linked.py "
+            "b/_realtask_tests/test_linked.py\n"
+            "new file mode 120000\n"
+            "--- /dev/null\n"
+            "+++ b/_realtask_tests/test_linked.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+/etc/passwd\n"
+        )
+        report = screen_patch(patch, KNOWN, ("_realtask_tests/",))
+        self.assertFalse(report.ok)
+        self.assertIn("120000", report.reason or "")
+        self.assertIn(0o120000, report.modes)
+
+    def test_submodule_gitlink_is_refused(self):
+        patch = (
+            "diff --git a/vendor b/vendor\n"
+            "new file mode 160000\n"
+            "--- /dev/null\n"
+            "+++ b/vendor\n"
+            "@@ -0,0 +1 @@\n"
+            "+Subproject commit deadbeef\n"
+        )
+        report = screen_patch(patch, KNOWN, ("_realtask_tests/",))
+        self.assertFalse(report.ok)
+        self.assertIn(0o160000, report.modes)
+
+    def test_symlink_hidden_in_an_allowed_prefix_is_still_refused(self):
+        """The writable prefix must not become the escape hatch."""
+        patch = (
+            "diff --git a/_realtask_tests/ok.py b/_realtask_tests/ok.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/_realtask_tests/ok.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+assert True\n"
+            "diff --git a/_realtask_tests/evil.py b/_realtask_tests/evil.py\n"
+            "new file mode 120000\n"
+            "--- /dev/null\n"
+            "+++ b/_realtask_tests/evil.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+/etc/passwd\n"
+        )
+        self.assertFalse(screen_patch(patch, KNOWN, ("_realtask_tests/",)).ok)
+
+    def test_a_regular_new_file_is_still_allowed(self):
+        patch = (
+            "diff --git a/_realtask_tests/test_new.py b/_realtask_tests/test_new.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/_realtask_tests/test_new.py\n"
+            "@@ -0,0 +1 @@\n"
+            "+def test_x():\n"
+            "+    assert True\n"
+        )
+        report = screen_patch(patch, KNOWN, ("_realtask_tests/",))
+        self.assertTrue(report.ok, report.reason)
+        self.assertIn(0o100644, report.modes)
+
+    def test_mode_screening_does_not_reject_an_executable_script(self):
+        patch = (
+            "diff --git a/_realtask_tests/run.sh b/_realtask_tests/run.sh\n"
+            "new file mode 100755\n"
+            "--- /dev/null\n"
+            "+++ b/_realtask_tests/run.sh\n"
+            "@@ -0,0 +1 @@\n"
+            "+#!/bin/sh\n"
+        )
+        self.assertTrue(screen_patch(patch, KNOWN, ("_realtask_tests/",)).ok)
+
 
 class ProgramPolicyTests(HarnessTestCase):
     def test_python_is_always_allowed(self):
