@@ -919,5 +919,251 @@ class DerivedArtifactTests(unittest.TestCase):
         )
 
 
+class UndeclaredDependencyTests(unittest.TestCase):
+    """No acceptance tier may depend on a package the harness does not declare.
+
+    Found the hard way: CI reported 24 failures that reproduced nowhere, all of
+    them ``REGRESSION_FAILURE`` on the campaign fixture, because
+    ``cli._brand_check`` opens with ``from PIL import Image`` and Pillow happened
+    to be installed on the machine that wrote the fixtures. The same patch, the
+    same fixture, two different verdicts depending on the host.
+
+    That makes the acceptance signal a property of the machine rather than of the
+    patch, which is the one thing this harness exists to avoid. The convention
+    is already established -- the auto-router fixtures stub ``pydantic_settings``
+    -- so this test enforces it rather than leaving it to memory.
+    """
+
+    #: Modules the harness itself provides, so a frozen source may use them.
+    HARNESS_PROVIDED = frozenset({"pytest"})
+
+    def non_stdlib_imports(self, source: Path) -> set:
+        import ast
+        import sys as _sys
+
+        stdlib = set(getattr(_sys, "stdlib_module_names", ()))
+        found = set()
+        tree = ast.parse(source.read_text(encoding="utf-8", errors="replace"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".")[0]
+                    if root not in stdlib:
+                        found.add(root)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:  # relative import, always in-tree
+                    continue
+                root = (node.module or "").split(".")[0]
+                if root and root not in stdlib:
+                    found.add(root)
+        return found - self.HARNESS_PROVIDED
+
+    def stubbed_modules(self, tests_dir: Path) -> set:
+        """Third-party modules an oracle stubs, via sys.modules or _stub()."""
+        import re
+
+        stubbed = set()
+        for path in tests_dir.glob("*.py"):
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for match in re.finditer(
+                r"""(?:_stub|sys\.modules\[)\s*["']([A-Za-z_][\w.]*)["']""", text
+            ):
+                stubbed.add(match.group(1).split(".")[0])
+            for match in re.finditer(r"""["']([A-Za-z_][\w.]*)["']\s*""", text):
+                stubbed.add(match.group(1).split(".")[0])
+        return stubbed
+
+    def test_every_third_party_import_in_a_snapshot_is_accounted_for(self):
+        """Every non-stdlib import in a frozen snapshot is stubbed or justified.
+
+        Not merely "stubbed": the fixtures sharing the campaign snapshot only
+        drive the plan path, so they never reach ``_brand_check`` or the Neo4j
+        import and have no need to stub them. What must not happen is a
+        dependency being *unmentioned* -- so the ones deliberately left alone are
+        listed with a reason, and anything new fails here.
+        """
+        offenders = []
+        for manifest in iter_fixture_manifests(TASKS_ROOT):
+            task = load_task(manifest)
+            stubbed = self.stubbed_modules(task.tests_dir)
+            justified = UNREACHABLE_DEPENDENCIES.get(task.task_id, {})
+            for rel in task.source.paths:
+                for module in sorted(self.non_stdlib_imports(task.source_dir / rel)):
+                    if module in stubbed or module in justified:
+                        continue
+                    offenders.append(
+                        "{}: {} imports {!r}; no oracle stubs it and no reason "
+                        "is recorded".format(task.task_id, rel, module)
+                    )
+        self.assertEqual(
+            offenders, [],
+            "an acceptance tier that imports an undeclared third-party package "
+            "changes verdict with the host:\n  " + "\n  ".join(offenders),
+        )
+
+    def test_every_justification_is_specific(self):
+        """A bare module name is not a reason."""
+        for task_id, modules in UNREACHABLE_DEPENDENCIES.items():
+            loaded = load_task(TASKS_ROOT / task_id / "task.json")
+            self.assertEqual(loaded.task_id, task_id)
+            for module, reason in modules.items():
+                with self.subTest(task=task_id, module=module):
+                    self.assertGreater(
+                        len(reason), 40,
+                        "record why {!r} is safe for {}".format(module, task_id),
+                    )
+
+    def test_oracles_import_only_stdlib_pytest_and_siblings(self):
+        """The oracles must not need installing anything either.
+
+        Sibling modules that live in the fixture's own ``tests/`` directory are
+        part of the fixture, not third-party packages.
+        """
+        offenders = []
+        for manifest in iter_fixture_manifests(TASKS_ROOT):
+            task = load_task(manifest)
+            siblings = {path.stem for path in task.tests_dir.glob("*.py")}
+            # The frozen package under test, which the oracle must import.
+            under_test = {rel.split("/")[0] for rel in task.source.paths}
+            for path in sorted(task.tests_dir.glob("*.py")):
+                for module in sorted(self.non_stdlib_imports(path)):
+                    if module in siblings or module in under_test:
+                        continue
+                    if module == "pytest":
+                        continue
+                    offenders.append(
+                        "{}: {} imports {!r}".format(task.task_id, path.name, module)
+                    )
+        self.assertEqual(offenders, [])
+
+    def _pil_blocker(self, directory: Path) -> Path:
+        blocker = directory / "sitecustomize.py"
+        blocker.write_text(
+            "import sys\n"
+            "class _Block:\n"
+            "    def find_spec(self, name, path=None, target=None):\n"
+            "        if name.split('.')[0] == 'PIL':\n"
+            "            raise ModuleNotFoundError(name)\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, _Block())\n",
+            encoding="utf-8",
+        )
+        return blocker
+
+    def test_the_pil_blocker_actually_blocks(self):
+        """Otherwise the test below would pass because blocking does nothing."""
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._pil_blocker(Path(tmp))
+            env = dict(os.environ)
+            env["PYTHONPATH"] = tmp
+            blocked = subprocess.run(
+                [sys.executable, "-c", "import PIL"], capture_output=True,
+                text=True, timeout=60, env=env,
+            )
+            self.assertNotEqual(blocked.returncode, 0)
+            self.assertIn("ModuleNotFoundError", blocked.stderr)
+            unblocked = subprocess.run(
+                [sys.executable, "-c", "import PIL"], capture_output=True,
+                text=True, timeout=60,
+            )
+            if unblocked.returncode != 0:
+                self.skipTest("Pillow is not installed here anyway")
+
+    def test_the_campaign_broader_tier_passes_without_pillow(self):
+        """The CI failure, encoded as a test.
+
+        ``cli._brand_check`` opens with ``from PIL import Image`` before it looks
+        at anything, so on a host without Pillow the brand check raised
+        ModuleNotFoundError and the campaign fixture reported
+        REGRESSION_FAILURE for a patch that was in fact correct -- 24 tests red in
+        CI, none of them reproducible locally. The oracle now stubs PIL; this
+        asserts the tier still passes with the real package made unimportable,
+        which is the condition CI runs under.
+        """
+        import os
+        import subprocess
+        import tempfile
+
+        task = load_task(
+            TASKS_ROOT / "auto_ingest_plan_shorts_live_driver" / "task.json"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            self._pil_blocker(Path(tmp))
+            work = Path(tmp) / "work"
+            (work / "_realtask_tests").mkdir(parents=True)
+            for rel in task.source.paths:
+                target = work / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((task.source_dir / rel).read_bytes())
+            for package in ("auto_ingest", "auto_ingest/shorts"):
+                init = work / package / "__init__.py"
+                init.parent.mkdir(parents=True, exist_ok=True)
+                init.touch()
+            for path in task.tests_dir.glob("*.py"):
+                (work / "_realtask_tests" / path.name).write_text(
+                    path.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+
+            env = dict(os.environ)
+            env["PYTHONPATH"] = tmp
+            completed = subprocess.run(
+                [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+                 str(work / "_realtask_tests" / "test_shorts_cli_surface.py")],
+                capture_output=True, text=True, timeout=300,
+                cwd=str(work), env=env,
+            )
+            self.assertEqual(
+                completed.returncode, 0,
+                "the campaign broader tier needs Pillow installed, so acceptance "
+                "depends on the host rather than the patch:\n{}".format(
+                    completed.stdout[-3000:]
+                ),
+            )
+            self.assertIn("14 passed", completed.stdout)
+
+
+#: Third-party modules a frozen snapshot imports that a fixture's oracles
+#: deliberately do not stub, with the reason that is safe for that fixture.
+#:
+#: The five auto-ingest fixtures share one snapshot, but only the campaign
+#: fixture drives the whole CLI surface. The others reach ``_cmd_plan`` and
+#: nothing else, so they never execute ``_brand_check`` (Pillow) or the driver
+#: factory (neo4j).
+UNREACHABLE_DEPENDENCIES: Dict[str, Dict[str, str]] = {
+    "auto_ingest_shorts_driver_helper": {
+        "PIL": "only _brand_check imports Pillow, and no oracle calls it",
+        "neo4j": "the driver factory is replaced by the oracle's own stub",
+        "auto_ingest_config": "reaches the CLI import line, which the oracle "
+                              "satisfies by stubbing the name itself",
+    },
+    "auto_ingest_plan_shorts_contract": {
+        "PIL": "only _brand_check imports Pillow, and no oracle calls it",
+        "neo4j": "the driver factory is replaced by the oracle's own stub",
+        "auto_ingest_config": "reaches the CLI import line, which the oracle "
+                              "satisfies by stubbing the name itself",
+    },
+    "auto_ingest_driver_lifetime_regression_test": {
+        "PIL": "only _brand_check imports Pillow, and no oracle calls it",
+        "neo4j": "the driver factory is replaced by the oracle's own stub",
+        "auto_ingest_config": "reaches the CLI import line, which the oracle "
+                              "satisfies by stubbing the name itself",
+    },
+    "auto_ingest_plan_shorts_live_driver": {
+        "neo4j": "the driver factory is replaced by the oracle's own stub",
+    },
+    "auto_ingest_shorts_plan_review": {
+        "PIL": "an analysis fixture never executes the CLI; its grader reads "
+               "the captured answer text and nothing else",
+        "neo4j": "an analysis fixture never executes the CLI, so no driver is "
+                 "ever constructed",
+        "auto_ingest_config": "an analysis fixture never imports the CLI at all",
+    },
+}
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Acceptance depended on whether Pillow happened to be installed.**
+  `cli._brand_check` opens with `from PIL import Image` before it inspects
+  anything, so the campaign fixture's broader tier raised `ModuleNotFoundError`
+  on a host without Pillow and reported `REGRESSION_FAILURE` for a correct
+  patch — 24 tests red in CI, none reproducible locally. The oracle now stubs
+  `PIL`, matching the `pydantic_settings` stub the auto-router fixtures already
+  used. Two tests keep it fixed: one runs the broader tier with `PIL` made
+  genuinely unimportable and asserts 14 passed, the other asserts the blocker
+  actually blocks.
+- **`UndeclaredDependencyTests`** — every non-stdlib import in a frozen snapshot
+  must now be stubbed by that fixture's oracles or recorded in
+  `UNREACHABLE_DEPENDENCIES` with a specific reason. A new dependency cannot be
+  added quietly, and a bare module name does not satisfy the check.
+- **Acceptance failures said only that a boolean was false.**
+  `assertTrue(tests.broader_all_passed)` on a fourteen-check suite costs a bisect
+  through a four-minute run to locate. `assertTestsPassed` now fails with the
+  command line, return code, and the tail of stdout and stderr. This is what made
+  the Pillow failure diagnosable from a CI log at all.
+
 ### Added
 
 - **`.github/workflows/realtask.yml`** — the harness had 345 tests and no CI, so

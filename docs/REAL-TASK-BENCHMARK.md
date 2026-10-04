@@ -710,6 +710,36 @@ names both the artifact and its source. Both drift modes are verified to fail:
 weakening `MIN_SUBSTANTIVE_TOKENS` in one grader, and editing the campaign oracle
 without regenerating its reference.
 
+### Acceptance must not depend on the host
+
+CI failed 24 tests that passed on every machine I could reach, all of them the
+campaign fixture reporting `REGRESSION_FAILURE`. The cause was not the harness:
+`cli._brand_check` opens with `from PIL import Image` *before* it looks at
+anything, so even the missing-manifest check needs the name to resolve. Pillow is
+a real dependency of the upstream project and is not a dependency of this one. It
+was installed on the machine that wrote the fixtures and is not installed on a
+fresh runner — so the same patch, the same fixture, two different verdicts
+depending on the host. An acceptance signal that is a property of the machine is
+the one thing this harness exists to prevent.
+
+The fix follows the convention the corpus already had: the auto-router fixtures
+stub `pydantic_settings`, so the campaign oracle stubs `PIL` the same way. The
+brand check never reaches `Image` on the path under test.
+
+Two tests keep it fixed. `test_the_campaign_broader_tier_passes_without_pillow`
+runs the broader tier in a subprocess where a `sitecustomize` meta-path hook
+makes `PIL` genuinely unimportable, and asserts 14 passed — the condition CI runs
+under. Its companion asserts the blocker actually blocks, so the first cannot pass
+because blocking does nothing.
+
+`UndeclaredDependencyTests` generalises it: every non-stdlib import in every
+frozen snapshot must either be stubbed by that fixture's oracles or appear in
+`UNREACHABLE_DEPENDENCIES` with a specific reason. A bare module name is not a
+reason, so a new dependency cannot be waved through. The fixtures that share the
+campaign snapshot but only drive the plan path, and the analysis fixtures that
+never execute the CLI at all, are listed with why those imports are unreachable
+for them.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request
@@ -729,7 +759,7 @@ python3 -m pytest test_realtask_*.py -q
 | Module | Covers |
 |---|---|
 | `test_realtask_binding.py` | strict fixture loading, seal/drift detection, hash mismatch, missing file, **wrong HEAD fails closed**, matching HEAD+hashes passes, binding before any model call, tampered source manifest, no bundled secrets, **a nested directory cannot borrow an enclosing repository's HEAD** |
-| `test_realtask_corpus.py` | corpus-level guarantees, including checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
+| `test_realtask_corpus.py` | corpus-level guarantees, including proving no acceptance tier depends on an undeclared third-party package, checking that generated-but-tracked artifacts still match their source, and attacking the analysis graders with an adaptively-built keyword dump and the patch oracles with a memorisation patch: every fixture is **satisfiable** (a reference solution reaches SUCCESS), **discriminating** (the untouched snapshot fails), **independent** (no cross-fixture references, no byte-sharing across repositories, no campaign collapse onto one defect), every `patch` deliverable has a tracked reference solution, collateral damage reads as `REGRESSION_FAILURE`, and no credential literal is frozen |
 | `test_realtask_roles.py` | the three contracts, tolerant-but-strict parsing, truncated vs protocol failure, verdict exactness, no hidden-reasoning asks, prompt content |
 | `test_realtask_containment.py` | the worktree boundary: a symlink patch is refused, the refusal is visible in the evidence, no run leaves a link pointing outward, and the linked module is proven importable so the non-execution check is not vacuous |
 | `.github/workflows/realtask.yml` | the same checks on a clean checkout, on Python 3.11 and 3.12: fixture validation, a per-fixture seal check, the full suite, and a guard that the run did not modify tracked files. No secrets; the endpoint variables are blanked so a test that starts depending on a live endpoint fails rather than silently succeeding |

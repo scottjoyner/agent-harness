@@ -101,6 +101,19 @@ _stub("auto_ingest.shorts.uploader", load_queue=lambda *a, **k: [],
       validate_queue=lambda *a, **k: [])
 _stub("auto_ingest_config", get_neo4j_password=lambda: "unused-in-fixture")
 
+# ``cli._brand_check`` opens with ``from PIL import Image`` before it looks at
+# anything, so even the missing-manifest path below needs the name to resolve.
+# Pillow is a real dependency of the upstream project and is not a dependency of
+# this harness, so it is stubbed rather than installed: an acceptance tier that
+# imports an undeclared third-party package reports REGRESSION_FAILURE on a host
+# that lacks it and passes on one that has it, which makes the verdict a
+# property of the machine instead of the patch. The brand check never reaches
+# ``Image`` on the path under test.
+#
+# Same reasoning as the pydantic_settings stub in the auto-router fixtures.
+_stub("PIL", Image=types.SimpleNamespace(open=lambda *a, **k: None))
+_stub("PIL.Image")
+
 from auto_ingest.shorts import cli as shorts_cli  # noqa: E402
 from auto_ingest.shorts.models import Plan  # noqa: E402
 
