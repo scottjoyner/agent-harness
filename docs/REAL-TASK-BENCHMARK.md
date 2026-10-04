@@ -864,6 +864,40 @@ evidence is truthful, and nothing has yet demonstrated that a model can pass
 these fixtures. A reader should treat a single non-`SUCCESS` run from a small
 model as evidence about that model, not about the benchmark.
 
+### The second candidate must not inherit the first one's safety verdict
+
+Scripting a swarm end to end — scout, implementer, reviewer saying "revise",
+refinement, reviewer accepting — turned up a hand-maintained list that had drifted.
+`_merge_review` copies a named set of patch fields from the review attempt into the
+swarm attempt, and `safety_ok` and `safety_reason` were not on it. So the swarm kept
+the *first* candidate's safety state while every other field correctly described the
+final candidate. With the refinement refused by the screen, the evidence read:
+
+```
+apply_reason   "patch declares non-regular file mode(s) 120000; only 100644, 100755 ..."
+safety_ok      False
+safety_reason  ''
+```
+
+Evidence contradicting itself about a containment decision is the worst version of
+this failure: `safety_reason` is the field a reader or a downstream tool consults
+to ask *was this refused by the safety screen, and why*.
+
+The same probe produced a useful negative. The refinement patch **is** screened —
+no symlink reached either worktree — and `evaluate()` builds a fresh worktree per
+candidate, so a second candidate cannot accumulate on top of a first. Both facts are
+now asserted rather than assumed.
+
+`RefinementCeilingTests` covers a ceiling that had no test at all: `--max-refinements`
+is documented as able to lower the budget and never raise it, enforced by
+`RunnerOptions.clamp` and a second clamp in the CLI. Nothing checked either.
+
+A note on how that one started: `RunnerOptions(max_refinements=99)` returns 99, which
+looks like the ceiling being raisable. It isn't — `clamp()` has to be called, and the
+runner is what calls it. The bug was in the probe. Worth recording, because the
+instinct on finding a defect is to report the anomaly, and the discipline is to
+check whether the anomaly is real before writing it down.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request

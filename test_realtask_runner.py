@@ -1202,5 +1202,132 @@ class ToolCallClassificationTests(HarnessTestCase):
         self.assertNotIn(Outcome.TOOL_CALL_REQUESTED.value, seen)
 
 
+class RefinementEvidenceTests(HarnessTestCase):
+    """The safety verdict in the evidence must describe the candidate that ran.
+
+    Found by scripting a swarm whose reviewer asks for changes and whose
+    refinement then smuggles a symlink past the screen. The screen caught it --
+    no symlink reached any worktree -- but the evidence contradicted itself:
+
+        apply_reason   "patch declares non-regular file mode(s) 120000; ..."
+        safety_ok      False
+        safety_reason  ''
+
+    ``_merge_review`` copied a hand-listed set of patch fields from the review
+    attempt into the swarm attempt and ``safety_ok`` / ``safety_reason`` were not
+    on the list, so the swarm kept the *first* candidate's safety state. Every
+    other field correctly described the final candidate.
+    """
+
+    SYMLINK_PATCH = (
+        "diff --git a/_realtask_tests/t.py b/_realtask_tests/t.py\n"
+        "new file mode 120000\n"
+        "--- /dev/null\n"
+        "+++ b/_realtask_tests/t.py\n"
+        "@@ -0,0 +1 @@\n"
+        "+/etc/passwd\n"
+    )
+
+    def refinement_reply(self, patch: str):
+        import json
+
+        from realtask.adapter import ScriptedResponse
+
+        return ScriptedResponse(content=json.dumps(
+            {"patch": patch, "tests": [], "assumptions": [], "confidence": 0.5}))
+
+    def run_swarm_with_symlink_refinement(self):
+        from realtask.adapter import ScriptedResponse
+
+        return self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [
+                scout_reply(),
+                patch_reply(),
+                review_reply("revise", defects=[{
+                    "severity": "blocker", "location": "cli.py:71",
+                    "description": "planning after close"}]),
+                self.refinement_reply(self.SYMLINK_PATCH),
+                review_reply("accept"),
+            ],
+            ["swarm"],
+        )
+
+    def test_a_symlink_in_the_refinement_is_still_screened(self):
+        _task, result = self.run_swarm_with_symlink_refinement()
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.outcome, Outcome.INVALID_PATCH)
+        self.assertFalse(metrics.patch.safety_ok)
+        self.assertEqual(metrics.refinements_used, 1)
+
+    def test_the_evidence_explains_the_refinement_refusal(self):
+        """The defect: apply_reason explained it while safety_reason was empty."""
+        _task, result = self.run_swarm_with_symlink_refinement()
+        patch = result.attempts[0].metrics.patch
+        self.assertFalse(patch.safety_ok)
+        self.assertTrue(
+            patch.safety_reason,
+            "safety_reason is empty, so the evidence contradicts apply_reason "
+            "({!r}) about a containment decision".format(patch.apply_reason[:80]),
+        )
+        self.assertIn("120000", patch.safety_reason)
+        self.assertIn("non-regular", patch.safety_reason)
+
+    def test_safety_fields_agree_with_the_applied_candidate(self):
+        """Whatever the verdict, it must be the one for the validated candidate."""
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [scout_reply(), patch_reply(), review_reply("accept")],
+            ["swarm"],
+        )
+        patch = result.attempts[0].metrics.patch
+        self.assertTrue(patch.applied)
+        self.assertTrue(
+            patch.safety_ok,
+            "a clean first candidate must not inherit a refusal from nowhere",
+        )
+        self.assertEqual(patch.safety_reason, "")
+
+
+class RefinementCeilingTests(unittest.TestCase):
+    """The refinement budget is a ceiling, and it had no test at all.
+
+    The document says ``--max-refinements`` "can lower it and can never raise
+    it". That is enforced by ``RunnerOptions.clamp`` and by a second clamp in the
+    CLI, and nothing checked either. A refactor that dropped one would make a
+    documented safety ceiling silently raisable, and the harness would then spend
+    unbounded model calls on a single attempt.
+    """
+
+    def test_clamp_lowers_but_never_raises(self):
+        from realtask.runner import RunnerOptions
+        from realtask.version import MAX_REFINEMENTS
+
+        self.assertEqual(MAX_REFINEMENTS, 1)
+        for asked, expected in ((0, 0), (1, 1), (2, 1), (5, 1), (99, 1)):
+            with self.subTest(asked=asked):
+                self.assertEqual(
+                    RunnerOptions(max_refinements=asked).clamp().max_refinements,
+                    expected,
+                )
+
+    def test_the_cli_clamps_too(self):
+        """Two independent clamps exist; both are load-bearing."""
+        import argparse
+
+        import realtime_bench
+
+        parser = realtime_bench.build_parser()
+        for asked in (2, 50):
+            args = parser.parse_args(
+                ["run", "--base-url", "http://x/v1", "--model", "m",
+                 "--max-refinements", str(asked)]
+            )
+            self.assertGreater(args.max_refinements, 1)
+        # The clamp itself lives where the options are assembled.
+        source = (REPO_ROOT / "realtime_bench.py").read_text(encoding="utf-8")
+        self.assertIn("min(args.max_refinements, MAX_REFINEMENTS)", source)
+
+
 if __name__ == "__main__":
     unittest.main()

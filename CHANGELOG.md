@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- **Swarm evidence reported the wrong candidate's safety verdict.**
+  `_merge_review` copied a hand-listed set of patch fields from the review
+  attempt into the swarm attempt, and `safety_ok` / `safety_reason` were not on
+  the list. A swarm whose reviewer asked for changes and whose refinement was then
+  refused by the screen produced evidence that contradicted itself:
+  `apply_reason` explained the symlink refusal in full while `safety_reason` sat
+  empty. Every other field correctly described the final candidate. Found by
+  scripting exactly that swarm; the screen itself worked, and no symlink reached
+  any worktree.
+- **The refinement ceiling had no test.** `--max-refinements` is documented as
+  able to lower the budget and never raise it, enforced by `RunnerOptions.clamp`
+  and a second clamp in the CLI. Nothing checked either, so a refactor dropping
+  one would make a documented safety ceiling silently raisable. Both are now
+  tested, including that the CLI flag itself is not the last line of defence.
+
+  Probing this one produced a false positive first: `RunnerOptions(
+  max_refinements=99)` returns 99 because `clamp()` has to be called, and the
+  runner is what calls it. The bug was in the probe, not the code.
 - **A model asking for a tool was filed as `TRUNCATED`.** The second live run,
   against a tool-tuned model, answered with a 900-token
   `<tool_call name="read_file">` whose `call_id` padding consumed the whole

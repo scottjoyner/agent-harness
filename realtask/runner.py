@@ -950,6 +950,13 @@ class BenchmarkRunner:
         swarm.metrics.patch.applied = review.metrics.patch.applied
         swarm.metrics.patch.applier = review.metrics.patch.applier
         swarm.metrics.patch.apply_reason = review.metrics.patch.apply_reason
+        # The safety verdict belongs to the candidate that was actually
+        # validated. Leaving these out made a swarm whose refinement was refused
+        # by the screen report the *first* candidate's safety state, so
+        # `apply_reason` explained a symlink refusal while `safety_reason` sat
+        # empty -- evidence contradicting itself about a containment decision.
+        swarm.metrics.patch.safety_ok = review.metrics.patch.safety_ok
+        swarm.metrics.patch.safety_reason = review.metrics.patch.safety_reason
         swarm.metrics.patch.files_changed = review.metrics.patch.files_changed
         swarm.metrics.patch.files_declared_to_change = review.metrics.patch.files_declared_to_change
         swarm.metrics.patch.unnecessary_changed_files = review.metrics.patch.unnecessary_changed_files
