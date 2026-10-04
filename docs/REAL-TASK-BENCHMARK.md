@@ -891,11 +891,25 @@ under-specified interface, and the honest outcome is `TRUNCATED`. Consequently t
 acceptance path has still never been driven by real model output, and no attempt has
 ever produced a `SUCCESS`.
 
+The one link never exercised live is a model *writing* the patch. The obvious
+hypothesis is that the interface is under-specified — the implementer contract says
+`"a complete unified diff"` without showing one. That was tested: a generic,
+deliberately trivial worked example of the `diff --git` / `---` / `+++` / `@@`
+skeleton was added to the prompt, unrelated to any fixture. It changed the output
+shape — the model began emitting `--- a/…`, `+++ b/…`, `@@` — and it still
+reproduced the entire file rather than a minimal diff, so the response never closed
+and the attempt was `TRUNCATED` again. The change was reverted.
+
+The hypothesis is therefore false: this is a model capability floor, not an
+under-specified interface. The contract already names the format exactly, and
+showing it does not help a 0.8B model learn to edit. Recorded because a tested and
+rejected hypothesis is worth more than an untested one.
+
 So: the pipeline works against a live endpoint, a real model can diagnose a real
-defect through it, and the evidence is truthful about all of it. Nothing has yet
-demonstrated that a model can *pass* these fixtures. A reader should treat a
-non-`SUCCESS` run from a 0.8B model as evidence about that model, not about the
-benchmark.
+defect through it, the acceptance path executes against real evidence, and the
+record is truthful about all of it. Nothing has yet demonstrated that a model can
+*pass* these fixtures. A reader should treat a non-`SUCCESS` run from a 0.8B model
+as evidence about that model, not about the benchmark.
 
 ### The second candidate must not inherit the first one's safety verdict
 

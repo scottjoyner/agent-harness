@@ -4,6 +4,19 @@
 
 ### Verified
 
+- **The last unexercised live link is a model writing a patch, and the obvious
+  explanation for it is wrong.** The hypothesis was an under-specified interface:
+  the implementer contract asks for `"a complete unified diff"` without showing
+  one. Tested by adding a generic worked example of the diff skeleton, unrelated
+  to any fixture. It changed the output shape — the model began emitting `--- a/`,
+  `+++ b/`, `@@` — and still reproduced the whole file rather than a minimal diff,
+  so the response never closed. Reverted. The limit is model capability, not
+  interface clarity; the contract already names the format exactly.
+
+- **Acceptance executed against real evidence for the first time**, via the review
+  stage with an operator-supplied patch: `safety_ok` true, one bound file changed,
+  targeted 1/1 and broader 1/1. Reaching it required the work-root fix below.
+
 - **A real model diagnosed a real defect through the harness.** Eight live runs
   against LM Studio (loopback), two fixtures, two models, `single` and `swarm`.
   The 0.8B model's **scout** role completed naturally (`finish_reason: "stop"`,
