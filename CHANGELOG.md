@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Verified
+
+- **A real model diagnosed a real defect through the harness.** Eight live runs
+  against LM Studio (loopback), two fixtures, two models, `single` and `swarm`.
+  The 0.8B model's **scout** role completed naturally (`finish_reason: "stop"`,
+  717 tokens), returned valid JSON, and named the seeded defect in
+  `task_contract.py` with the correct file and 0.95 confidence. The first
+  `comparison.json` was also produced from real data, and the cost fix is visible
+  in it: `harness_owned_seconds` of `0.000155` against `model_wall_s` of `33.8`,
+  where before the fix that field carried the model's own latency.
+
+  Neither local model can produce a unified diff — the 3B model answers with
+  `<tool_call name="bash">`, the 0.8B model returns the whole file where a diff
+  belongs — so no candidate patch has been produced by a model and the acceptance
+  path has still never been driven by real model output. The harness specifies the
+  format explicitly, so this is a model capability limit and `TRUNCATED` is the
+  honest verdict.
+
 ### Fixed
 
 - **A roll-up pooled totals across harness revisions without saying so.** The

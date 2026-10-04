@@ -855,21 +855,40 @@ precisely what happened and lets a reader judge it.
 ### What the live runs have and have not shown
 
 The harness has been run against a real OpenAI-compatible server (LM Studio, on
-loopback) four times: two fixtures, two models, `single` strategy only. Two
-defects were found that no test could have found, both described above — the cost
-double-count and the tool-call classification.
+loopback) eight times: two fixtures, two models, `single` and one `swarm`. Three
+defects were found that no test could have found — the cost double-count, the
+tool-call classification, and the cross-revision pooling in the roll-up.
 
-What has **not** happened is a `SUCCESS`. No attempt has ever produced a
-`SUCCESS`, and that is a fact about the models available rather than about the
-fixtures: the two models on offer are 0.8B and 3B parameters, against defects
-that took a human reading to find. Both runs recorded `completion_tokens`
-exactly at the cap with `finish_reason: "length"`, which is the harness reporting
-a real truncation honestly instead of dressing it up.
+One role call has completed and parsed. On `auto_router_task_contract_lane_mismatch`
+the 0.8B model's **scout** finished naturally (`finish_reason: "stop"`, 717
+completion tokens), returned valid JSON, and named the seeded defect:
 
-So the honest summary is: the pipeline works against a live endpoint and the
-evidence is truthful, and nothing has yet demonstrated that a model can pass
-these fixtures. A reader should treat a single non-`SUCCESS` run from a small
-model as evidence about that model, not about the benchmark.
+> The `task_contract.py` module incorrectly permits tool execution and validation
+> metrics for `refinement`, `repair`, `review`, `repo`, `patch` …
+
+with `relevant_files: ["auto_router/task_contract.py"]` and confidence 0.95. So the
+scout stage, the role ordering, the parsing and the evidence have all been exercised
+against a real model, and the model was right about the defect.
+
+That run also produced the first `comparison.json` from real data, and the cost fix
+is visible in it: `harness_owned_seconds` is `0.000155` against `model_wall_s` of
+`33.8`, where before the fix that field carried the model's own latency. The roles
+component is correctly marked `comparable: false` with both sides shown.
+
+What has **not** happened is a candidate patch. Neither local model can produce a
+unified diff: the 3B model answers with `<tool_call name="bash">`, and the 0.8B model
+returns the entire file where a diff belongs, so its response never closes. The
+harness specifies the format explicitly — `"a complete unified diff (\"diff --git\"
+headers, no commentary)"` — so this is a model capability limit rather than an
+under-specified interface, and the honest outcome is `TRUNCATED`. Consequently the
+acceptance path has still never been driven by real model output, and no attempt has
+ever produced a `SUCCESS`.
+
+So: the pipeline works against a live endpoint, a real model can diagnose a real
+defect through it, and the evidence is truthful about all of it. Nothing has yet
+demonstrated that a model can *pass* these fixtures. A reader should treat a
+non-`SUCCESS` run from a 0.8B model as evidence about that model, not about the
+benchmark.
 
 ### The second candidate must not inherit the first one's safety verdict
 
