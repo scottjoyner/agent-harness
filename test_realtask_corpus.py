@@ -323,10 +323,10 @@ class SatisfiableTests(HarnessTestCase):
             with self.subTest(task=task_id):
                 self.assertOutcome(state, Outcome.SUCCESS)
                 self.assertTrue(state.metrics.patch.applied)
-                self.assertTrue(state.metrics.tests.targeted_all_passed)
+                self.assertTestsPassed(state, "targeted")
                 self.assertEqual(state.metrics.patch.syntax_ok, True)
                 if task.acceptance.broader:
-                    self.assertTrue(state.metrics.tests.broader_all_passed)
+                    self.assertTestsPassed(state, "broader")
 
     def test_every_fixture_with_a_broader_tier_declares_one(self):
         """A 'broader' tier that silently vanishes is worse than none."""
@@ -388,7 +388,7 @@ class SatisfiableTests(HarnessTestCase):
                 continue
             _t, result = self.run_reference(task_id)
             with self.subTest(task=task_id):
-                self.assertTrue(result.attempts[0].metrics.tests.broader_all_passed)
+                self.assertTestsPassed(result.attempts[0], "broader")
 
 
 class CollateralDamageTests(HarnessTestCase):
@@ -405,8 +405,12 @@ class CollateralDamageTests(HarnessTestCase):
             state = result.attempts[0]
             with self.subTest(task=task_id):
                 self.assertOutcome(state, Outcome.REGRESSION_FAILURE)
-                self.assertTrue(state.metrics.tests.targeted_all_passed)
-                self.assertFalse(state.metrics.tests.broader_all_passed)
+                self.assertTestsPassed(state, "targeted")
+                self.assertFalse(
+                    state.metrics.tests.broader_all_passed,
+                    "collateral damage went unnoticed, so this fixture's "
+                    "broader tier proves nothing",
+                )
 
 
 class NoCrossContaminationTests(unittest.TestCase):

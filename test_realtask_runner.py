@@ -254,8 +254,8 @@ class BroaderAcceptanceTests(HarnessTestCase):
         _task, result = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
         state = result.attempts[0]
         self.assertOutcome(state, Outcome.SUCCESS)
-        self.assertTrue(state.metrics.tests.targeted_all_passed)
-        self.assertTrue(state.metrics.tests.broader_all_passed)
+        self.assertTestsPassed(state, "targeted")
+        self.assertTestsPassed(state, "broader")
         self.assertEqual(len(state.metrics.tests.broader), 1)
 
     def test_broader_is_skipped_when_targeted_fails(self):
@@ -293,7 +293,7 @@ class BroaderAcceptanceTests(HarnessTestCase):
         tests = json.loads((self.run_dir.path / "test-results.json").read_text())
         attempt = tests["attempts"][0]["tests"]
         self.assertEqual(attempt["broader_total"], 1)
-        self.assertEqual(attempt["broader_passed"], 1)
+        self.assertEqual(attempt["broader_passed"], 1, attempt)
         self.assertTrue(attempt["broader_all_passed"])
         self.assertIn("BROADER ACCEPTANCE", (self.run_dir.path / "single" / "test-evidence.txt").read_text())
 

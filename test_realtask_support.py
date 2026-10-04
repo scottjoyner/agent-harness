@@ -269,6 +269,37 @@ class HarnessTestCase(unittest.TestCase):
             capture_output=True, text=True, timeout=60, env=env,
         )
 
+    def assertTestsPassed(self, state, tier: str) -> None:
+        """Assert an acceptance tier passed, and say which check did not.
+
+        ``assertTrue(tests.broader_all_passed)`` on its own reports a boolean
+        and nothing else, so a failure in a fourteen-check suite costs a bisect
+        through a four-minute run to locate. The command's own output is already
+        captured; this puts it in the failure message.
+        """
+        metrics = state.metrics.tests
+        failed = list(getattr(metrics, tier + "_failed", ()) or ())
+        self.assertFalse(
+            failed,
+            "the {} tier failed; command output follows:\n{}".format(
+                tier, self.testFailureReport(failed)
+            ),
+        )
+
+    def testFailureReport(self, failed=()) -> str:
+        blocks = []
+        for command in failed:
+            blocks.append(
+                "$ {}\nrc={} timed_out={}\n{}\n{}".format(
+                    " ".join(command.argv),
+                    command.returncode,
+                    command.timed_out,
+                    (command.stdout or "")[-4000:],
+                    (command.stderr or "")[-1000:],
+                )
+            )
+        return "\n\n".join(blocks) or "(no output captured)"
+
     def assertOutcome(self, state, expected: Outcome) -> None:
         self.assertEqual(
             state.metrics.outcome,
