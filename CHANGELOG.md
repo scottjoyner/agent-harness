@@ -22,6 +22,22 @@
 
 ### Fixed
 
+- **The documented invocation could not evaluate a patch at all.** `--out` defaults
+  to `<repo>/runs` and the operator example uses `--out ./runs`, but the scratch
+  evaluation worktree was derived from the evidence root — and
+  `EvaluationWorktree` refuses to build one inside the harness checkout, the
+  fixture or the bound source, correctly. So every stage that actually evaluates
+  a candidate failed with `WorktreeGuardError` under the documented invocation.
+
+  Nothing caught it. Every test puts its run directory in a temporary directory
+  outside the repository, and every live attempt so far died at role parsing before
+  `evaluate` was reached, so this was the first time the live path got as far as
+  creating a worktree. It surfaced from running the operator's own example.
+
+  The guard is untouched and still absolute. The runner now refuses to aim at it:
+  the scratch root moves to a temporary directory and the move is recorded on
+  every attempt, because where the evaluation copy lived is part of the evidence.
+
 - **A roll-up pooled totals across harness revisions without saying so.** The
   harness refuses to pool across artifact *schemas*, so a legacy `bench_*` run can
   never be silently mixed into a `realtask.*.v1` total — but the same discipline

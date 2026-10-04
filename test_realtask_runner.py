@@ -5,6 +5,8 @@ a test here or in the sibling binding/patch modules.
 """
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
 import json
 import unittest
 
@@ -1327,6 +1329,104 @@ class RefinementCeilingTests(unittest.TestCase):
         # The clamp itself lives where the options are assembled.
         source = (REPO_ROOT / "realtime_bench.py").read_text(encoding="utf-8")
         self.assertIn("min(args.max_refinements, MAX_REFINEMENTS)", source)
+
+
+class EvidenceRootInsideCheckoutTests(HarnessTestCase):
+    """The documented default invocation must be able to evaluate a patch.
+
+    ``--out`` defaults to ``<repo>/runs`` and the operator example in the
+    document uses ``--out ./runs``. But ``EvaluationWorktree`` refuses to build a
+    disposable copy inside the harness checkout, the fixture, or the bound source
+    -- correctly, and the scratch worktree was derived from the evidence root. So
+    every stage that actually *evaluates* a patch failed with
+    ``WorktreeGuardError`` under the documented invocation.
+
+    Nothing caught it. Every test puts its run directory in a temporary directory
+    outside the repository, and every live attempt so far died at role parsing
+    before ``evaluate`` was reached -- so this was the first time the live path
+    got as far as creating a worktree.
+
+    The guard stays absolute. The runner refuses to aim at it: the scratch root
+    moves to a temporary directory and the move is recorded in the evidence,
+    because where the evaluation copy lived is part of the record.
+    """
+
+    def runner_inside_the_checkout(self, responses):
+        from realtask.runner import BenchmarkRunner, RunnerOptions
+
+        evidence = REPO_ROOT / "runs" / "realtask-test-evidence"
+        evidence.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, evidence, True)
+        runner = BenchmarkRunner(
+            ScriptedAdapter(responses),
+            self.run_dir,
+            RunnerOptions(test_timeout_s=180.0),
+            # Deliberately inside the guarded checkout, as the default is.
+            work_root=evidence / "work",
+            harness_root=REPO_ROOT,
+        )
+        self.addCleanup(runner.close)
+        return runner
+
+    def test_a_work_root_inside_the_checkout_is_relocated_not_refused(self):
+        runner = self.runner_inside_the_checkout([patch_reply()])
+        runner.run_task(self.task(AUTO_INGEST_BUG_FIX), ["single"])
+        self.assertIsNotNone(
+            runner.work_root_relocated_from,
+            "the work root was left inside the guarded checkout",
+        )
+        self.assertNotIn(
+            REPO_ROOT.resolve(),
+            runner.work_root.resolve().parents,
+            "the relocated work root is still inside the harness checkout",
+        )
+
+    def test_the_relocation_is_recorded_on_the_attempt(self):
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"]
+        )
+        # Baseline: the normal temporary-directory case records nothing.
+        notes = " ".join(result.attempts[0].metrics.notes)
+        self.assertNotIn("evaluation work root moved", notes)
+
+    def test_evaluation_actually_runs_with_an_evidence_root_in_the_checkout(self):
+        """The property that matters: the documented default reaches acceptance."""
+        runner = self.runner_inside_the_checkout([patch_reply()])
+        result = runner.run_task(self.task(AUTO_INGEST_BUG_FIX), ["single"])
+        metrics = result.attempts[0].metrics
+        self.assertTrue(metrics.patch.applied, metrics.patch.apply_reason)
+        self.assertGreater(
+            len(metrics.tests.targeted), 0,
+            "acceptance never ran; the documented --out cannot evaluate a patch",
+        )
+        self.assertTrue(metrics.tests.targeted_all_passed)
+
+    def test_the_guard_itself_is_untouched(self):
+        """Relocating the aim must not weaken the refusal."""
+        import tempfile
+
+        from realtask.evaluation import EvaluationWorktree, WorktreeGuardError
+
+        task = self.task(AUTO_INGEST_BUG_FIX)
+        with tempfile.TemporaryDirectory() as tmp:
+            # A scratch tree that is genuinely guarded, so this exercises the
+            # refusal rather than pointing at the real fixture and risking a
+            # stray directory inside a sealed snapshot.
+            guarded = Path(tmp) / "read-only"
+            guarded.mkdir()
+            inside = guarded / "work"
+            with self.assertRaises(WorktreeGuardError):
+                EvaluationWorktree.create(task, inside, guard_paths=[guarded])
+
+    def test_no_worktree_is_left_inside_the_checkout(self):
+        runner = self.runner_inside_the_checkout([patch_reply()])
+        runner.run_task(self.task(AUTO_INGEST_BUG_FIX), ["single"])
+        for worktree in runner._worktrees:
+            self.assertNotIn(
+                REPO_ROOT.resolve(),
+                worktree.root.resolve().parents,
+                "an evaluation worktree was created inside the checkout",
+            )
 
 
 if __name__ == "__main__":

@@ -191,6 +191,9 @@ class BenchmarkRunner:
         self.work_root = Path(work_root) if work_root else Path(run_dir.path) / "work"
         self.harness_root = Path(harness_root) if harness_root else Path(__file__).resolve().parent.parent
         self.source_root = Path(source_root) if source_root else None
+        #: Set when the requested work root had to be moved because it fell
+        #: inside a read-only tree. See _relocate_work_root.
+        self.work_root_relocated_from: Optional[Path] = None
         self._worktrees: List[EvaluationWorktree] = []
         #: Wall time spent inside the adapter, accumulated across calls. Kept
         #: separately so harness overhead can exclude it: a model call that
@@ -204,6 +207,47 @@ class BenchmarkRunner:
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+
+    def _relocate_work_root(self, task: RealTask) -> None:
+        """Move the scratch work root out of a read-only tree, once, and say so.
+
+        The guard in :class:`EvaluationWorktree` is absolute on purpose: a
+        disposable evaluation copy must never be built inside the harness
+        checkout, the fixture, or the bound source. But the *evidence* root
+        defaults to ``<repo>/runs``, which is inside the checkout -- so the
+        documented ``--out ./runs`` invocation placed the scratch worktree inside
+        a guarded tree and every stage that actually evaluates a patch failed
+        with ``WorktreeGuardError``.
+
+        Nothing caught it because every attempt in every live run so far died at
+        role parsing before ``evaluate`` was reached, and every test puts its run
+        directory in a temporary directory outside the repository.
+
+        The guard stays absolute; the runner simply refuses to aim at it. The
+        relocation is recorded rather than silent, because where the scratch copy
+        lived is part of the evidence.
+        """
+        import tempfile
+
+        guards = [self.harness_root, task.source_dir, task.tests_dir, task.root]
+        resolved = self.work_root.resolve()
+        inside = next(
+            (g.resolve() for g in guards
+             if g and resolved == g.resolve() or (g and g.resolve() in resolved.parents)),
+            None,
+        )
+        if inside is None:
+            return
+        original = self.work_root
+        self.work_root = Path(tempfile.mkdtemp(prefix="realtask-work-"))
+        self.work_root_relocated_from = original
+        self.work_root_notes = [
+            "evaluation work root moved out of {} because it was inside the "
+            "read-only tree {}; scratch work is not evidence and never belongs "
+            "inside the harness checkout. Evidence stays under {}.".format(
+                original, inside, self.run_dir.path
+            )
+        ]
 
     def _overhead_start(self) -> float:
         started = time.monotonic()
@@ -1006,7 +1050,12 @@ class BenchmarkRunner:
             strategy=strategy,
             outcome=Outcome.PROTOCOL_FAILURE,
         )
-        return AttemptState(attempt_id=attempt_id, strategy=strategy, metrics=metrics)
+        state = AttemptState(attempt_id=attempt_id, strategy=strategy, metrics=metrics)
+        # Where the scratch evaluation copy actually lived is part of the
+        # evidence, so a relocated work root is recorded rather than silent.
+        for note in getattr(self, "work_root_notes", ()):
+            state.metrics.notes.append(note)
+        return state
 
     def _run_guarded(self, state: AttemptState, call):
         """Run one attempt, converting an unexpected failure into evidence.
@@ -1048,6 +1097,7 @@ class BenchmarkRunner:
         scout_override: Optional[ScoutResult] = None,
     ) -> TaskRunResult:
         """Verify binding, run each requested strategy, and emit evidence."""
+        self._relocate_work_root(task)
         before = _tree_fingerprint(task)
 
         started = self._overhead_start()

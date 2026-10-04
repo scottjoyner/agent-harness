@@ -427,6 +427,13 @@ Evaluation work trees are scratch, not evidence. They are created under a
 per-run sibling directory (`<out>/<run_id>.work/`) and removed when the run
 finishes, so a listing of the evidence root shows runs and nothing else.
 
+One consequence worth stating, because it was a live bug: `--out` defaults to
+`<repo>/runs`, so that scratch directory is *inside the harness checkout* — which
+the worktree guard rightly treats as read-only. The runner therefore moves the
+scratch root to a temporary directory when the requested one falls inside a guarded
+tree, and records that on every attempt. The guard itself is unchanged and still
+absolute; only the aim moves. Evidence stays where the operator asked for it.
+
 Every write is atomic: temp file in the destination directory, `flush`, `fsync`,
 `os.replace`, then `fsync` on the directory. A reader never sees a half-written
 artifact and a crashed run leaves either the previous file or the complete new
