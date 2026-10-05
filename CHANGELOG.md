@@ -4,6 +4,30 @@
 
 ### Added
 
+- **`auto_router_task_contract_keyword_precedence`** — a `test_generation` fixture,
+  and the first time a second codebase exercises the meta-oracle that executes
+  candidate-authored code. `normalize_task_kind` classifies a task by scanning a
+  fixed keyword map and returning on the *first* substring match; `analysis` is
+  listed before `code` and matches the bare word `review`. So "review the failing
+  handler and add a regression test" is classified `analysis`, which flips
+  `task_evidence_required` to true and hands the task the analysis plan. The same
+  request without the word "review" is classified `code`.
+
+  Verified by execution before the fixture was written, not by reading. Six attacks
+  on the meta-oracle are rejected: an always-failing test, an always-passing test, a
+  test that passes for an unrelated reason, a test pinned to the *buggy* behaviour
+  (which fails both checks), a test with an unreachable import, and no test at all.
+
+  One trap worth recording. The reference test initially imported
+  `auto_router.task_contract` without the `.py` suffix, and the grounding gate
+  rejected the whole attempt as `GROUNDING_FAILURE` — a correct test, refused for
+  naming its module in Python import form rather than path form. The reference now
+  names the file explicitly.
+
+  Deliberately shares a source identity with `auto_router_task_contract_lane_mismatch`:
+  different defect, different capability. `test_a_campaign_is_diverse_in_family_and_defect`
+  enforces that a shared snapshot still means two distinct tasks.
+
 - **`auto_router_contract_shim_single_source`** — a `contract_reasoning` fixture on
   `auto-router`. The module documents that it re-exports the canonical
   `assistx.contracts` types "so every repo emits the single source-of-truth

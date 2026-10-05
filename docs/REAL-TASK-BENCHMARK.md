@@ -538,6 +538,7 @@ Same stance as `comparison.json`:
 | `assistx_answers_store_cursor_drops_ties` | `bug_fix` | patch | a keyset cursor that silently drops every answer sharing a millisecond |
 | `assistx_allocation_llm_capability_gate` | `code_review` | analysis | a capability gate that admits any node for `llm` tasks, and suppresses the diagnostic that would show it |
 | `auto_router_contract_shim_single_source` | `contract_reasoning` | analysis | a shim that advertises one source of truth and keeps a silent second definition, hollow trace types and a drifting version literal |
+| `auto_router_task_contract_keyword_precedence` | `test_generation` | patch | first-substring-match classification, so one incidental keyword decides a task's whole contract |
 
 ### Corpus shape
 
@@ -550,7 +551,7 @@ that share no code, no author, and no bug class with the campaign:
 | | repositories | distinct source identities | families | families outside the campaign repo |
 |---|---|---|---|---|
 | campaign | 1 | 1 | 5 | 0 |
-| corpus | 3 | 8 | 5 | 3 |
+| corpus | 3 | 8 | 5 | 4 |
 
 Read that last column before drawing a conclusion from "five families". Bug
 diversity and *task-type* diversity are different things, and only the first is
@@ -562,13 +563,22 @@ currently broad:
 | `analysis` | auto-assist, auto-ingest, auto-router |
 
 Both deliverable types now span all three repositories, so neither "writes patches"
-nor "reviews" is measured on one codebase. Three of the five families —
-`bug_fix`, `code_review` and `contract_reasoning` — reach outside the campaign.
+nor "reviews" is measured on one codebase. Four of the five families —
+`bug_fix`, `code_review`, `contract_reasoning` and `test_generation` — reach outside
+the campaign.
 
 The remaining asymmetry, stated rather than left for a reader to infer from a count
-of families: `small_refactor` and `test_generation` are still confined to the
-campaign repository and its single defect. So a model weak at refactoring, or at
-writing tests, is still measured on one codebase only.
+of families: `small_refactor` is now the only family confined to the campaign
+repository and its single defect. So a model weak at refactoring is still measured
+on one codebase only.
+
+One deliberate exception to the "different defect" rule:
+`auto_router_task_contract_keyword_precedence` shares its source identity with
+`auto_router_task_contract_lane_mismatch`. They encode different defects in the
+same file, and the capability under test is different enough to justify it — one
+asks for a repair, the other for the test that would have caught a different bug.
+Sharing a file is not sharing a task, and `test_a_campaign_is_diverse_in_family_and_defect`
+enforces exactly that.
 
 `test_realtask_corpus.py` derives these figures from the fixtures and fails if the
 tables drift, so neither the coverage nor its absence can go stale quietly.

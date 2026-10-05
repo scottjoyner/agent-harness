@@ -39,6 +39,8 @@ REFERENCE_SOLUTIONS: Dict[str, str] = {
     # a new-file diff landing under the fixture's writable prefix.
     "auto_ingest_driver_lifetime_regression_test":
         "test_realtask_reference_regression_test.diff",
+    "auto_router_task_contract_keyword_precedence":
+        "test_realtask_reference_contract_regression_test.diff",
 }
 
 #: task_id -> the reference answer that must satisfy the grader. An analysis
@@ -537,6 +539,18 @@ def _regenerated_regression_test_diff() -> str:
     return new_file_patch("_realtask_tests/test_candidate_lifetime.py", body)
 
 
+def _contract_keyword_precedence_diff() -> str:
+    from test_realtask_support import (
+        CONTRACT_KEYWORD_PRECEDENCE_TEST,
+        new_file_patch,
+    )
+
+    return new_file_patch(
+        "_realtask_tests/test_contract_keyword_precedence.py",
+        CONTRACT_KEYWORD_PRECEDENCE_TEST,
+    )
+
+
 def _grader_hardening_block() -> str:
     """The shared hardening logic, as it appears in either grader."""
 
@@ -559,6 +573,11 @@ DERIVED_ARTIFACTS: List = [
         "test_realtask_reference_regression_test.diff",
         _regenerated_regression_test_diff,
         "the campaign oracle test_plan_driver_lifetime.py",
+    ),
+    (
+        "test_realtask_reference_contract_regression_test.diff",
+        _contract_keyword_precedence_diff,
+        "CONTRACT_KEYWORD_PRECEDENCE_TEST in test_realtask_support.py",
     ),
 ]
 
