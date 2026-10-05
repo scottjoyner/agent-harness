@@ -63,6 +63,19 @@ COLLATERAL_DAMAGE: Dict[str, str] = {
     "auto_ingest_plan_shorts_live_driver": "test_realtask_reference_regression.diff",
 }
 
+#: A repair that breaks behaviour where the fixture's *own targeted* checks can
+#: see it. ``CollateralDamageTests`` below covers the campaign fixture, whose
+#: collateral damage is invisible to its targeted tier and only shows up in the
+#: broader one. The idempotency refactor's oracle pins behaviour directly --
+#: twelve ledger cycles through one shared in-memory connection -- so its
+#: collateral damage surfaces as a targeted failure instead. Different
+#: enforcement path, different test, so it is tracked separately rather than
+#: forced into a shape whose assertions would be false here.
+COLLATERAL_DAMAGE_TARGETED: Dict[str, str] = {
+    "auto_router_idempotency_connection_lifetime":
+        "test_realtask_reference_always_close.diff",
+}
+
 #: A patch that satisfies the oracle by memorising the inputs the oracle names,
 #: rather than by fixing the defect. Every one of these must be rejected: a
 #: benchmark that cannot tell a fix from a lookup table measures recall of the
@@ -87,6 +100,10 @@ def reference_answer(task_id: str) -> str:
 
 def collateral_patch(task_id: str) -> str:
     return (REPO_ROOT / COLLATERAL_DAMAGE[task_id]).read_text(encoding="utf-8")
+
+
+def collateral_patch_targeted(task_id: str) -> str:
+    return (REPO_ROOT / COLLATERAL_DAMAGE_TARGETED[task_id]).read_text(encoding="utf-8")
 
 
 def targeted_commands(task) -> List[List[str]]:
@@ -421,6 +438,35 @@ class CollateralDamageTests(HarnessTestCase):
                 )
 
 
+class TargetedCollateralDamageTests(HarnessTestCase):
+    """Collateral damage the fixture's own targeted tier is supposed to catch.
+
+    The interesting property here is *where* it is caught. A refactor that
+    tidies the in-memory close guard looks like an improvement and passes every
+    structural assertion in the oracle; it is rejected because the behavioural
+    checks in that same oracle fail. A fixture whose collateral damage only
+    showed up in a broader tier would be trusting luck to enforce
+    behaviour preservation.
+    """
+
+    def test_collateral_damage_is_caught_by_the_targeted_tier(self):
+        from test_realtask_support import patch_reply
+
+        for task_id, _filename in COLLATERAL_DAMAGE_TARGETED.items():
+            task = self.task(task_id)
+            _t, result = self.run_stages(
+                task_id, [patch_reply(collateral_patch_targeted(task_id))], ["single"]
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertOutcome(state, Outcome.TARGETED_TEST_FAILURE)
+                self.assertFalse(
+                    state.metrics.tests.targeted_all_passed,
+                    "collateral damage was not caught by the targeted tier, so "
+                    "this fixture does not enforce its own behaviour contract",
+                )
+
+
 class NoCrossContaminationTests(unittest.TestCase):
     """A run must not be able to touch a fixture it was not asked about."""
 
@@ -483,8 +529,10 @@ class NoCrossContaminationTests(unittest.TestCase):
 
 class ReferenceSolutionHygieneTests(unittest.TestCase):
     def test_every_reference_diff_is_a_valid_unified_diff(self):
-        for task_id, filename in list(REFERENCE_SOLUTIONS.items()) + list(
-            COLLATERAL_DAMAGE.items()
+        for task_id, filename in (
+            list(REFERENCE_SOLUTIONS.items())
+            + list(COLLATERAL_DAMAGE.items())
+            + list(COLLATERAL_DAMAGE_TARGETED.items())
         ):
             path = REPO_ROOT / filename
             with self.subTest(task=task_id):
@@ -501,7 +549,11 @@ class ReferenceSolutionHygieneTests(unittest.TestCase):
                 self.assertTrue(text.endswith("\n"), filename)
 
     def test_reference_diffs_are_tracked_and_committed(self):
-        for filename in list(REFERENCE_SOLUTIONS.values()) + list(COLLATERAL_DAMAGE.values()):
+        for filename in (
+            list(REFERENCE_SOLUTIONS.values())
+            + list(COLLATERAL_DAMAGE.values())
+            + list(COLLATERAL_DAMAGE_TARGETED.values())
+        ):
             completed = subprocess.run(
                 ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch", filename],
                 capture_output=True, text=True, timeout=60,
@@ -937,6 +989,7 @@ class DerivedArtifactTests(unittest.TestCase):
             {"test_realtask_reference_refactor.diff",
              "test_realtask_reference_idempotency_lifetime.diff",
              "test_realtask_reference_regression.diff",
+             "test_realtask_reference_always_close.diff",
              "test_realtask_reference_settings.diff",
              "test_realtask_reference_task_contract.diff",
              "test_realtask_reference_answers_store.diff"},
