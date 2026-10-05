@@ -156,3 +156,105 @@ class EndpointConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StreamingErrorIsNotEmptyOutputTests(unittest.TestCase):
+    """An in-band stream error must not be recorded as "the model said nothing".
+
+    Found by running the corpus against a real 30B model, not by reading. A
+    fixture whose source is larger than the model's context window came back as
+    ``EMPTY_OUTPUT``: 0.5s wall, no ``finish_reason``, no token usage, zero bytes
+    of content. That reads as a model that produced nothing.
+
+    It was not. The endpoint had answered **HTTP 200** and then reported the
+    refusal in-band:
+
+        event: error
+        data: {"error":{"message":"... exceeds the available context size ..."}}
+
+    The streaming reader skipped the ``event:`` line, parsed the ``data:`` line,
+    found no ``choices``, and continued -- discarding the error. The attempt was
+    then filed as ``EMPTY_OUTPUT``, which is a false record. The difference
+    matters: "the model returned nothing" is a statement about the model, and the
+    truth was a statement about the request. An operator reading the evidence
+    would go looking for a model problem instead of a context setting.
+    """
+
+    ERROR_FRAME = (
+        'event: error\n'
+        'data: {"error":{"message":"request (28041 tokens) exceeds the available '
+        'context size (16384 tokens)"}}\n\n'
+    )
+
+    NORMAL_FRAMES = (
+        'data: {"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}\n\n'
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+        'data: [DONE]\n\n'
+    )
+
+    def _run_stream(self, body: str):
+        """Drive ``_complete_stream`` over a canned SSE body."""
+        import io
+
+        import realtask.adapter as adapter_module
+        from realtask.adapter import ChatRequest, EndpointConfig, OpenAIChatAdapter
+
+        class _FakeResponse(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        adapter = OpenAIChatAdapter(
+            EndpointConfig(
+                label="test", base_url="http://127.0.0.1:1/v1", model="m"
+            )
+        )
+        payload = {
+            "model": "m", "temperature": 0, "max_tokens": 16,
+            "stream": True, "messages": [{"role": "user", "content": "x"}],
+        }
+        request = ChatRequest(role="single", system="s", user="u")
+
+        original = adapter_module.urllib.request.urlopen
+        adapter_module.urllib.request.urlopen = (
+            lambda _req, timeout=None: _FakeResponse(body.encode("utf-8"))
+        )
+        try:
+            return adapter._complete_stream(request, payload, "sha", 0.0, 0.0)
+        finally:
+            adapter_module.urllib.request.urlopen = original
+
+    def test_sse_error_frame_is_raised_not_swallowed(self):
+        from realtask.adapter import _EndpointRejected
+
+        with self.assertRaises(_EndpointRejected) as caught:
+            self._run_stream(self.ERROR_FRAME)
+        self.assertIn(
+            "exceeds the available context size", str(caught.exception)
+        )
+
+    def test_bare_json_error_frame_is_raised_too(self):
+        from realtask.adapter import _EndpointRejected
+
+        with self.assertRaises(_EndpointRejected):
+            self._run_stream(
+                '{"error":{"message":"exceeds the available context size"}}\n'
+            )
+
+    def test_a_normal_stream_still_works(self):
+        response = self._run_stream(self.NORMAL_FRAMES)
+        self.assertEqual(response.content, "hello")
+        self.assertEqual(response.finish_reason, "stop")
+
+    def test_an_event_frame_without_data_is_not_mistaken_for_content(self):
+        """The ``event:`` line alone must not become the model's answer."""
+        from realtask.adapter import _EndpointRejected
+
+        with self.assertRaises(_EndpointRejected):
+            self._run_stream(
+                'event: error\ndata: {"error":{"message":"boom"}}\n\n'
+            )
