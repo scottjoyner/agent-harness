@@ -1,0 +1,138 @@
+diff --git a/auto_router/request_idempotency.py b/auto_router/request_idempotency.py
+index 29b79a7..08c2755 100644
+--- a/auto_router/request_idempotency.py
++++ b/auto_router/request_idempotency.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import base64
++import contextlib
+ import hashlib
+ import json
+ import sqlite3
+@@ -127,9 +128,31 @@ class RequestIdempotencyLedger:
+         conn.execute("PRAGMA busy_timeout=5000")
+         return conn
+ 
+-    def _init_db(self) -> None:
++    @contextlib.contextmanager
++    def _connection(self, *, write: bool = False):
++        """Own the ledger connection and its lifetime.
++
++        The shared in-memory connection must stay open across calls, so it is
++        the one connection this ledger does not close. Every other connection is
++        closed on the way out, and a write transaction is committed or rolled
++        back here rather than at each call site.
++        """
+         conn = self._connect()
+         try:
++            if write:
++                conn.execute("BEGIN IMMEDIATE")
++            yield conn
++            if write:
++                conn.commit()
++        except Exception:
++            if write:
++                conn.rollback()
++            raise
++        finally:
++            conn.close()
++
++    def _init_db(self) -> None:
++        with self._connection(write=True) as conn:
+             conn.execute(
+                 """
+                 CREATE TABLE IF NOT EXISTS inference_request_idempotency (
+@@ -149,17 +172,11 @@ class RequestIdempotencyLedger:
+                 "CREATE INDEX IF NOT EXISTS idx_inference_idempotency_expiry "
+                 "ON inference_request_idempotency(expires_at_ms)"
+             )
+-            conn.commit()
+-        finally:
+-            if not self.in_memory:
+-                conn.close()
+ 
+     def reserve(self, key: str, fingerprint: str, request_id: str) -> tuple[bool, dict[str, Any]]:
+         now = int(time.time() * 1000)
+         expires = now + self.ttl_seconds * 1000
+-        conn = self._connect()
+-        try:
+-            conn.execute("BEGIN IMMEDIATE")
++        with self._connection(write=True) as conn:
+             conn.execute(
+                 "DELETE FROM inference_request_idempotency WHERE expires_at_ms <= ?",
+                 (now,),
+@@ -178,7 +195,6 @@ class RequestIdempotencyLedger:
+                     """,
+                     (key, fingerprint, request_id, now, now, expires),
+                 )
+-                conn.commit()
+                 return True, {
+                     "idempotency_key": key,
+                     "fingerprint": fingerprint,
+@@ -186,26 +202,15 @@ class RequestIdempotencyLedger:
+                     "state": "in_progress",
+                     "status_code": None,
+                 }
+-            conn.commit()
+             return False, dict(row)
+-        except Exception:
+-            conn.rollback()
+-            raise
+-        finally:
+-            if not self.in_memory:
+-                conn.close()
+ 
+     def get(self, key: str) -> dict[str, Any] | None:
+-        conn = self._connect()
+-        try:
++        with self._connection() as conn:
+             row = conn.execute(
+                 "SELECT * FROM inference_request_idempotency WHERE idempotency_key = ?",
+                 (key,),
+             ).fetchone()
+             return dict(row) if row else None
+-        finally:
+-            if not self.in_memory:
+-                conn.close()
+ 
+     def transition(
+         self,
+@@ -218,22 +223,17 @@ class RequestIdempotencyLedger:
+         if state not in _TERMINAL | {"in_progress", "upstream_started"}:
+             raise ValueError(f"unsupported idempotency state {state}")
+         now = int(time.time() * 1000)
+-        conn = self._connect()
+-        try:
+-            conn.execute("BEGIN IMMEDIATE")
++        with self._connection(write=True) as conn:
+             row = conn.execute(
+                 "SELECT state FROM inference_request_idempotency WHERE idempotency_key = ?",
+                 (key,),
+             ).fetchone()
+             if row is None:
+-                conn.rollback()
+                 return
+             current = str(row["state"])
+             if current == "completed" and state != "completed":
+-                conn.rollback()
+                 return
+             if current == "possibly_accepted" and state in {"failed", "cancelled"}:
+-                conn.rollback()
+                 return
+             conn.execute(
+                 """
+@@ -243,13 +243,6 @@ class RequestIdempotencyLedger:
+                 """,
+                 (state, status_code, (detail or "")[:1000] or None, now, key),
+             )
+-            conn.commit()
+-        except Exception:
+-            conn.rollback()
+-            raise
+-        finally:
+-            if not self.in_memory:
+-                conn.close()
+ 
+ 
+ class RequestIdempotencyMiddleware:

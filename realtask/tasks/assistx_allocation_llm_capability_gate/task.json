@@ -1,0 +1,57 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "assistx/allocation_engine.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "${WORKTREE}/_realtask_tests/check_answer.py",
+        "${ANSWER}"
+      ]
+    ]
+  },
+  "constraints": [
+    "Report only the defect the frozen source actually contains; do not propose style changes.",
+    "Name the specific expression responsible, not just the area of the module.",
+    "State the consequence for a node that is genuinely misconfigured, not only the code shape.",
+    "Say what evidence a reader would need in order to notice the problem, given what the artifact records today.",
+    "Do not propose that the exemption be documented without justification; say whether it should exist at all."
+  ],
+  "deliverable": "analysis",
+  "fixture_version": 1,
+  "known_regression": "The obvious repair is to document the exemption, which would leave the gate just as unenforceable and the diagnostic just as silent. The second trap is reporting only the gate and not the diagnostic: the rejection path applies the same exemption, so a node that passes the gate also produces no reason to reject it, which is what makes the hole invisible rather than merely present. The third is mistaking the adjacency of any node with llm for intent; the fix that treats llm as implicit is correct only if every node in the fleet is guaranteed to serve it, and nothing establishes that.",
+  "problem": "assistx/allocation_engine.py ranks task/node/model placements and is supposed to refuse a node that cannot serve a task. Review build_allocation_plan and report the admission defect you find in it.\n\nThe contract it advertises is that a node is eligible for a task only when it advertises every capability in the task's required_capabilities, and that a node it refuses is recorded with a reason. Produce no patch and no diff. Identify the root cause, name the exact files involved, and give a short ordered plan of what a correct repair would require.",
+  "prompt_source_files": [
+    "assistx/allocation_engine.py"
+  ],
+  "relevant_source_files": [
+    "assistx/allocation_engine.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "assistx/allocation_engine.py",
+        "sha256": "312f940b4369c4665d8487f33765f1779b5fc0f632f159abff8c6cf3fd8b10f5",
+        "size_bytes": 9001
+      },
+      {
+        "path": "assistx/kv_cache.py",
+        "sha256": "8c4826534230542c7fa50eb0ee23e444752d0f801a7749ae4eb73fac63ebade9",
+        "size_bytes": 11293
+      }
+    ],
+    "head": "e872ed64531d308af9a0e02ad3c813ee0671a7bf",
+    "manifest_sha256": "b0880d95a48990092d6db58d5a6250013cbf560374fe0b2ae7e9df81a3a6d913",
+    "repository": "scottjoyner/auto-assist",
+    "writable_prefixes": []
+  },
+  "task_family": "code_review",
+  "task_id": "assistx_allocation_llm_capability_gate",
+  "title": "the allocation capability gate is unenforceable for one capability"
+}

@@ -1,0 +1,16 @@
+{
+  "root_cause": "In assistx/allocation_engine.py the capability gate subtracts a literal rather than intersecting it: a node is admitted only when required_capabilities.issubset(capabilities | {\"llm\"}), so the string llm is added to every node's advertised capabilities before the subset test runs. Any node therefore satisfies an llm requirement regardless of what it actually reports, which makes the gate unenforceable for that one capability. The same exemption is applied again when the rejection is built, because missing_capabilities is computed as required - capabilities - {\"llm\"}, so the rejected list stays empty and no capability_mismatch reason is ever recorded. An unconfigured node that advertises no capabilities at all is therefore indistinguishable, in the evidence, from a node that genuinely advertises llm.",
+  "relevant_files": [
+    "assistx/allocation_engine.py"
+  ],
+  "plan": [
+    "Remove the literal exemption so the gate intersects only what the node reports.",
+    "Keep the diagnostic honest by deriving missing_capabilities from the same unmodified capabilities set the gate used.",
+    "Add a check that a node advertising no capabilities is rejected for a task that requires llm."
+  ],
+  "risks": [
+    "Nodes that rely on the implicit grant will start being rejected until they advertise llm explicitly.",
+    "Until the diagnostic is fixed, any deployment reporting missing capabilities will under-report by exactly the exempt set."
+  ],
+  "confidence": 0.9
+}

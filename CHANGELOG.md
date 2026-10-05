@@ -2,6 +2,165 @@
 
 ## Unreleased
 
+### Added
+
+- **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
+  the last family that was still measured on a single codebase.
+  `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
+  places (`_init_db`, `reserve`, `get`, `transition`), each spelling out the same
+  acquire / commit-or-rollback / close shape, three of them opening their own
+  `BEGIN IMMEDIATE`.
+
+  The point of the fixture is that one of those four copies is load-bearing.
+  `_connect` returns a single shared connection for `:memory:`, so
+  `if not self.in_memory` is the only reason an in-memory ledger survives past its
+  first operation. A refactor that tidies it into a plain `finally: conn.close()`
+  satisfies every structural assertion and then raises
+  `sqlite3.ProgrammingError` on every later call. The oracle drives twelve
+  reserve/get/transition cycles through one in-memory ledger so that version is
+  rejected rather than rewarded.
+
+  A second trap is pinned: `_database_path` keeps the leading slash, so
+  `sqlite:///ledger.sqlite3` resolves to the absolute path `/ledger.sqlite3`. That
+  looks wrong, and a refactor gathering connection setup would be tempted to
+  normalise it, silently changing where the ledger is written. The oracle pins the
+  current parsing, quirks included.
+
+  The structural check is a regex, not a substring count: `__init__` also branches
+  on `in_memory` to create the parent directory, and a bare count would have
+  forbidden that legitimate second use. My first version had exactly that bug.
+
+- **`TargetedCollateralDamageTests`** — a second collateral-damage tier, tracking
+  `COLLATERAL_DAMAGE_TARGETED`. The existing `CollateralDamageTests` assumes the
+  targeted tier still passes and only the broader tier notices; that is true for the
+  campaign fixture and false here, where the oracle pins behaviour directly and the
+  damage surfaces as a targeted failure. Forcing it into the existing shape would
+  have made that test assert something untrue. Worth stating plainly: a fixture
+  whose collateral damage only showed up in a broader tier would be trusting luck to
+  enforce behaviour preservation. This one does not.
+
+- **`auto_router_task_contract_keyword_precedence`** — a `test_generation` fixture,
+  and the first time a second codebase exercises the meta-oracle that executes
+  candidate-authored code. `normalize_task_kind` classifies a task by scanning a
+  fixed keyword map and returning on the *first* substring match; `analysis` is
+  listed before `code` and matches the bare word `review`. So "review the failing
+  handler and add a regression test" is classified `analysis`, which flips
+  `task_evidence_required` to true and hands the task the analysis plan. The same
+  request without the word "review" is classified `code`.
+
+  Verified by execution before the fixture was written, not by reading. Six attacks
+  on the meta-oracle are rejected: an always-failing test, an always-passing test, a
+  test that passes for an unrelated reason, a test pinned to the *buggy* behaviour
+  (which fails both checks), a test with an unreachable import, and no test at all.
+
+  One trap worth recording. The reference test initially imported
+  `auto_router.task_contract` without the `.py` suffix, and the grounding gate
+  rejected the whole attempt as `GROUNDING_FAILURE` — a correct test, refused for
+  naming its module in Python import form rather than path form. The reference now
+  names the file explicitly.
+
+  Deliberately shares a source identity with `auto_router_task_contract_lane_mismatch`:
+  different defect, different capability. `test_a_campaign_is_diverse_in_family_and_defect`
+  enforces that a shared snapshot still means two distinct tasks.
+
+- **`auto_router_contract_shim_single_source`** — a `contract_reasoning` fixture on
+  `auto-router`. The module documents that it re-exports the canonical
+  `assistx.contracts` types "so every repo emits the single source-of-truth
+  envelope", and keeps that contract on only one of its two paths. In the
+  `except ImportError` fallback, `TraceEvent` and `TraceGroup` become classes whose
+  bodies are `pass` — importable and instantiable, but carrying no data, so the loss
+  surfaces when something reads an attribute rather than at import. `SCHEMA_VERSION`
+  becomes a hardcoded literal that can drift with nothing comparing it. And
+  `_USING_CANONICAL`, the flag recording which path was taken, is exported and read
+  by nothing in the repository.
+
+  Verified against the frozen source before the fixture was written. Chosen as a
+  different defect class again: a documented contract kept selectively, rather than
+  an unenforceable admission gate or a lifecycle ordering.
+
+- **`assistx_allocation_llm_capability_gate`** — a `code_review` fixture on
+  `auto-assist`, closing the disclosed gap that every `analysis` fixture came from
+  the campaign repository. `allocation_engine.py` ranks task/node/model placements
+  and admits a node when `required.issubset(capabilities | {"llm"})` — the union
+  grants `llm` before the subset test, so any node satisfies an `llm`
+  requirement. The rejection path applies the same exemption
+  (`required - capabilities - {"llm"}`), so the `rejected` list stays empty as
+  well. Confirmed against the frozen source: a node advertising no capabilities at
+  all is recommended for an `llm` task, with evidence identical to a node that
+  genuinely advertises it.
+
+  Chosen because it is a different defect class from the other eight — an
+  unenforceable admission contract rather than a lifecycle ordering, a path
+  derivation, or a keyset cursor — which is the point of adding it. Its grader
+  carries the identical hardening block as the other two, and
+  `DerivedArtifactTests` now checks that against every analysis fixture instead of
+  a hardcoded pair, so a fourth grader cannot join without joining the check.
+
+### Fixed
+
+- **The corpus-shape disclosure guards could not tell a new fixture from a stale
+  table.** They asserted a literal table row, which hardcoded the source-identity
+  count, so adding a fixture failed for the wrong reason. They now parse the row and
+  assert only the derived column — families outside the campaign repository — plus
+  that the stated family count matches the fixtures on disk. Verified by
+  overstating and understating each figure.
+
+- **Every single-vs-swarm comparison this harness produced was structurally n=1.**
+  `--single-attempts` existed; the swarm side could not be repeated at all. So the
+  artifact invited a comparison — is the difference the strategy, or the run? — that
+  was unanswerable by construction, and said nothing about sample size. `--swarm-attempts`
+  now exists, both sides report `sample_sizes`, a single observation is named as
+  one, the swarm side is described as one sample even after replication (role
+  separation is nondeterministic, so a per-attempt delta stays confounded with
+  run-to-run variation), and the roll-up records `attempts_per_task` and says when
+  every pooled task contributed a single attempt.
+
+  The honest limit is stated rather than implied away: replication makes variance
+  observable, it does not make one task generalisable.
+
+- **The corpus-shape table implied a breadth of task-type coverage the corpus does
+  not have.** It reported "families 5" against a 3-repository corpus, which reads as
+  broader than it is: `bug_fix` spans all three repositories, but `code_review`,
+  `contract_reasoning`, `small_refactor` and `test_generation` all come from the
+  campaign repository, and **both** `analysis`-deliverable fixtures are
+  auto-ingest only. So a model that writes patches well and reviews badly cannot
+  be distinguished by this corpus, and the hardened analysis graders have only
+  ever faced one defect class.
+
+  The table now carries a "families outside the campaign repo" column and the real
+  deliverable-to-repository spread, with the gap stated in prose rather than left
+  for a reader to infer from a count. `DeliverableCoverageDisclosureTests` derives
+  the actual spread from the fixtures and fails if the documented figures drift,
+  so the gap cannot quietly stop being true while the table still implies it is.
+
+  Not asserted: that `analysis` spans two repositories. That would require either
+  shipping a fixture built on a defect that may not be one, or landing a skipped
+  test — both worse than a disclosed gap. The honest position is that closing it
+  needs an `analysis` fixture from `auto-router` or `auto-assist`, found by reading
+  frozen source the way the other three were.
+
+- **An operator-supplied patch was indistinguishable from a model's result.**
+  `--scout-file` recorded provenance; `--patch-file` recorded nothing. Attempts are
+  now stamped `candidate_source` (`model` or `operator_patch_file`) and it is
+  reported in `metrics.json`, `comparison.json` and the roll-up, with a scope limit
+  whenever an operator-supplied candidate is involved. The manifest records the
+  operator's path, SHA-256 and length.
+
+  Found by running the harness for real: a live `--stage review` run with a
+  hand-written reference patch scored targeted 1/1 and broader 1/1, and nothing in
+  the evidence said a human had done it.
+
+  The field lives on `AttemptMetrics`, not `PatchMetric`, because `PatchMetric`
+  fields are copied by hand in `_merge_review` — where `safety_ok` and
+  `safety_reason` once went missing. This is the third hand-maintained field list
+  in the harness to drop a field; the roll-up's `_ATTEMPT_FIELDS` was the one that
+  surfaced it.
+
+- **Artifacts predating provenance are bucketed `unknown`, not assumed to be model
+  attempts.** The first version of the roll-up crashed sorting `None`, and the
+  obvious repair — defaulting to `model` — would have been the wrong guess in
+  exactly the direction that flatters a result.
+
 ### Verified
 
 - **The last unexercised live link is a model writing a patch, and the obvious

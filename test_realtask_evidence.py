@@ -390,6 +390,48 @@ class ComparisonTests(HarnessTestCase):
         self.assertTrue(best_of(Outcome.TARGETED_TEST_FAILURE,
                                 Outcome.PROTOCOL_FAILURE))
 
+    def test_the_comparison_names_where_each_candidate_came_from(self):
+        """An operator's patch must not read as a model's result."""
+        from realtask.metrics import CANDIDATE_SOURCE_OPERATOR
+
+        operator = AttemptMetrics(
+            attempt_id="t::review", strategy="review", outcome=Outcome.SUCCESS
+        )
+        operator.candidate_source = CANDIDATE_SOURCE_OPERATOR
+        comparison = build_comparison("t", "bug_fix", "f", [operator], None)
+
+        self.assertEqual(
+            comparison["single_attempts_considered"][0]["candidate_source"],
+            "operator_patch_file",
+        )
+        joined = " ".join(comparison["scope_limits"])
+        self.assertIn("--patch-file", joined)
+        self.assertIn("must not be read as a model result", joined)
+
+    def test_a_model_only_comparison_carries_no_such_limit(self):
+        model = AttemptMetrics(
+            attempt_id="t::single", strategy="single", outcome=Outcome.SUCCESS
+        )
+        comparison = build_comparison("t", "bug_fix", "f", [model], None)
+        self.assertEqual(
+            comparison["single_attempts_considered"][0]["candidate_source"], "model"
+        )
+        self.assertFalse(any("--patch-file" in l for l in comparison["scope_limits"]))
+
+    def test_the_swarm_side_origin_is_reported_too(self):
+        from realtask.metrics import CANDIDATE_SOURCE_OPERATOR
+
+        model = AttemptMetrics(
+            attempt_id="t::single", strategy="single", outcome=Outcome.SUCCESS
+        )
+        swarm = AttemptMetrics(
+            attempt_id="t::swarm", strategy="swarm", outcome=Outcome.SUCCESS
+        )
+        swarm.candidate_source = CANDIDATE_SOURCE_OPERATOR
+        comparison = build_comparison("t", "bug_fix", "f", [model], swarm)
+        self.assertEqual(comparison["swarm_candidate_source"], "operator_patch_file")
+        self.assertIn("t::swarm", " ".join(comparison["scope_limits"]))
+
     def test_comparison_handles_a_missing_side(self):
         _t, single = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
         _t2, swarm = self.single_and_swarm()
@@ -518,6 +560,58 @@ class SourceManifestArtifactTests(HarnessTestCase):
         )
         self.assertTrue(artifact["binding"]["ok"])
         self.assertIn("source_binding_sha256", artifact["binding"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class SampleSizeDisclosureTests(unittest.TestCase):
+    """The comparison must state how many samples it actually has.
+
+    It already declared that one task is not evidence that role separation helps.
+    It did not say that one *sample* is not evidence, which is the easier mistake:
+    a single swarm run against a single single run produces a delta that reads
+    like a result and is indistinguishable from noise.
+    """
+
+    def build(self, n_single: int, with_swarm: bool = True):
+        singles = [
+            AttemptMetrics(
+                attempt_id="t::single{}".format("#{}".format(i) if i else ""),
+                strategy="single",
+                outcome=Outcome.SUCCESS,
+            )
+            for i in range(n_single)
+        ]
+        swarm = AttemptMetrics(
+            attempt_id="t::swarm", strategy="swarm", outcome=Outcome.SUCCESS
+        ) if with_swarm else None
+        return build_comparison("t", "bug_fix", "f", singles, swarm)
+
+    def test_the_sample_sizes_are_recorded(self):
+        comparison = self.build(3)
+        self.assertEqual(comparison["sample_sizes"], {"single": 3, "swarm": 1})
+
+    def test_a_single_sample_says_so(self):
+        joined = " ".join(self.build(1)["scope_limits"])
+        self.assertIn("cannot be distinguished from noise", joined)
+        self.assertIn("is not a measurement", joined)
+
+    def test_the_swarm_side_is_always_called_out_as_one_sample(self):
+        joined = " ".join(self.build(5)["scope_limits"])
+        self.assertIn("nondeterministic", joined)
+        self.assertIn("--swarm-attempts", joined)
+
+    def test_no_swarm_means_no_swarm_specific_caveat(self):
+        joined = " ".join(self.build(3, with_swarm=False)["scope_limits"])
+        self.assertNotIn("--swarm-attempts", joined)
+
+    def test_a_replicated_swarm_is_not_claimed_to_solve_anything(self):
+        """n>1 still cannot isolate the strategy. Do not imply it does."""
+        joined = " ".join(self.build(3)["scope_limits"])
+        self.assertIn("One task is not evidence", joined)
+        self.assertIn("No component is aggregated", joined)
 
 
 if __name__ == "__main__":

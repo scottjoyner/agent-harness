@@ -177,10 +177,24 @@ def build_comparison(
         "task_id": task_id,
         "task_family": task_family,
         "fixture_sha256": fixture_sha256,
-        "single_attempts_considered": [
-            {"attempt_id": m.attempt_id, "outcome": m.outcome.value} for m in singles
-        ],
         "best_single_selection_rule": selection_rule,
+        "sample_sizes": {
+            "single": len(singles),
+            "swarm": 1 if swarm is not None else 0,
+        },
+        "single_attempts_considered": [
+            {
+                "attempt_id": m.attempt_id,
+                "outcome": m.outcome.value,
+                # Who produced the candidate. An existing key on an existing
+                # published field, so nothing that reads this artifact breaks.
+                "candidate_source": m.candidate_source,
+            }
+            for m in singles
+        ],
+        "swarm_candidate_source": (
+            swarm.candidate_source if swarm is not None else None
+        ),
         "best_single": None,
         "swarm": None,
         "quality_difference": {},
@@ -203,7 +217,8 @@ def build_comparison(
             "are never estimated.",
             "This artifact records evidence only. Deciding what to do with it "
             "belongs to an authoritative controller.",
-        ],
+        ] + _candidate_source_limits(singles, swarm)
+            + _sample_size_limits(len(singles), swarm is not None),
     }
 
     if best_single is None:
@@ -239,6 +254,61 @@ def build_comparison(
         payload["cost_difference"] = _delta(_cost_values(best_single), _cost_values(swarm))
 
     return payload
+
+
+def _sample_size_limits(n_single: int, has_swarm: bool) -> List[str]:
+    """A one-sample comparison is one observation, not a measurement.
+
+    The artifact already says one *task* is not evidence that role separation
+    helps. It said nothing about one *sample*, which is the more common way to
+    over-read: a single swarm run against a single single run looks like a result
+    and is indistinguishable from noise. Swarm could not even be repeated before
+    ``--swarm-attempts`` existed, so the comparison was structurally n=1 on the
+    interesting side.
+    """
+    if not has_swarm:
+        return []
+    limits = []
+    if n_single < 2:
+        limits.append(
+            "The single side has {} sample{}. A single sample cannot be "
+            "distinguished from noise; a difference between one single attempt and "
+            "one swarm attempt is not a measurement.".format(
+                n_single, "" if n_single == 1 else "s"
+            )
+        )
+    limits.append(
+        "The swarm side always carries exactly one sample: role separation is "
+        "nondeterministic (scout wording, reviewer verdict), so any per-attempt "
+        "difference is confounded with run-to-run variation. Raise "
+        "--swarm-attempts before reading a delta as a property of the strategy."
+    )
+    return limits
+
+
+def _candidate_source_limits(
+    singles: Sequence[AttemptMetrics], swarm: Optional[AttemptMetrics]
+) -> List[str]:
+    """A limit earned by who actually produced the candidate.
+
+    An attempt whose candidate came from ``--patch-file`` was solved by an
+    operator, not by a model. Pooled or compared without saying so, it reads as a
+    model result -- which is exactly how a hand-written reference patch turns into
+    a benchmark score.
+    """
+    operator = [m.attempt_id for m in singles if m.candidate_source != "model"]
+    if swarm is not None and swarm.candidate_source != "model":
+        operator.append(swarm.attempt_id)
+    if not operator:
+        return []
+    return [
+        "Attempt(s) {} judged a candidate supplied by an operator via "
+        "--patch-file rather than one produced by a model. Their outcomes are "
+        "evidence about the fixture and the harness, not about any model's "
+        "ability, and must not be read as a model result.".format(
+            ", ".join(sorted(set(operator)))
+        )
+    ]
 
 
 def _select_best_single(

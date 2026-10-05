@@ -1,0 +1,58 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_router/task_contract.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_generated_regression.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "Add the test as a new test_*.py file under _realtask_tests/; do not edit the module under test.",
+    "Do not repair the defect. The deliverable is the test that detects it.",
+    "The test must fail against the current code, so it cannot assert the present behaviour.",
+    "Assert observable behaviour through the public functions, not the private keyword table.",
+    "A test that always fails, or that passes for an unrelated reason, does not count as detecting the defect."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "The obvious test writes a passing test for a case that already classifies correctly, and is rejected because it does not detect the defect. The second trap is testing the keyword map directly, which passes after any reorder and so asserts the implementation rather than the contract. The third is a single assertion that pins one phrasing: it can be satisfied by a repair that special-cases that exact string. A test comparing two phrasings of the same task is what makes the repair general.",
+  "problem": "auto_router/task_contract.py decides what kind of task it has been given by scanning the task text for keywords and returning the first category that matches. The categories are listed in a fixed order, and matching is by substring, so a word that belongs to one category appearing anywhere in the text settles the classification.\n\nAdd a regression test that would have caught this, under `_realtask_tests/` as a new `test_*.py` file. Do not fix the module: the deliverable is the test. The test must fail against the current code and pass once the classification is correct, so pin the observable behaviour rather than the internals.",
+  "prompt_source_files": [
+    "auto_router/task_contract.py"
+  ],
+  "relevant_source_files": [
+    "auto_router/task_contract.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_router/task_contract.py",
+        "sha256": "2c82cc77649987f424dd69824c9c8a548b7615e023d3ffa364fddc26e22ea506",
+        "size_bytes": 6647
+      }
+    ],
+    "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+    "manifest_sha256": "0671ccfdd99801aa7c47bd284b0b3fc2c93294dc504d6c9ca2e6fae4d8f2299d",
+    "repository": "scottjoyner/auto-router",
+    "writable_prefixes": [
+      "_realtask_tests/"
+    ]
+  },
+  "task_family": "test_generation",
+  "task_id": "auto_router_task_contract_keyword_precedence",
+  "title": "an incidental keyword decides the whole task contract"
+}

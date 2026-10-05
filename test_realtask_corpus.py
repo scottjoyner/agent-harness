@@ -32,6 +32,8 @@ from realtask.version import SCHEMA_TASK
 REFERENCE_SOLUTIONS: Dict[str, str] = {
     "auto_ingest_plan_shorts_live_driver": "test_realtask_reference_live_driver.diff",
     "auto_ingest_shorts_driver_helper": "test_realtask_reference_refactor.diff",
+    "auto_router_idempotency_connection_lifetime":
+        "test_realtask_reference_idempotency_lifetime.diff",
     "auto_router_task_contract_lane_mismatch": "test_realtask_reference_task_contract.diff",
     "auto_router_settings_latency_cache_path": "test_realtask_reference_settings.diff",
     "assistx_answers_store_cursor_drops_ties": "test_realtask_reference_answers_store.diff",
@@ -39,6 +41,8 @@ REFERENCE_SOLUTIONS: Dict[str, str] = {
     # a new-file diff landing under the fixture's writable prefix.
     "auto_ingest_driver_lifetime_regression_test":
         "test_realtask_reference_regression_test.diff",
+    "auto_router_task_contract_keyword_precedence":
+        "test_realtask_reference_contract_regression_test.diff",
 }
 
 #: task_id -> the reference answer that must satisfy the grader. An analysis
@@ -47,12 +51,29 @@ REFERENCE_SOLUTIONS: Dict[str, str] = {
 REFERENCE_ANSWERS: Dict[str, str] = {
     "auto_ingest_shorts_plan_review": "test_realtask_reference_review.json",
     "auto_ingest_plan_shorts_contract": "test_realtask_reference_contract.json",
+    "assistx_allocation_llm_capability_gate":
+        "test_realtask_reference_allocation_review.json",
+    "auto_router_contract_shim_single_source":
+        "test_realtask_reference_contract_shim.json",
 }
 
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
 #: prove the broader tier catches collateral damage, not only the primary defect.
 COLLATERAL_DAMAGE: Dict[str, str] = {
     "auto_ingest_plan_shorts_live_driver": "test_realtask_reference_regression.diff",
+}
+
+#: A repair that breaks behaviour where the fixture's *own targeted* checks can
+#: see it. ``CollateralDamageTests`` below covers the campaign fixture, whose
+#: collateral damage is invisible to its targeted tier and only shows up in the
+#: broader one. The idempotency refactor's oracle pins behaviour directly --
+#: twelve ledger cycles through one shared in-memory connection -- so its
+#: collateral damage surfaces as a targeted failure instead. Different
+#: enforcement path, different test, so it is tracked separately rather than
+#: forced into a shape whose assertions would be false here.
+COLLATERAL_DAMAGE_TARGETED: Dict[str, str] = {
+    "auto_router_idempotency_connection_lifetime":
+        "test_realtask_reference_always_close.diff",
 }
 
 #: A patch that satisfies the oracle by memorising the inputs the oracle names,
@@ -79,6 +100,10 @@ def reference_answer(task_id: str) -> str:
 
 def collateral_patch(task_id: str) -> str:
     return (REPO_ROOT / COLLATERAL_DAMAGE[task_id]).read_text(encoding="utf-8")
+
+
+def collateral_patch_targeted(task_id: str) -> str:
+    return (REPO_ROOT / COLLATERAL_DAMAGE_TARGETED[task_id]).read_text(encoding="utf-8")
 
 
 def targeted_commands(task) -> List[List[str]]:
@@ -413,6 +438,35 @@ class CollateralDamageTests(HarnessTestCase):
                 )
 
 
+class TargetedCollateralDamageTests(HarnessTestCase):
+    """Collateral damage the fixture's own targeted tier is supposed to catch.
+
+    The interesting property here is *where* it is caught. A refactor that
+    tidies the in-memory close guard looks like an improvement and passes every
+    structural assertion in the oracle; it is rejected because the behavioural
+    checks in that same oracle fail. A fixture whose collateral damage only
+    showed up in a broader tier would be trusting luck to enforce
+    behaviour preservation.
+    """
+
+    def test_collateral_damage_is_caught_by_the_targeted_tier(self):
+        from test_realtask_support import patch_reply
+
+        for task_id, _filename in COLLATERAL_DAMAGE_TARGETED.items():
+            task = self.task(task_id)
+            _t, result = self.run_stages(
+                task_id, [patch_reply(collateral_patch_targeted(task_id))], ["single"]
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertOutcome(state, Outcome.TARGETED_TEST_FAILURE)
+                self.assertFalse(
+                    state.metrics.tests.targeted_all_passed,
+                    "collateral damage was not caught by the targeted tier, so "
+                    "this fixture does not enforce its own behaviour contract",
+                )
+
+
 class NoCrossContaminationTests(unittest.TestCase):
     """A run must not be able to touch a fixture it was not asked about."""
 
@@ -475,8 +529,10 @@ class NoCrossContaminationTests(unittest.TestCase):
 
 class ReferenceSolutionHygieneTests(unittest.TestCase):
     def test_every_reference_diff_is_a_valid_unified_diff(self):
-        for task_id, filename in list(REFERENCE_SOLUTIONS.items()) + list(
-            COLLATERAL_DAMAGE.items()
+        for task_id, filename in (
+            list(REFERENCE_SOLUTIONS.items())
+            + list(COLLATERAL_DAMAGE.items())
+            + list(COLLATERAL_DAMAGE_TARGETED.items())
         ):
             path = REPO_ROOT / filename
             with self.subTest(task=task_id):
@@ -493,7 +549,11 @@ class ReferenceSolutionHygieneTests(unittest.TestCase):
                 self.assertTrue(text.endswith("\n"), filename)
 
     def test_reference_diffs_are_tracked_and_committed(self):
-        for filename in list(REFERENCE_SOLUTIONS.values()) + list(COLLATERAL_DAMAGE.values()):
+        for filename in (
+            list(REFERENCE_SOLUTIONS.values())
+            + list(COLLATERAL_DAMAGE.values())
+            + list(COLLATERAL_DAMAGE_TARGETED.values())
+        ):
             completed = subprocess.run(
                 ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch", filename],
                 capture_output=True, text=True, timeout=60,
@@ -533,6 +593,18 @@ def _regenerated_regression_test_diff() -> str:
     return new_file_patch("_realtask_tests/test_candidate_lifetime.py", body)
 
 
+def _contract_keyword_precedence_diff() -> str:
+    from test_realtask_support import (
+        CONTRACT_KEYWORD_PRECEDENCE_TEST,
+        new_file_patch,
+    )
+
+    return new_file_patch(
+        "_realtask_tests/test_contract_keyword_precedence.py",
+        CONTRACT_KEYWORD_PRECEDENCE_TEST,
+    )
+
+
 def _grader_hardening_block() -> str:
     """The shared hardening logic, as it appears in either grader."""
 
@@ -555,6 +627,11 @@ DERIVED_ARTIFACTS: List = [
         "test_realtask_reference_regression_test.diff",
         _regenerated_regression_test_diff,
         "the campaign oracle test_plan_driver_lifetime.py",
+    ),
+    (
+        "test_realtask_reference_contract_regression_test.diff",
+        _contract_keyword_precedence_diff,
+        "CONTRACT_KEYWORD_PRECEDENCE_TEST in test_realtask_support.py",
     ),
 ]
 
@@ -882,8 +959,7 @@ class DerivedArtifactTests(unittest.TestCase):
         expected = _grader_hardening_block()
         self.assertIn("MAX_CLAUSE_KEYWORD_DENSITY", expected)
         self.assertIn("MIN_SUBSTANTIVE_TOKENS", expected)
-        for task_id in ("auto_ingest_shorts_plan_review",
-                        "auto_ingest_plan_shorts_contract"):
+        for task_id in ANALYSIS_TASKS:
             path = TASKS_ROOT / task_id / "tests" / "check_answer.py"
             with self.subTest(task=task_id):
                 text = path.read_text(encoding="utf-8")
@@ -911,7 +987,9 @@ class DerivedArtifactTests(unittest.TestCase):
         self.assertLessEqual(
             on_disk - registered,
             {"test_realtask_reference_refactor.diff",
+             "test_realtask_reference_idempotency_lifetime.diff",
              "test_realtask_reference_regression.diff",
+             "test_realtask_reference_always_close.diff",
              "test_realtask_reference_settings.diff",
              "test_realtask_reference_task_contract.diff",
              "test_realtask_reference_answers_store.diff"},
@@ -1134,6 +1212,12 @@ class UndeclaredDependencyTests(unittest.TestCase):
 #: nothing else, so they never execute ``_brand_check`` (Pillow) or the driver
 #: factory (neo4j).
 UNREACHABLE_DEPENDENCIES: Dict[str, Dict[str, str]] = {
+    "auto_router_contract_shim_single_source": {
+        "pydantic": "an analysis deliverable judges the answer text; the snapshot is "
+                    "never imported, so its third-party imports are unreachable",
+        "assistx": "the canonical package this module tries to import; absent from "
+                   "the snapshot on purpose, since that fallback is the subject",
+    },
     "auto_ingest_shorts_driver_helper": {
         "PIL": "only _brand_check imports Pillow, and no oracle calls it",
         "neo4j": "the driver factory is replaced by the oracle's own stub",
@@ -1289,5 +1373,138 @@ class DocumentationCoverageTests(unittest.TestCase):
         changelog = (REPO_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn("TOOL_CALL_REQUESTED", changelog)
         self.assertIn("billed to the harness a second time", changelog)
+if __name__ == "__main__":
+    unittest.main()
+
+
+class DeliverableCoverageDisclosureTests(unittest.TestCase):
+    """The corpus must not imply a breadth of coverage it does not have.
+
+    The shipped-fixtures table says "five families", and that is true. It is also
+    misleading on its own: four of those five families, and *both* fixtures whose
+    deliverable is ``analysis``, come from one repository and one defect. A model
+    that writes patches well and reviews badly cannot be distinguished by this
+    corpus, and the hardened analysis graders have only ever faced one defect
+    class.
+
+    Rather than assert a breadth the corpus does not yet have -- which would mean
+    either shipping a fixture on a defect that may not be one, or landing a skipped
+    test, both worse than the gap -- these tests pin the *disclosure*. If a future
+    change widens or narrows the coverage, the documented figures must move with it,
+    so the gap cannot quietly stop being true while the table still implies it is.
+    """
+
+    def coverage(self):
+        """Repository spread by deliverable and family, as short names.
+
+        Short names because that is how the document writes them; comparing
+        against ``scottjoyner/auto-ingest`` would fail against a correct doc.
+        """
+        by_deliverable: Dict[str, set] = {}
+        by_family: Dict[str, set] = {}
+        per_repo: Dict[str, int] = {}
+        for manifest in iter_fixture_manifests(TASKS_ROOT):
+            task = load_task(manifest)
+            repo = task.source.repository.split("/")[-1]
+            by_deliverable.setdefault(task.deliverable, set()).add(repo)
+            by_family.setdefault(task.task_family, set()).add(repo)
+            per_repo[repo] = per_repo.get(repo, 0) + 1
+        campaign = max(per_repo, key=lambda r: per_repo[r])
+        outside = sorted(f for f, repos in by_family.items() if repos - {campaign})
+        return by_deliverable, by_family, campaign, outside
+
+    def doc_text(self) -> str:
+        return (REPO_ROOT / "docs/REAL-TASK-BENCHMARK.md").read_text(encoding="utf-8")
+
+    def doc_flat(self) -> str:
+        """Whitespace-collapsed, because Markdown hard-wraps.
+
+        And assertions run against this rather than ``assertIn`` on the raw text:
+        a failure would otherwise dump 900 lines around a one-line problem.
+        """
+        return " ".join(self.doc_text().split())
+
+    def test_the_document_states_the_actual_deliverable_spread(self):
+        by_deliverable, _by_family, _campaign, _outside = self.coverage()
+        for deliverable, repos in by_deliverable.items():
+            with self.subTest(deliverable=deliverable):
+                self.assertTrue(
+                    "| `{}` | {} |".format(
+                        deliverable,
+                        "auto-ingest only" if repos == {"auto-ingest"}
+                        else ", ".join(sorted(repos)),
+                    ) in self.doc_flat(),
+                    "docs/REAL-TASK-BENCHMARK.md does not state the real "
+                    "repository spread for the {!r} deliverable".format(deliverable),
+                )
+
+    def corpus_shape_row(self):
+        """The corpus row of the corpus-shape table, as a list of cells.
+
+        Parsed from the table rather than matched as a literal row: matching a
+        whole row meant hardcoding the source-identity count too, so adding a
+        fixture failed for the wrong reason.
+        """
+        match = re.search(
+            r"^\|\s*corpus\s*\|(.+?)\|\s*$", self.doc_text(), re.MULTILINE
+        )
+        self.assertIsNotNone(match, "the corpus-shape table has no corpus row")
+        return [cell.strip() for cell in match.group(1).split("|")]
+
+    def test_the_document_states_the_actual_family_count_outside_the_campaign(self):
+        """Only the derived column is asserted: families outside the campaign.
+
+        That is the figure that quietly lies, because it is the one a reader
+        cannot check by counting fixtures.
+        """
+        _by_deliverable, _by_family, _campaign, outside = self.coverage()
+        cells = self.corpus_shape_row()
+        self.assertEqual(
+            cells[-1], str(len(outside)),
+            "the corpus-shape row must end with the true count of families "
+            "outside the campaign repository (currently {})".format(outside),
+        )
+
+    def test_the_corpus_shape_row_lists_every_family_the_corpus_contains(self):
+        """A count of 5 is meaningless if the corpus holds a sixth."""
+        _bd, by_family, _campaign, _outside = self.coverage()
+        cells = self.corpus_shape_row()
+        self.assertEqual(
+            int(cells[2]), len(by_family),
+            "the corpus-shape row claims {} families; the corpus has {}".format(
+                cells[2], sorted(by_family)
+            ),
+        )
+
+    def test_the_analysis_gap_is_named_rather_than_implied(self):
+        """While `analysis` is single-repository, the document must say so."""
+        by_deliverable, _by_family, _campaign, _outside = self.coverage()
+        analysis = by_deliverable.get("analysis", set())
+        if len(analysis) <= 1:
+            for phrase in ("confined to the campaign repository",):
+                self.assertTrue(
+                    phrase in self.doc_flat(),
+                    "the analysis coverage gap must be stated in the document, "
+                    "not left for a reader to infer from a table of families",
+                )
+
+    def test_the_campaign_repository_is_still_identified_as_the_campaign(self):
+        _bd, _bf, campaign, outside = self.coverage()
+        campaign_fixture = load_task(
+            TASKS_ROOT / "auto_ingest_plan_shorts_live_driver" / "task.json"
+        )
+        self.assertEqual(
+            campaign_fixture.source.repository.split("/")[-1],
+            campaign,
+            "the campaign repository must still be the one supplying the fixture "
+            "this document calls the campaign",
+        )
+        self.assertTrue(
+            outside,
+            "no family exists outside the campaign repository, so the "
+            "corpus-shape table has no meaningful last column",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

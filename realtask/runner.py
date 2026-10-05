@@ -45,6 +45,7 @@ from .roles import (
     ScoutResult,
     requested_tools,
 )
+from .metrics import CANDIDATE_SOURCE_OPERATOR
 from .taxonomy import Outcome
 from .version import MAX_REFINEMENTS, SCHEMA_ROLE_RESULT, SCHEMA_TEST_RESULTS
 
@@ -1093,6 +1094,7 @@ class BenchmarkRunner:
         strategies: Sequence[str],
         *,
         single_attempts: int = 1,
+        swarm_attempts: int = 1,
         patch_override: Optional[str] = None,
         scout_override: Optional[ScoutResult] = None,
     ) -> TaskRunResult:
@@ -1171,6 +1173,14 @@ class BenchmarkRunner:
                     states.append(state)
                 else:
                     state = self._new_state(task, "review", ordinal("review"))
+                    # The candidate came from a file, not from a model. Recorded
+                    # on the attempt before anything runs, so no stage of the
+                    # review path can lose it.
+                    state.metrics.candidate_source = CANDIDATE_SOURCE_OPERATOR
+                    state.metrics.notes.append(
+                        "candidate supplied by an operator via --patch-file; "
+                        "this attempt says nothing about model ability"
+                    )
                     states.append(
                         self._run_guarded(
                             state,
@@ -1181,12 +1191,17 @@ class BenchmarkRunner:
                         )
                     )
             elif strategy == "swarm":
-                state = self._new_state(task, "swarm", ordinal("swarm"))
-                states.append(
-                    self._run_guarded(
-                        state, lambda: self.run_swarm(task, binding, state)
+                # Swarm could be repeated too. It used not to be, which meant the
+                # comparison artifact structurally could only ever hold one swarm
+                # sample against many singles -- and so could not support the very
+                # question it invites: is the difference strategy, or noise?
+                for index in range(max(1, swarm_attempts)):
+                    state = self._new_state(task, "swarm", ordinal=index)
+                    states.append(
+                        self._run_guarded(
+                            state, lambda: self.run_swarm(task, binding, state)
+                        )
                     )
-                )
             else:
                 raise ValueError("unknown strategy {!r}".format(strategy))
 

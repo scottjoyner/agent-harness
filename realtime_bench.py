@@ -38,6 +38,7 @@ or writes to any repository other than this one's ``runs/`` directory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import shutil
@@ -161,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="stage to run; repeatable. Defaults to single+swarm.")
     run.add_argument("--single-attempts", type=int, default=1,
                      help="how many single attempts to run per task (default: 1)")
+    run.add_argument("--swarm-attempts", type=int, default=1,
+                     help=("how many swarm attempts to run per task (default: 1). "
+                           "A single swarm sample cannot be told apart from noise, "
+                           "so any comparison of strategy against it is one "
+                           "observation, not a measurement."))
     run.add_argument("--patch-file", type=Path,
                      help="candidate patch for the review stage (required with --stage review)")
     run.add_argument("--scout-file", type=Path,
@@ -401,8 +407,17 @@ def command_run(args: argparse.Namespace) -> int:
         )
 
     patch_override = None
+    patch_provenance = None
     if args.patch_file:
-        patch_override = Path(args.patch_file).read_text(encoding="utf-8")
+        raw = Path(args.patch_file).read_bytes()
+        patch_override = raw.decode("utf-8", errors="replace")
+        # Hashed, not just named: a path can be rewritten between runs, and the
+        # record has to say *which* candidate was judged after the fact.
+        patch_provenance = {
+            "path": str(args.patch_file),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
     elif "review" in stages:
         raise SystemExit("--stage review requires --patch-file")
 
@@ -470,6 +485,7 @@ def command_run(args: argparse.Namespace) -> int:
             "require_head": args.require_head,
             "tasks_root": str(args.tasks_root),
             "scout_handoff": scout_handoff,
+            "candidate_override": patch_provenance,
         },
         started_at=utc_now(),
     )
@@ -492,6 +508,7 @@ def command_run(args: argparse.Namespace) -> int:
                 task,
                 stages,
                 single_attempts=args.single_attempts,
+                swarm_attempts=args.swarm_attempts,
                 patch_override=patch_override,
                 scout_override=scout_override,
             )

@@ -466,6 +466,10 @@ fault, and none of them should erase the attempts that already succeeded.
 what cost?
 
 - best single attempt and the explicit, recorded rule used to pick it
+- **sample sizes on both sides**, and a scope limit whenever one side is a single
+  observation
+- **where each candidate came from** (`candidate_source`), and a scope limit when
+  it came from an operator rather than a model
 - quality difference, **component by component**, never a composite
 - cost difference: model calls, model wall time, harness overhead, total wall
   time, tokens
@@ -501,6 +505,11 @@ Same stance as `comparison.json`:
   make sure nothing resembling a verdict cannot appear.
 - Token totals are `null` when any contributing attempt's endpoint omitted usage.
   A partial sum is worse than none. Call counts stay exact.
+- Attempts are counted by `candidate_source`, so an operator-supplied candidate is
+  never pooled into a model's result
+- Artifacts written before provenance existed are bucketed `unknown`, not assumed
+  to be model attempts — the missing value could just as easily have been a
+  hand-written patch
 - A corrupt, foreign-schema or interrupted run lands in `skipped_runs` rather
   than raising: a corpus should never fail to summarise because one run died. A
   manifest whose schema is not `realtask.run_manifest.v1` is skipped, so legacy
@@ -527,6 +536,10 @@ Same stance as `comparison.json`:
 | `auto_router_task_contract_lane_mismatch` | `bug_fix` | patch | a plan lane whose tools were never registered, so it can never be routed |
 | `auto_router_settings_latency_cache_path` | `bug_fix` | patch | the latency cache path derived by a second, divergent copy of the SQLite grammar |
 | `assistx_answers_store_cursor_drops_ties` | `bug_fix` | patch | a keyset cursor that silently drops every answer sharing a millisecond |
+| `assistx_allocation_llm_capability_gate` | `code_review` | analysis | a capability gate that admits any node for `llm` tasks, and suppresses the diagnostic that would show it |
+| `auto_router_contract_shim_single_source` | `contract_reasoning` | analysis | a shim that advertises one source of truth and keeps a silent second definition, hollow trace types and a drifting version literal |
+| `auto_router_task_contract_keyword_precedence` | `test_generation` | patch | first-substring-match classification, so one incidental keyword decides a task's whole contract |
+| `auto_router_idempotency_connection_lifetime` | `small_refactor` | patch | a connection-lifetime guard repeated four times, one copy of which is load-bearing |
 
 ### Corpus shape
 
@@ -536,10 +549,41 @@ the same defect, five independent angles on it. That is deliberate — it isolat
 generalisation, so the corpus also carries defects from two further repositories
 that share no code, no author, and no bug class with the campaign:
 
-| | repositories | distinct source identities | families |
-|---|---|---|---|
-| campaign | 1 | 1 | 5 |
-| corpus | 3 | 4 | 5 |
+| | repositories | distinct source identities | families | families outside the campaign repo |
+|---|---|---|---|---|
+| campaign | 1 | 1 | 5 | 0 |
+| corpus | 3 | 9 | 5 | 5 |
+
+Read that last column before drawing a conclusion from "five families". Bug
+diversity and *task-type* diversity are different things, and only the first is
+currently broad:
+
+| deliverable | repositories |
+|---|---|
+| `patch` | auto-assist, auto-ingest, auto-router |
+| `analysis` | auto-assist, auto-ingest, auto-router |
+
+Both deliverable types now span all three repositories, so neither "writes patches"
+nor "reviews" is measured on one codebase. Four of the five families —
+`bug_fix`, `code_review`, `contract_reasoning` and `test_generation` — reach outside
+the campaign.
+
+Every family now reaches outside the campaign repository, and both deliverable
+types span all three repositories. What is *not* yet claimed: the corpus is eleven
+fixtures over nine source identities, so several defects still sit in a file that
+another fixture already uses, and no family has more than two fixtures. A model can
+still do well by pattern-matching one repository's shape.
+
+One deliberate exception to the "different defect" rule:
+`auto_router_task_contract_keyword_precedence` shares its source identity with
+`auto_router_task_contract_lane_mismatch`. They encode different defects in the
+same file, and the capability under test is different enough to justify it — one
+asks for a repair, the other for the test that would have caught a different bug.
+Sharing a file is not sharing a task, and `test_a_campaign_is_diverse_in_family_and_defect`
+enforces exactly that.
+
+`test_realtask_corpus.py` derives these figures from the fixtures and fails if the
+tables drift, so neither the coverage nor its absence can go stale quietly.
 
 `test_realtask_corpus.py` enforces that shape rather than assuming it: it fails
 if the corpus collapses onto a single source identity, if two fixtures sharing a
@@ -944,6 +988,157 @@ looks like the ceiling being raisable. It isn't — `clamp()` has to be called, 
 runner is what calls it. The bug was in the probe. Worth recording, because the
 instinct on finding a defect is to report the anomaly, and the discipline is to
 check whether the anomaly is real before writing it down.
+
+### Who produced the candidate
+
+`--scout-file` recorded where a recorded scout came from. `--patch-file` recorded
+nothing at all, so an attempt a human solved by hand and an attempt a model solved
+were indistinguishable in `metrics.json`, `comparison.json` and the roll-up.
+
+That is not hypothetical. A live `--stage review` run with a hand-written reference
+patch scored targeted 1/1 and broader 1/1. Pooled into a roll-up, that is a
+benchmark score nobody earned.
+
+`AttemptMetrics.candidate_source` is now `model` or `operator_patch_file`, stamped
+the moment the attempt exists and reported in all three artifacts. It sits on the
+attempt rather than on `PatchMetric` because `PatchMetric` fields are copied by hand
+in `_merge_review` — which is exactly where `safety_ok` and `safety_reason` once
+went missing. Attempt-level placement makes it immune to that class of bug.
+
+The manifest records the operator's file path, its SHA-256 and its length. Hashed,
+not merely named: a path can be rewritten between runs, so the record has to
+identify *which* candidate was judged.
+
+This is the third hand-maintained field list in this harness to drop a field on the
+floor — after the best-single ranking table and `_merge_review` — and the roll-up's
+`_ATTEMPT_FIELDS` was the one that surfaced it here. The pattern is consistent
+enough to be worth naming: **a list of names someone typed is a place for a field to
+go missing, and nothing about it looks wrong when it does.**
+
+### One sample is not a measurement
+
+The comparison artifact declared that one *task* is not evidence that role
+separation helps. It said nothing about one *sample* — which is the easier mistake,
+because a single swarm run against a single single run produces a delta that reads
+like a result and is indistinguishable from noise.
+
+It also could not have done otherwise. `--single-attempts` existed; there was no
+way to repeat a swarm. So **every** single-vs-swarm comparison this harness
+produced was structurally n=1 on the interesting side, and nothing in the artifact
+said so. The question the artifact invites — is the difference the strategy, or the
+run? — was unanswerable by construction.
+
+`--swarm-attempts` now exists, both sides report their `sample_sizes`, and:
+
+- a single sample on either side is named as a single observation
+- the swarm side is always described as one sample, because role separation is
+  nondeterministic (scout wording, reviewer verdict), so a per-attempt difference is
+  confounded with run-to-run variation — and that is stated as surviving replication,
+  not solved by it
+- the roll-up records `attempts_per_task` and says when every pooled task
+  contributed one attempt, since one run per cell pooled and totalled reads like a
+  population
+
+The honest limit: replication makes variance *observable*. It does not make one
+task generalisable, and the artifact does not claim it does.
+
+### The second defect class the graders have faced
+
+`assistx_allocation_llm_capability_gate` is a `code_review` fixture on
+`auto-assist`, and it exists to give the analysis graders a defect they had never
+been pointed at. `allocation_engine.py` ranks task/node/model placements and is
+supposed to refuse a node that cannot serve a task:
+
+```python
+if required and not required.issubset(capabilities | {"llm"}):
+```
+
+The union adds `llm` to every node's advertised capabilities *before* the subset
+test, so any node satisfies an `llm` requirement regardless of what it reports. The
+exemption is applied a second time when the rejection is built
+(`missing_capabilities = required - capabilities - {"llm"}`), so the `rejected`
+list stays empty too. Confirmed against the frozen source: a node advertising
+**no capabilities at all** is recommended for an `llm` task, with evidence
+identical to a node that genuinely advertises `llm`.
+
+That is why it is worth having as a *review* task. It is not a missing constant;
+it is a contract that is unenforceable for exactly one of its terms, plus the
+diagnostic that would have revealed it. The obvious wrong answer — naming the gate
+without the diagnostic — is exactly the trap `known_regression` names.
+
+Its grader carries the identical hardening block as the other two, which
+`DerivedArtifactTests` now checks against **every** analysis fixture rather than a
+hardcoded pair, so a fourth grader cannot join without joining that check. The
+reference answer passes; a keyword dump built from the grader's own
+`REQUIRED_FINDINGS`, the same answer scattered one trigger per sentence, and an
+empty answer are all rejected.
+
+### A contract that is kept on one path out of two
+
+`auto_router_contract_shim_single_source` is a `contract_reasoning` fixture on
+`auto-router`, and it exists because the module *documents* its own contract
+thoroughly and then keeps it on only one of its two paths.
+
+The module says it re-exports the canonical `assistx.contracts` types "so every
+repo emits the single source-of-truth envelope", and falls back to local mirrors
+when the package is importable. The fallback is where the contract stops holding,
+in three verified ways:
+
+- `TraceEvent` and `TraceGroup` become classes whose bodies are `pass`. A consumer
+  can import either name and **instantiate it successfully**, receiving an object
+  that carries no data — so the loss surfaces later, when something reads an
+  attribute, far from the import that dropped it. The fixture's reference answer
+  states it that way rather than the softer "fails at use", because the softer
+  version is wrong.
+- `SCHEMA_VERSION` stops being the canonical constant and becomes a hardcoded
+  literal that can drift, with nothing comparing the two.
+- `_USING_CANONICAL` — the one flag recording which path was taken — is assigned in
+  both branches, exported in `__all__`, and read by nothing in the repository.
+
+That last one is why `known_regression` tells the candidate not to treat the flag's
+existence as detectability. It is the same shape as the campaign's silent
+truncation: the module knows, and nobody looks.
+
+`pydantic` and `assistx` are recorded in `UNREACHABLE_DEPENDENCIES` rather than
+stubbed: an analysis deliverable judges the answer text, so the snapshot is never
+imported. That is the reason stated, not a blanket exemption.
+
+### A refactor whose "cleanup" is the bug
+
+`auto_router_idempotency_connection_lifetime` is the fixture that makes
+`small_refactor` a measurement rather than a style preference.
+
+The task is ordinary: four copies of a connection-lifetime guard should become
+one helper. What makes it worth freezing is that the guard is *load-bearing*.
+`_connect` hands back a single shared connection for `:memory:`, so
+`if not self.in_memory` is the only reason an in-memory ledger survives its first
+operation. A refactor that tidies it to a plain `finally: conn.close()` removes
+four lines, passes every structural assertion in the oracle, and then raises
+`sqlite3.ProgrammingError: Cannot operate on a closed database` on every call
+after the first.
+
+So the oracle asserts both halves, and the behavioural half is not decorative: it
+drives twelve reserve/get/transition cycles through one in-memory ledger. Validated
+in four states before shipping —
+
+| state | outcome |
+|---|---|
+| unmodified | 3 structural failures, 9 behavioural passes |
+| reference helper | 12 passed |
+| guard tidied away | 7 failures |
+
+A second trap is pinned for the same reason. `_database_path` keeps a leading
+slash, so `sqlite:///ledger.sqlite3` resolves to the absolute path
+`/ledger.sqlite3`. That reads as a bug, and a refactor gathering the connection
+setup would be tempted to normalise it — which changes where the ledger is
+written. The oracle pins the current parsing, quirks included, so normalising it
+fails.
+
+One methodological note, recorded because I got it wrong first: the structural
+check is a regex matching a *guarded* close, not a count of
+`if not self.in_memory`. `__init__` also branches on `in_memory`, to create the
+parent directory. A bare substring count would have flagged that legitimate second
+use and made the fixture unsatisfiable by a correct answer.
 
 ## 12. Tests
 

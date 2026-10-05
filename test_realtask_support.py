@@ -183,6 +183,13 @@ def seal_quietly(root: Path) -> None:
     load_task(Path(root) / "task.json")
 
 
+#: The candidate-authored regression test for the ``test_generation``
+#: fixture on ``auto_router/task_contract.py``. It is stored here so the
+#: reference diff can be regenerated from one place, exactly as the
+#: campaign oracle test is.
+CONTRACT_KEYWORD_PRECEDENCE_TEST = '"""Regression test for keyword-precedence misclassification in task_contract.\n\nauto_router/task_contract.py resolves a task\'s kind by scanning a fixed keyword map\nand returning on the *first* substring match. The map lists ``analysis`` before\n``code``, and ``analysis`` matches the bare word ``review``. So a request to\nreview a handler and add a regression test -- unambiguously code work -- is\nclassified ``analysis``, which flips ``task_evidence_required`` to True and hands\nthe task the analysis plan instead of the code plan.\n\nThe same request without the word "review" is classified ``code``. That is the\ndefect: one incidental keyword decides the entire contract.\n"""\nfrom auto_router.task_contract import normalize_task_kind, task_evidence_required\n\n\ndef test_incidental_review_word_does_not_reclassify_a_code_task():\n    """Adding a regression test is code work even when the text says "review"."""\n    payload = {"task": "review the failing handler and add a regression test"}\n    assert normalize_task_kind(payload) == "code"\n\n\ndef test_code_task_mentioning_review_is_not_marked_evidence_required():\n    """The misclassification must not leak into the rest of the contract."""\n    payload = {"task": "review the failing handler and add a regression test"}\n    assert task_evidence_required(payload) is False\n\n\ndef test_classification_does_not_depend_on_an_incidental_keyword():\n    """Same task, two phrasings: an incidental word must not change the kind."""\n    with_review = {"task": "review the failing handler and add a regression test"}\n    without_review = {"task": "add a regression test for the failing handler"}\n    assert normalize_task_kind(with_review) == normalize_task_kind(without_review) == "code"\n'
+
+
 def new_file_patch(rel: str, body: str) -> str:
     """Build a well-formed 'new file' unified diff for ``rel``."""
     lines = body.splitlines(keepends=True)

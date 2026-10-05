@@ -1,0 +1,61 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_router/request_idempotency.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "${WORKTREE}/_realtask_tests/test_connection_lifetime_refactor.py"
+      ]
+    ]
+  },
+  "constraints": [
+    "The connection must be acquired and released in one place, not four.",
+    "The refactor must not change behaviour: same ledger semantics, same on-disk paths, same public API.",
+    "Do not fix unrelated defects you encounter. A behaviour change is a failure, not a bonus.",
+    "Do not add a dependency, and do not change the ledger's SQL.",
+    "If you believe a second defect exists, report it in your notes instead of repairing it."
+  ],
+  "deliverable": "patch",
+  "fixture_version": 1,
+  "known_regression": "The obvious refactor also 'tidies' the close guard. `finally: if not self.in_memory: conn.close()` looks redundant next to a single helper, so it gets simplified to `finally: conn.close()`. That satisfies every structural assertion and breaks the in-memory ledger: _connect returns one shared connection for :memory:, so after the first operation every later call raises sqlite3.ProgrammingError. The acceptance suite therefore drives twelve reserve/get/transition cycles through one in-memory ledger.\n\nThe second trap is the url parser. `sqlite:///ledger.sqlite3` resolves to the absolute path /ledger.sqlite3, because _database_path keeps the leading slash. A refactor that gathers the connection setup would be tempted to normalise that, which silently changes where the ledger is written. The suite pins the current parsing, quirks included, so normalising it fails.\n\nThe third is only moving the repetition: extracting a helper but leaving the four call sites spelling out their own acquire/close, which is rejected by the one-place assertions.",
+  "problem": "auto_router/request_idempotency.py opens a SQLite connection and owns its lifetime in four places -- _init_db, reserve, get and transition -- each spelling out the same acquire / commit-or-rollback / close shape, and three of them also open their own BEGIN IMMEDIATE transaction. Introduce a single helper that owns the connection and its lifetime, and route all four through it.\n\nThis is a behaviour-preserving refactor. Every public name keeps its signature and semantics, the ledger keeps writing to exactly the same paths, and no state transition changes meaning. Do not fix anything you notice while you are in there: if you find a second defect, leave it exactly as you found it and say so in your notes.",
+  "prompt_source_files": [
+    "auto_router/request_idempotency.py"
+  ],
+  "relevant_source_files": [
+    "auto_router/request_idempotency.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_router/request_idempotency.py",
+        "sha256": "012e937ea59983ae9ec35506baa7a5301f81e2d2489a94a31de1cfacc3b1433e",
+        "size_bytes": 15009
+      },
+      {
+        "path": "auto_router/settings.py",
+        "sha256": "46f51b2abafc175aa79a978cf6f9ea301c58ea5527812e85cfb56dd4b0287f7d",
+        "size_bytes": 7096
+      }
+    ],
+    "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+    "manifest_sha256": "69abbbb6efc3f040b15d6124c33e034fc3c7f0d00a996c4af851390f0f5652c5",
+    "repository": "scottjoyner/auto-router",
+    "writable_prefixes": []
+  },
+  "task_family": "small_refactor",
+  "task_id": "auto_router_idempotency_connection_lifetime",
+  "title": "four copies of a connection-lifetime guard, one of them load-bearing"
+}

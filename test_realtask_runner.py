@@ -323,22 +323,53 @@ class OverheadAccountingTests(HarnessTestCase):
         self.addCleanup(runner.close)
         return runner.run_task(self.task(task_id), stages).attempts[0].metrics
 
-    def test_a_slow_model_is_not_billed_to_the_harness(self):
+    #: Cached (added_model, added_overhead) from one fast and one slow run.
+    _differential = None
+
+    def overhead_differential(self):
+        """How much overhead the harness reports when the model gets slower.
+
+        The invariant is a *difference*, not a threshold: whatever genuine
+        harness work costs on this machine -- running the campaign oracle is
+        seconds of pytest, and more when the box is busy -- it should cost the
+        same whether or not the model was slow. Only the delta can be asserted
+        tightly.
+
+        The earlier version of these tests compared ``harness_overhead_s``
+        against a fixed 3.0s of simulated model latency. That passed on an idle
+        machine and failed under load, because real harness work had grown past
+        3s. A test whose verdict depends on how busy the host is is the same
+        defect ``UndeclaredDependencyTests`` was written to prevent, so it is
+        fixed here rather than papered over with a bigger constant.
+        """
         from test_realtask_support import AUTO_INGEST_BUG_FIX, patch_reply
 
-        # The live symptom was harness_overhead_s == model_wall_s. Make the
-        # model slow enough that genuine harness work (~1.7s of pytest) cannot
-        # be mistaken for it.
-        slow = self.run_with_latency(
-            3.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+        if OverheadAccountingTests._differential is None:
+            fast = self.run_with_latency(
+                0.2, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+            )
+            slow = self.run_with_latency(
+                5.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+            )
+            OverheadAccountingTests._differential = (
+                slow.model_wall_s - fast.model_wall_s,
+                slow.harness_overhead_s - fast.harness_overhead_s,
+            )
+        return OverheadAccountingTests._differential
+
+    def test_a_slow_model_is_not_billed_to_the_harness(self):
+        added_model, added_overhead = self.overhead_differential()
+        self.assertGreater(
+            added_model, 3.0,
+            "the slow run was not actually slower by {}s; the fixture cannot "
+            "be measuring what it claims".format(added_model),
         )
-        self.assertGreaterEqual(slow.model_wall_s, 2.5)
         self.assertLess(
-            slow.harness_overhead_s, slow.model_wall_s,
-            "harness overhead {} is not less than the {}s the model spent; "
+            added_overhead, 0.5,
+            "adding {:.1f}s of model time added {:.1f}s of harness overhead; "
             "the window around _call is billing model time to the harness, "
             "exactly as the first live run showed".format(
-                slow.harness_overhead_s, slow.model_wall_s
+                added_model, added_overhead
             ),
         )
 
@@ -354,15 +385,15 @@ class OverheadAccountingTests(HarnessTestCase):
             places=3,
         )
         # With the model time removed from overhead, total is model + genuine
-        # harness work. Before the fix it was very close to 2x the model time.
+        # harness work. Before the fix it was very close to 2x the model time,
+        # so the leftover tracks model latency. Stated as a difference rather
+        # than a ratio: see overhead_differential for why an absolute threshold
+        # here would depend on how loaded the host is.
+        _added_model, added_overhead = self.overhead_differential()
         self.assertLess(
-            metrics.total_wall_s - metrics.model_wall_s,
-            metrics.model_wall_s,
-            "total_wall_s minus model_wall_s is {} while the model took {}; "
-            "the model's time is being counted twice".format(
-                metrics.total_wall_s - metrics.model_wall_s,
-                metrics.model_wall_s,
-            ),
+            added_overhead, 0.5,
+            "total_wall_s minus model_wall_s grows with model latency, so the "
+            "model's time is being counted twice",
         )
 
     def test_a_swarm_charges_each_role_call_once(self):
@@ -1427,6 +1458,143 @@ class EvidenceRootInsideCheckoutTests(HarnessTestCase):
                 worktree.root.resolve().parents,
                 "an evaluation worktree was created inside the checkout",
             )
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CandidateProvenanceTests(HarnessTestCase):
+    """An operator's patch must never read as a model's result.
+
+    ``--scout-file`` records where a recorded scout came from. ``--patch-file``
+    recorded nothing at all, so an attempt a human solved by hand and an attempt a
+    model solved were indistinguishable in ``metrics.json``, ``comparison.json``
+    and the roll-up.
+
+    That is not hypothetical: a live ``--stage review`` run with a hand-written
+    reference patch scored targeted 1/1 and broader 1/1. Pooled, that is a
+    benchmark score nobody earned.
+    """
+
+    def operator_run(self):
+        from test_realtask_support import (
+            AUTO_INGEST_BUG_FIX, REFERENCE_REPAIR, ScriptedResponse,
+        )
+
+        return self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [ScriptedResponse(content="```diff\n" + REFERENCE_REPAIR + "\n```")],
+            ["review"],
+            patch_override=REFERENCE_REPAIR,
+        )
+
+    def test_an_operator_candidate_is_marked_as_such(self):
+        _task, result = self.operator_run()
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.candidate_source, "operator_patch_file")
+
+    def test_the_marker_survives_into_the_written_artifact(self):
+        _task, result = self.operator_run()
+        self.assertEqual(
+            result.attempts[0].metrics.to_dict()["candidate_source"],
+            "operator_patch_file",
+        )
+
+    def test_a_model_candidate_is_marked_as_the_model_s(self):
+        _task, result = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.candidate_source, "model")
+        self.assertEqual(metrics.to_dict()["candidate_source"], "model")
+
+    def test_the_attempt_says_it_says_nothing_about_the_model(self):
+        _task, result = self.operator_run()
+        joined = " ".join(result.attempts[0].metrics.notes)
+        self.assertIn("--patch-file", joined)
+        self.assertIn("says nothing about model ability", joined)
+
+    def test_the_marker_survives_the_review_merge_path(self):
+        """The review path is where a hand-maintained merge list lost fields once."""
+        from test_realtask_support import ScriptedResponse
+
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [ScriptedResponse(content="```diff\n" + REFERENCE_REPAIR + "\n```")],
+            ["review"],
+            patch_override=REFERENCE_REPAIR,
+        )
+        for attempt in result.attempts:
+            self.assertEqual(
+                attempt.metrics.candidate_source, "operator_patch_file",
+                "{} lost its candidate provenance".format(attempt.attempt_id),
+            )
+
+    def test_no_attempt_reaches_the_artifact_without_an_origin(self):
+        for stage in ("single", "swarm", "scout", "implement"):
+            with self.subTest(stage=stage):
+                responses = {
+                    "single": [patch_reply()],
+                    "swarm": [scout_reply(), patch_reply(), review_reply("accept")],
+                    "scout": [scout_reply()],
+                    "implement": [patch_reply()],
+                }[stage]
+                _task, result = self.run_stages(
+                    AUTO_INGEST_BUG_FIX, responses, [stage]
+                )
+                for attempt in result.attempts:
+                    self.assertIn(
+                        attempt.metrics.to_dict().get("candidate_source"),
+                        ("model", "operator_patch_file"),
+                    )
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class ReplicationTests(HarnessTestCase):
+    """A comparison of one sample against one sample is not a measurement.
+
+    The artifact already said one *task* is not evidence that role separation
+    helps. It said nothing about one *sample* -- and the swarm side could not even
+    be repeated, so every single-vs-swarm comparison this harness produced was
+    structurally n=1 on the interesting side. The difference between "role
+    separation helped" and "that run went better" is unobservable at n=1.
+    """
+
+    def test_the_swarm_side_can_be_repeated(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [scout_reply(), patch_reply(), review_reply("accept")] * 2,
+            ["swarm"],
+            swarm_attempts=2,
+        )
+        swarm = [a for a in result.attempts if a.metrics.strategy == "swarm"]
+        self.assertEqual(len(swarm), 2)
+        self.assertEqual(
+            [a.attempt_id for a in swarm],
+            [AUTO_INGEST_BUG_FIX + "::swarm", AUTO_INGEST_BUG_FIX + "::swarm#2"],
+            "repeated attempts must be individually addressable",
+        )
+
+    def test_one_swarm_by_default(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [scout_reply(), patch_reply(), review_reply("accept")],
+            ["swarm"],
+        )
+        self.assertEqual(
+            len([a for a in result.attempts if a.metrics.strategy == "swarm"]), 1
+        )
+
+    def test_single_attempts_still_work(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply(), patch_reply()], ["single"],
+            single_attempts=2,
+        )
+        self.assertEqual(
+            len([a for a in result.attempts if a.metrics.strategy == "single"]), 2
+        )
 
 
 if __name__ == "__main__":
