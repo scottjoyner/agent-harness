@@ -1008,12 +1008,56 @@ rewarding stuffed keywords, inverted: instead of counting words, they now requir
 particular ones. The harness measures word choice rather than comprehension, and on
 its first real model answer that distinction cost two findings.
 
-This is an open defect in the benchmark, recorded here rather than quietly fixed,
-because the fix trades recall against the anti-stuffing property and that trade is
-worth making deliberately. `LeaveOneOutFindingTests` covers only half the problem —
-it shows a finding is not decoration, not that it is hard to satisfy — so widening a
-vocabulary list is invisible to it. Widening these three lists and re-running
-`MemorisationTests` is the obvious next step; it has not been done yet.
+#### The fix, and what it cost
+
+The principle applied was narrow on purpose: **widen consequence vocabulary, never
+construct anchors.** A finding names a construct — `TraceEvent`, `SCHEMA_VERSION`,
+`_USING_CANONICAL` — and a paraphrase must still name it. What may vary is how the
+*consequence* is described, because English has many ways to say "this fails later
+than import". So:
+
+- *"identifies the silent ImportError fallback as a second definition"* now anchors on
+  `fallback` rather than the literal `importerror`. The model wrote "falling back to
+  local mirrors … a divergent local implementation", which is the same fact.
+- *"notes the failure surfaces at use rather than at import"* gained `late runtime`,
+  `runtime failure`, `not observable at import`, `invisible at import`,
+  `not detectable at import`, `no error at import`, `at instantiation`. The model
+  wrote "cause late runtime failures … not observable at import time" — which says
+  it better than the reference answer does.
+
+That answer now scores **5 of 6**. The remaining failure is genuine and was left
+alone: the model treated `_USING_CANONICAL` as something a consumer could inspect
+and never noticed that nothing does.
+
+Widening vocabulary is exactly the change that trades recall against the
+anti-stuffing property, so it was checked rather than assumed:
+
+| check | result |
+|---|---|
+| keyword dump of every finding's vocabulary | rejected |
+| the same words scattered as prose | rejected |
+| a bare list of the **newly added** phrases | rejected |
+| empty object `{}` | rejected |
+| reference answer | still passes, 0 failed |
+| leave-one-out on the reference answer | still 0 leaks |
+| leave-one-out on the real model answer | every finding still fails when its evidence is removed |
+
+The third row is the one that matters. An answer consisting *only* of the phrases
+added by this change is still rejected, because a finding has to be carried by a
+single clause rather than present in the text.
+
+**The real answer is kept, not summarised.** It is tracked at
+`test_realtask_paraphrase_contract_shim.json`, and `ParaphraseAnswerTests` pins its
+exact score rather than asserting it passes — including the finding it genuinely
+misses. So a future edit that re-narrows the vocabulary fails a test instead of
+quietly costing two findings again; that was verified by reverting the widening and
+watching all three assertions fail.
+
+Two honest limits. The model's answer is stored verbatim from a live run, so it is
+one model's phrasing, not a survey of how models say things. And only this fixture's
+grader was corrected, because it is the only one with a real graded answer to
+correct it against: the other three analysis graders still anchor on required tokens
+and could reject a paraphrase the same way. That is a known risk, not a cleared one.
 
 ### The second candidate must not inherit the first one's safety verdict
 

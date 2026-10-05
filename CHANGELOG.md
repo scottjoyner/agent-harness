@@ -21,9 +21,16 @@
   grader demanded the literal token `importerror`, and "cause late runtime failures
   ... not observable at import time" where it accepted only `at use` / `later` /
   `downstream` / `deferred`. Hardening the graders against keyword stuffing made them
-  lexically brittle, so they now reject correct paraphrases. Recorded in the docs as
-  an open defect rather than quietly fixed, because widening the vocabulary trades
-  recall against the anti-stuffing property.
+  lexically brittle, so they now reject correct paraphrases.
+
+  **Fixed**, by widening consequence vocabulary while keeping construct anchors
+  strict: a paraphrase must still name `TraceEvent` or `_USING_CANONICAL`, but may
+  describe the consequence in its own words. The model's answer now scores 5 of 6
+  instead of 3, and the sixth is a genuine miss that was left failing. Precision was
+  verified rather than assumed -- a bare list of the newly added phrases is still
+  rejected, and leave-one-out still fails on both the reference answer and the real
+  one. The model's answer is tracked verbatim with its exact score pinned, so
+  re-narrowing the vocabulary fails a test instead of quietly costing two findings.
 
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
