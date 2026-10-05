@@ -43,6 +43,16 @@
   reasoning model spending its entire token budget without emitting content. Both
   are fixed and detailed in #7.
 
+- **The patch half of the corpus measured, and found out of reach.** Eight of the
+  twelve fixtures need a unified diff and none had been attempted by a real model.
+  The smallest, `auto_router_task_contract_lane_mismatch`, was tried with the 30B
+  model: `TRUNCATED` at 8k tokens, then at 20k a four-hunk diff that
+  `extract_patch` recovered but `patch` refused — its blank context lines carry no
+  leading space, and `@@ -3,6 +3,12 @@` claims 6 old / 12 new where the hunk holds 3
+  and 5. So the model cannot count its own hunk lines. Consistent with the 0.8B/3B
+  models emitting whole files, for a different reason. Recorded as a model property,
+  not a harness defect, and not worked around.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four

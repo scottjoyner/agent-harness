@@ -1043,6 +1043,46 @@ An in-band stream error and a reasoning model that never emits content were each
 mapped onto the nearest available wrong answer, and an operator would have gone
 looking for a model problem in both cases.
 
+#### The patch half is still unmeasured — and now known to be out of reach
+
+Eight of the twelve fixtures need a unified diff. None has been attempted by a real
+model until now. `auto_router_task_contract_lane_mismatch`, the smallest of them,
+was tried twice with the 30B model.
+
+At `--max-tokens 8192` it reported `TRUNCATED` after 336s, having consumed 10,468
+tokens without emitting anything — the accuracy of that label being the fix from
+#7, exercised on a real run.
+
+At `--max-tokens 20000` it produced a `patch` field containing four `@@` hunks with
+plausible added lines. `extract_patch` recovered it via `bare_unified_diff`, the
+evidence recorded the strategy, and then the patch **failed to apply**:
+
+```
+apply_reason: patch is not a well-formed unified diff
+```
+
+Two concrete defects in the emitted diff, both checked rather than assumed:
+
+- **Blank context lines carry no leading space.** Lines 4, 6 and 7 are `""` where a
+  context line must begin with a space.
+- **The hunk header miscounts its own lines.** `@@ -3,6 +3,12 @@` claims 6 old and
+  12 new; the hunk actually contains 3 context and 5 added lines.
+
+So `INVALID_PATCH` was the correct outcome, and `git apply`/`patch` agree. This is
+not the pedantry of demanding a `diff --git` header — the harness accepted the
+headerless form and still rejected the content.
+
+That makes the picture consistent across three model sizes, for different reasons:
+the 0.8B and 3B models emitted whole files where a diff belonged, and a 30B
+reasoning model emits diffs whose line counts it cannot get right. **No locally
+available model can produce an applicable unified diff.**
+
+This is a property of the models, not a defect in the harness, and it is worth
+stating plainly rather than working around: counting hunk lines is a real skill, and
+a benchmark that asks for it is asking for something. The harness's part is to
+record the refusal accurately, and it does — `extracted: True`,
+`extraction_strategy: bare_unified_diff`, `applied: False`, with the reason.
+
 #### The fix, and what it cost
 
 The principle applied was narrow on purpose: **widen consequence vocabulary, never
