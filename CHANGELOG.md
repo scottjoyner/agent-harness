@@ -2,7 +2,34 @@
 
 ## Unreleased
 
+### Added
+
+- **`assistx_allocation_llm_capability_gate`** — a `code_review` fixture on
+  `auto-assist`, closing the disclosed gap that every `analysis` fixture came from
+  the campaign repository. `allocation_engine.py` ranks task/node/model placements
+  and admits a node when `required.issubset(capabilities | {"llm"})` — the union
+  grants `llm` before the subset test, so any node satisfies an `llm`
+  requirement. The rejection path applies the same exemption
+  (`required - capabilities - {"llm"}`), so the `rejected` list stays empty as
+  well. Confirmed against the frozen source: a node advertising no capabilities at
+  all is recommended for an `llm` task, with evidence identical to a node that
+  genuinely advertises it.
+
+  Chosen because it is a different defect class from the other eight — an
+  unenforceable admission contract rather than a lifecycle ordering, a path
+  derivation, or a keyset cursor — which is the point of adding it. Its grader
+  carries the identical hardening block as the other two, and
+  `DerivedArtifactTests` now checks that against every analysis fixture instead of
+  a hardcoded pair, so a fourth grader cannot join without joining the check.
+
 ### Fixed
+
+- **The corpus-shape disclosure guards could not tell a new fixture from a stale
+  table.** They asserted a literal table row, which hardcoded the source-identity
+  count, so adding a fixture failed for the wrong reason. They now parse the row and
+  assert only the derived column — families outside the campaign repository — plus
+  that the stated family count matches the fixtures on disk. Verified by
+  overstating and understating each figure.
 
 - **Every single-vs-swarm comparison this harness produced was structurally n=1.**
   `--single-attempts` existed; the swarm side could not be repeated at all. So the

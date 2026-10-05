@@ -1,0 +1,20 @@
+{
+  "capture_note": "Bounded snapshot of the files this fixture binds. Produced by reading the named checkout; the fixture never depends on that checkout remaining available or unmodified.",
+  "captured_at": "2026-10-02T00:00:00Z",
+  "files": [
+    {
+      "path": "assistx/allocation_engine.py",
+      "sha256": "312f940b4369c4665d8487f33765f1779b5fc0f632f159abff8c6cf3fd8b10f5",
+      "size_bytes": 9001
+    },
+    {
+      "path": "assistx/kv_cache.py",
+      "sha256": "8c4826534230542c7fa50eb0ee23e444752d0f801a7749ae4eb73fac63ebade9",
+      "size_bytes": 11293
+    }
+  ],
+  "head": "e872ed64531d308af9a0e02ad3c813ee0671a7bf",
+  "repository": "scottjoyner/auto-assist",
+  "root_dir": "source",
+  "schema": "realtask.source_manifest.v1"
+}

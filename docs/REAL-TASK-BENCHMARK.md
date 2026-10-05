@@ -536,6 +536,7 @@ Same stance as `comparison.json`:
 | `auto_router_task_contract_lane_mismatch` | `bug_fix` | patch | a plan lane whose tools were never registered, so it can never be routed |
 | `auto_router_settings_latency_cache_path` | `bug_fix` | patch | the latency cache path derived by a second, divergent copy of the SQLite grammar |
 | `assistx_answers_store_cursor_drops_ties` | `bug_fix` | patch | a keyset cursor that silently drops every answer sharing a millisecond |
+| `assistx_allocation_llm_capability_gate` | `code_review` | analysis | a capability gate that admits any node for `llm` tasks, and suppresses the diagnostic that would show it |
 
 ### Corpus shape
 
@@ -548,7 +549,7 @@ that share no code, no author, and no bug class with the campaign:
 | | repositories | distinct source identities | families | families outside the campaign repo |
 |---|---|---|---|---|
 | campaign | 1 | 1 | 5 | 0 |
-| corpus | 3 | 4 | 5 | 1 |
+| corpus | 3 | 5 | 5 | 2 |
 
 Read that last column before drawing a conclusion from "five families". Bug
 diversity and *task-type* diversity are different things, and only the first is
@@ -557,19 +558,20 @@ currently broad:
 | deliverable | repositories |
 |---|---|
 | `patch` | auto-assist, auto-ingest, auto-router |
-| `analysis` | auto-ingest only |
+| `analysis` | auto-assist, auto-ingest |
 
-Every fixture whose deliverable is `analysis` — both `code_review` and
-`contract_reasoning` — comes from the campaign repository, as do `small_refactor`
-and `test_generation`. So a model that is excellent at writing patches and poor at
-reviewing cannot be distinguished by this corpus, and the hardened analysis graders
-have only ever been pointed at one defect.
+Both deliverable types now span more than one repository, so a model that is
+excellent at writing patches and poor at reviewing is at least distinguishable.
+`code_review` is the family that reaches outside the campaign.
 
-That is a known gap, stated here rather than left for a reader to infer from a
-table of families. Closing it means an `analysis` fixture drawn from
-`auto-router` or `auto-assist`, which also subjects the graders to a second defect
-class. `test_realtask_corpus.py` enforces the disclosure below, so the gap cannot
-quietly stop being true while the table still implies it is.
+The remaining asymmetry, stated rather than left for a reader to infer from a count
+of families: `contract_reasoning`, `small_refactor` and `test_generation` are still
+confined to the campaign repository and its single defect. So a model weak at
+contract reasoning, at refactoring, or at writing tests is still measured on one
+codebase only.
+
+`test_realtask_corpus.py` derives both figures from the fixtures and fails if these
+tables drift, so neither the coverage nor its absence can go stale quietly.
 
 `test_realtask_corpus.py` enforces that shape rather than assuming it: it fails
 if the corpus collapses onto a single source identity, if two fixtures sharing a
@@ -1027,6 +1029,37 @@ run? — was unanswerable by construction.
 
 The honest limit: replication makes variance *observable*. It does not make one
 task generalisable, and the artifact does not claim it does.
+
+### The second defect class the graders have faced
+
+`assistx_allocation_llm_capability_gate` is a `code_review` fixture on
+`auto-assist`, and it exists to give the analysis graders a defect they had never
+been pointed at. `allocation_engine.py` ranks task/node/model placements and is
+supposed to refuse a node that cannot serve a task:
+
+```python
+if required and not required.issubset(capabilities | {"llm"}):
+```
+
+The union adds `llm` to every node's advertised capabilities *before* the subset
+test, so any node satisfies an `llm` requirement regardless of what it reports. The
+exemption is applied a second time when the rejection is built
+(`missing_capabilities = required - capabilities - {"llm"}`), so the `rejected`
+list stays empty too. Confirmed against the frozen source: a node advertising
+**no capabilities at all** is recommended for an `llm` task, with evidence
+identical to a node that genuinely advertises `llm`.
+
+That is why it is worth having as a *review* task. It is not a missing constant;
+it is a contract that is unenforceable for exactly one of its terms, plus the
+diagnostic that would have revealed it. The obvious wrong answer — naming the gate
+without the diagnostic — is exactly the trap `known_regression` names.
+
+Its grader carries the identical hardening block as the other two, which
+`DerivedArtifactTests` now checks against **every** analysis fixture rather than a
+hardcoded pair, so a fourth grader cannot join without joining that check. The
+reference answer passes; a keyword dump built from the grader's own
+`REQUIRED_FINDINGS`, the same answer scattered one trigger per sentence, and an
+empty answer are all rejected.
 
 ## 12. Tests
 

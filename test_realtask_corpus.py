@@ -47,6 +47,8 @@ REFERENCE_SOLUTIONS: Dict[str, str] = {
 REFERENCE_ANSWERS: Dict[str, str] = {
     "auto_ingest_shorts_plan_review": "test_realtask_reference_review.json",
     "auto_ingest_plan_shorts_contract": "test_realtask_reference_contract.json",
+    "assistx_allocation_llm_capability_gate":
+        "test_realtask_reference_allocation_review.json",
 }
 
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
@@ -882,8 +884,7 @@ class DerivedArtifactTests(unittest.TestCase):
         expected = _grader_hardening_block()
         self.assertIn("MAX_CLAUSE_KEYWORD_DENSITY", expected)
         self.assertIn("MIN_SUBSTANTIVE_TOKENS", expected)
-        for task_id in ("auto_ingest_shorts_plan_review",
-                        "auto_ingest_plan_shorts_contract"):
+        for task_id in ANALYSIS_TASKS:
             path = TASKS_ROOT / task_id / "tests" / "check_answer.py"
             with self.subTest(task=task_id):
                 text = path.read_text(encoding="utf-8")
@@ -1354,12 +1355,42 @@ class DeliverableCoverageDisclosureTests(unittest.TestCase):
                     "repository spread for the {!r} deliverable".format(deliverable),
                 )
 
+    def corpus_shape_row(self):
+        """The corpus row of the corpus-shape table, as a list of cells.
+
+        Parsed from the table rather than matched as a literal row: matching a
+        whole row meant hardcoding the source-identity count too, so adding a
+        fixture failed for the wrong reason.
+        """
+        match = re.search(
+            r"^\|\s*corpus\s*\|(.+?)\|\s*$", self.doc_text(), re.MULTILINE
+        )
+        self.assertIsNotNone(match, "the corpus-shape table has no corpus row")
+        return [cell.strip() for cell in match.group(1).split("|")]
+
     def test_the_document_states_the_actual_family_count_outside_the_campaign(self):
+        """Only the derived column is asserted: families outside the campaign.
+
+        That is the figure that quietly lies, because it is the one a reader
+        cannot check by counting fixtures.
+        """
         _by_deliverable, _by_family, _campaign, outside = self.coverage()
-        self.assertTrue(
-            "| corpus | 3 | 4 | 5 | {} |".format(len(outside)) in self.doc_flat(),
-            "the corpus-shape table must carry the true count of families "
+        cells = self.corpus_shape_row()
+        self.assertEqual(
+            cells[-1], str(len(outside)),
+            "the corpus-shape row must end with the true count of families "
             "outside the campaign repository (currently {})".format(outside),
+        )
+
+    def test_the_corpus_shape_row_lists_every_family_the_corpus_contains(self):
+        """A count of 5 is meaningless if the corpus holds a sixth."""
+        _bd, by_family, _campaign, _outside = self.coverage()
+        cells = self.corpus_shape_row()
+        self.assertEqual(
+            int(cells[2]), len(by_family),
+            "the corpus-shape row claims {} families; the corpus has {}".format(
+                cells[2], sorted(by_family)
+            ),
         )
 
     def test_the_analysis_gap_is_named_rather_than_implied(self):
@@ -1368,8 +1399,8 @@ class DeliverableCoverageDisclosureTests(unittest.TestCase):
         analysis = by_deliverable.get("analysis", set())
         if len(analysis) <= 1:
             for phrase in (
-                "only ever been pointed at one defect",
-                "excellent at writing patches and poor at reviewing",
+                "have only ever been pointed at one defect",
+                "confined to the campaign repository",
             ):
                 self.assertTrue(
                     phrase in self.doc_flat(),
