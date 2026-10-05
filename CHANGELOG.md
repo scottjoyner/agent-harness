@@ -50,8 +50,11 @@
   `extract_patch` recovered but `patch` refused — its blank context lines carry no
   leading space, and `@@ -3,6 +3,12 @@` claims 6 old / 12 new where the hunk holds 3
   and 5. So the model cannot count its own hunk lines. Consistent with the 0.8B/3B
-  models emitting whole files, for a different reason. Recorded as a model property,
-  not a harness defect, and not worked around.
+  models emitting whole files, for a different reason. Escalated to a 35B-A3B MoE,
+  the strongest model here that fits 34GB of VRAM: 741s and 12,000 tokens of
+  reasoning, nothing emitted. Four models from 0.8B to 35B now agree. Recorded as a
+  model property, not a harness defect, and not worked around. Also documents that
+  reasoning models need a far larger completion budget than a conventional default.
 
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
