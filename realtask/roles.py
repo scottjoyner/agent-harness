@@ -414,6 +414,7 @@ _TOOL_NAME = re.compile(r"""name\s*=\s*["']([A-Za-z_][\w.\-]{0,64})["']""")
 #: Which result class carries each role's payload. Used to ask whether a reply
 #: that *looks* like a tool call nevertheless delivered the deliverable.
 ROLE_RESULT_CLASS = {
+    Role.SINGLE: "ImplementerResult",
     Role.SCOUT: "ScoutResult",
     Role.IMPLEMENTER: "ImplementerResult",
     Role.REVIEWER: "ReviewerResult",
