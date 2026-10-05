@@ -4,6 +4,21 @@
 
 ### Added
 
+- **`auto_router_contract_shim_single_source`** — a `contract_reasoning` fixture on
+  `auto-router`. The module documents that it re-exports the canonical
+  `assistx.contracts` types "so every repo emits the single source-of-truth
+  envelope", and keeps that contract on only one of its two paths. In the
+  `except ImportError` fallback, `TraceEvent` and `TraceGroup` become classes whose
+  bodies are `pass` — importable and instantiable, but carrying no data, so the loss
+  surfaces when something reads an attribute rather than at import. `SCHEMA_VERSION`
+  becomes a hardcoded literal that can drift with nothing comparing it. And
+  `_USING_CANONICAL`, the flag recording which path was taken, is exported and read
+  by nothing in the repository.
+
+  Verified against the frozen source before the fixture was written. Chosen as a
+  different defect class again: a documented contract kept selectively, rather than
+  an unenforceable admission gate or a lifecycle ordering.
+
 - **`assistx_allocation_llm_capability_gate`** — a `code_review` fixture on
   `auto-assist`, closing the disclosed gap that every `analysis` fixture came from
   the campaign repository. `allocation_engine.py` ranks task/node/model placements

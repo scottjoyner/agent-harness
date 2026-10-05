@@ -1,0 +1,16 @@
+{
+  "root_cause": "contracts_shim.py advertises that every repo emits the single source of truth for the event envelope, and it honours that only on one of its two paths. When assistx.contracts is importable the module re-exports the canonical types, but the except ImportError branch defines its own local mirrors instead, and nothing at import time tells a consumer which definition it received. Three things break under that fallback. TraceEvent and TraceGroup become empty classes whose bodies are pass, so a consumer can import either name and instantiate it successfully, receiving an object that carries no data; the loss only surfaces later, when something reads an attribute and gets an AttributeError far from the import that dropped it. SCHEMA_VERSION stops being the canonical constant and becomes a hardcoded literal, which can drift out of step with the shared package because nothing compares the two. And _USING_CANONICAL, the one flag recording which path was taken, is assigned in both branches and exported in __all__, yet nothing reads it anywhere in the repository.",
+  "relevant_files": [
+    "auto_router/contracts_shim.py"
+  ],
+  "plan": [
+    "Make the fallback refuse to export rather than export hollow types, so a missing canonical package is loud at import instead of quietly lossy.",
+    "Derive the fallback schema version from the canonical package or assert it against it, so a copied literal cannot drift unnoticed.",
+    "Either consume _USING_CANONICAL at startup or delete it, since a flag nobody reads records nothing."
+  ],
+  "risks": [
+    "A hard failure on import would break standalone runs that currently degrade quietly, so the intent has to be decided before it is implemented.",
+    "If the mirrors are ever edited independently of the canonical package the two definitions will diverge in ways no test in this repository can see."
+  ],
+  "confidence": 0.9
+}

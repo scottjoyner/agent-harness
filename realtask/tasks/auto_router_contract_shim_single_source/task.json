@@ -1,0 +1,52 @@
+{
+  "acceptance": {
+    "allow_programs": [],
+    "broader": [],
+    "required_answer_contains": [],
+    "required_files_mentioned": [
+      "auto_router/contracts_shim.py"
+    ],
+    "targeted": [
+      [
+        "${PYTHON}",
+        "${WORKTREE}/_realtask_tests/check_answer.py",
+        "${ANSWER}"
+      ]
+    ]
+  },
+  "constraints": [
+    "State the advertised contract before listing the breaches; a list of complaints without the contract is not an answer.",
+    "Name the specific construct responsible for each breach, not just the area of the module.",
+    "For each breach, say what a consumer of the module would or would not be able to observe.",
+    "Do not propose deleting the fallback without addressing what standalone runs depend on it for.",
+    "Distinguish a defect from a design trade-off the module may have intended, and say which you are describing."
+  ],
+  "deliverable": "analysis",
+  "fixture_version": 1,
+  "known_regression": "The obvious answer stops at the fallback being a second definition, which is true and insufficient: it leaves the reader believing the mirrors are faithful copies. They are not, and the specific divergences are the finding. The second trap is proposing that the fallback be documented; the module already documents itself thoroughly, and the problem is that documentation cannot make a hollow type carry data. The third is treating the existence of _USING_CANONICAL as detectability, when a flag nobody reads records nothing.",
+  "problem": "auto_router/contracts_shim.py exists so that every repository emits the same event envelope: when the canonical assistx.contracts package is importable it re-exports the real types, and otherwise it falls back to local mirrors so standalone runs keep working.\n\nState the contract this module advertises, then identify every place where the code does not keep it and what a consumer cannot detect about it. Produce no patch and no diff. Name the exact file involved and give a short ordered plan of what a correct repair would require.",
+  "prompt_source_files": [
+    "auto_router/contracts_shim.py"
+  ],
+  "relevant_source_files": [
+    "auto_router/contracts_shim.py"
+  ],
+  "schema": "realtask.task.v1",
+  "schema_version": 1,
+  "source": {
+    "files": [
+      {
+        "path": "auto_router/contracts_shim.py",
+        "sha256": "24bddfce352f33fb2227613113f01abc4c2a8d446cfc18e94eb7596cd569a8e6",
+        "size_bytes": 3852
+      }
+    ],
+    "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+    "manifest_sha256": "662d49d1711e8a3e45d15db141c31a9178ed645d5efa3445afcf5c7360ad7555",
+    "repository": "scottjoyner/auto-router",
+    "writable_prefixes": []
+  },
+  "task_family": "contract_reasoning",
+  "task_id": "auto_router_contract_shim_single_source",
+  "title": "the shim's single-source-of-truth contract has a silent second definition"
+}

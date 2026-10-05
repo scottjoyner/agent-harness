@@ -49,6 +49,8 @@ REFERENCE_ANSWERS: Dict[str, str] = {
     "auto_ingest_plan_shorts_contract": "test_realtask_reference_contract.json",
     "assistx_allocation_llm_capability_gate":
         "test_realtask_reference_allocation_review.json",
+    "auto_router_contract_shim_single_source":
+        "test_realtask_reference_contract_shim.json",
 }
 
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
@@ -1135,6 +1137,12 @@ class UndeclaredDependencyTests(unittest.TestCase):
 #: nothing else, so they never execute ``_brand_check`` (Pillow) or the driver
 #: factory (neo4j).
 UNREACHABLE_DEPENDENCIES: Dict[str, Dict[str, str]] = {
+    "auto_router_contract_shim_single_source": {
+        "pydantic": "an analysis deliverable judges the answer text; the snapshot is "
+                    "never imported, so its third-party imports are unreachable",
+        "assistx": "the canonical package this module tries to import; absent from "
+                   "the snapshot on purpose, since that fallback is the subject",
+    },
     "auto_ingest_shorts_driver_helper": {
         "PIL": "only _brand_check imports Pillow, and no oracle calls it",
         "neo4j": "the driver factory is replaced by the oracle's own stub",
@@ -1398,10 +1406,7 @@ class DeliverableCoverageDisclosureTests(unittest.TestCase):
         by_deliverable, _by_family, _campaign, _outside = self.coverage()
         analysis = by_deliverable.get("analysis", set())
         if len(analysis) <= 1:
-            for phrase in (
-                "have only ever been pointed at one defect",
-                "confined to the campaign repository",
-            ):
+            for phrase in ("confined to the campaign repository",):
                 self.assertTrue(
                     phrase in self.doc_flat(),
                     "the analysis coverage gap must be stated in the document, "

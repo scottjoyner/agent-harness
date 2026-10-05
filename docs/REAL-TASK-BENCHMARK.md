@@ -537,6 +537,7 @@ Same stance as `comparison.json`:
 | `auto_router_settings_latency_cache_path` | `bug_fix` | patch | the latency cache path derived by a second, divergent copy of the SQLite grammar |
 | `assistx_answers_store_cursor_drops_ties` | `bug_fix` | patch | a keyset cursor that silently drops every answer sharing a millisecond |
 | `assistx_allocation_llm_capability_gate` | `code_review` | analysis | a capability gate that admits any node for `llm` tasks, and suppresses the diagnostic that would show it |
+| `auto_router_contract_shim_single_source` | `contract_reasoning` | analysis | a shim that advertises one source of truth and keeps a silent second definition, hollow trace types and a drifting version literal |
 
 ### Corpus shape
 
@@ -549,7 +550,7 @@ that share no code, no author, and no bug class with the campaign:
 | | repositories | distinct source identities | families | families outside the campaign repo |
 |---|---|---|---|---|
 | campaign | 1 | 1 | 5 | 0 |
-| corpus | 3 | 5 | 5 | 2 |
+| corpus | 3 | 8 | 5 | 3 |
 
 Read that last column before drawing a conclusion from "five families". Bug
 diversity and *task-type* diversity are different things, and only the first is
@@ -558,19 +559,18 @@ currently broad:
 | deliverable | repositories |
 |---|---|
 | `patch` | auto-assist, auto-ingest, auto-router |
-| `analysis` | auto-assist, auto-ingest |
+| `analysis` | auto-assist, auto-ingest, auto-router |
 
-Both deliverable types now span more than one repository, so a model that is
-excellent at writing patches and poor at reviewing is at least distinguishable.
-`code_review` is the family that reaches outside the campaign.
+Both deliverable types now span all three repositories, so neither "writes patches"
+nor "reviews" is measured on one codebase. Three of the five families —
+`bug_fix`, `code_review` and `contract_reasoning` — reach outside the campaign.
 
 The remaining asymmetry, stated rather than left for a reader to infer from a count
-of families: `contract_reasoning`, `small_refactor` and `test_generation` are still
-confined to the campaign repository and its single defect. So a model weak at
-contract reasoning, at refactoring, or at writing tests is still measured on one
-codebase only.
+of families: `small_refactor` and `test_generation` are still confined to the
+campaign repository and its single defect. So a model weak at refactoring, or at
+writing tests, is still measured on one codebase only.
 
-`test_realtask_corpus.py` derives both figures from the fixtures and fails if these
+`test_realtask_corpus.py` derives these figures from the fixtures and fails if the
 tables drift, so neither the coverage nor its absence can go stale quietly.
 
 `test_realtask_corpus.py` enforces that shape rather than assuming it: it fails
@@ -1060,6 +1060,36 @@ hardcoded pair, so a fourth grader cannot join without joining that check. The
 reference answer passes; a keyword dump built from the grader's own
 `REQUIRED_FINDINGS`, the same answer scattered one trigger per sentence, and an
 empty answer are all rejected.
+
+### A contract that is kept on one path out of two
+
+`auto_router_contract_shim_single_source` is a `contract_reasoning` fixture on
+`auto-router`, and it exists because the module *documents* its own contract
+thoroughly and then keeps it on only one of its two paths.
+
+The module says it re-exports the canonical `assistx.contracts` types "so every
+repo emits the single source-of-truth envelope", and falls back to local mirrors
+when the package is importable. The fallback is where the contract stops holding,
+in three verified ways:
+
+- `TraceEvent` and `TraceGroup` become classes whose bodies are `pass`. A consumer
+  can import either name and **instantiate it successfully**, receiving an object
+  that carries no data — so the loss surfaces later, when something reads an
+  attribute, far from the import that dropped it. The fixture's reference answer
+  states it that way rather than the softer "fails at use", because the softer
+  version is wrong.
+- `SCHEMA_VERSION` stops being the canonical constant and becomes a hardcoded
+  literal that can drift, with nothing comparing the two.
+- `_USING_CANONICAL` — the one flag recording which path was taken — is assigned in
+  both branches, exported in `__all__`, and read by nothing in the repository.
+
+That last one is why `known_regression` tells the candidate not to treat the flag's
+existence as detectability. It is the same shape as the campaign's silent
+truncation: the module knows, and nobody looks.
+
+`pydantic` and `assistx` are recorded in `UNREACHABLE_DEPENDENCIES` rather than
+stubbed: an analysis deliverable judges the answer text, so the snapshot is never
+imported. That is the reason stated, not a blanket exemption.
 
 ## 12. Tests
 
