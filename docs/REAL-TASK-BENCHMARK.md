@@ -466,6 +466,8 @@ fault, and none of them should erase the attempts that already succeeded.
 what cost?
 
 - best single attempt and the explicit, recorded rule used to pick it
+- **sample sizes on both sides**, and a scope limit whenever one side is a single
+  observation
 - **where each candidate came from** (`candidate_source`), and a scope limit when
   it came from an operator rather than a model
 - quality difference, **component by component**, never a composite
@@ -998,6 +1000,33 @@ floor — after the best-single ranking table and `_merge_review` — and the ro
 `_ATTEMPT_FIELDS` was the one that surfaced it here. The pattern is consistent
 enough to be worth naming: **a list of names someone typed is a place for a field to
 go missing, and nothing about it looks wrong when it does.**
+
+### One sample is not a measurement
+
+The comparison artifact declared that one *task* is not evidence that role
+separation helps. It said nothing about one *sample* — which is the easier mistake,
+because a single swarm run against a single single run produces a delta that reads
+like a result and is indistinguishable from noise.
+
+It also could not have done otherwise. `--single-attempts` existed; there was no
+way to repeat a swarm. So **every** single-vs-swarm comparison this harness
+produced was structurally n=1 on the interesting side, and nothing in the artifact
+said so. The question the artifact invites — is the difference the strategy, or the
+run? — was unanswerable by construction.
+
+`--swarm-attempts` now exists, both sides report their `sample_sizes`, and:
+
+- a single sample on either side is named as a single observation
+- the swarm side is always described as one sample, because role separation is
+  nondeterministic (scout wording, reviewer verdict), so a per-attempt difference is
+  confounded with run-to-run variation — and that is stated as surviving replication,
+  not solved by it
+- the roll-up records `attempts_per_task` and says when every pooled task
+  contributed one attempt, since one run per cell pooled and totalled reads like a
+  population
+
+The honest limit: replication makes variance *observable*. It does not make one
+task generalisable, and the artifact does not claim it does.
 
 ## 12. Tests
 

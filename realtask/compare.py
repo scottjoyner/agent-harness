@@ -178,6 +178,10 @@ def build_comparison(
         "task_family": task_family,
         "fixture_sha256": fixture_sha256,
         "best_single_selection_rule": selection_rule,
+        "sample_sizes": {
+            "single": len(singles),
+            "swarm": 1 if swarm is not None else 0,
+        },
         "single_attempts_considered": [
             {
                 "attempt_id": m.attempt_id,
@@ -213,7 +217,8 @@ def build_comparison(
             "are never estimated.",
             "This artifact records evidence only. Deciding what to do with it "
             "belongs to an authoritative controller.",
-        ] + _candidate_source_limits(singles, swarm),
+        ] + _candidate_source_limits(singles, swarm)
+            + _sample_size_limits(len(singles), swarm is not None),
     }
 
     if best_single is None:
@@ -249,6 +254,36 @@ def build_comparison(
         payload["cost_difference"] = _delta(_cost_values(best_single), _cost_values(swarm))
 
     return payload
+
+
+def _sample_size_limits(n_single: int, has_swarm: bool) -> List[str]:
+    """A one-sample comparison is one observation, not a measurement.
+
+    The artifact already says one *task* is not evidence that role separation
+    helps. It said nothing about one *sample*, which is the more common way to
+    over-read: a single swarm run against a single single run looks like a result
+    and is indistinguishable from noise. Swarm could not even be repeated before
+    ``--swarm-attempts`` existed, so the comparison was structurally n=1 on the
+    interesting side.
+    """
+    if not has_swarm:
+        return []
+    limits = []
+    if n_single < 2:
+        limits.append(
+            "The single side has {} sample{}. A single sample cannot be "
+            "distinguished from noise; a difference between one single attempt and "
+            "one swarm attempt is not a measurement.".format(
+                n_single, "" if n_single == 1 else "s"
+            )
+        )
+    limits.append(
+        "The swarm side always carries exactly one sample: role separation is "
+        "nondeterministic (scout wording, reviewer verdict), so any per-attempt "
+        "difference is confounded with run-to-run variation. Raise "
+        "--swarm-attempts before reading a delta as a property of the strategy."
+    )
+    return limits
 
 
 def _candidate_source_limits(

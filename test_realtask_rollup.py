@@ -456,3 +456,53 @@ class CandidateSourceRollupTests(RollupTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplicationRollupTests(RollupTestCase):
+    """A campaign of one run per task is a record, not an average.
+
+    The roll-up already refuses to pool across schemas and flags mixed harness
+    revisions. Replication was the quietest gap of all: one run per task per
+    endpoint, pooled and totalled, reads like a population when each cell is a
+    single observation.
+    """
+
+    def test_a_single_attempt_per_task_is_called_out(self):
+        self.write_run(
+            "r1", manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("contributed a single attempt", joined)
+        self.assertIn("no variance is observable", joined)
+
+    def test_the_attempt_counts_per_task_are_recorded(self):
+        self.write_run(
+            "r1", manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single#2", "single", Outcome.SUCCESS.value)]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertEqual(payload["attempts_per_task"], {"t1": 2})
+        self.assertFalse(
+            any("contributed a single attempt" in lim
+                for lim in payload["scope_limits"]),
+            "a replicated task must not be described as a singleton",
+        )
+
+    def test_the_limit_is_additive(self):
+        self.write_run(
+            "r1", manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        joined = " ".join(summarize_runs(self.runs).to_dict()["scope_limits"])
+        self.assertIn("does not establish that a model qualifies", joined)
+        self.assertIn("belongs to an authoritative controller", joined)
+
+
+if __name__ == "__main__":
+    unittest.main()

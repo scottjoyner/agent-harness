@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Every single-vs-swarm comparison this harness produced was structurally n=1.**
+  `--single-attempts` existed; the swarm side could not be repeated at all. So the
+  artifact invited a comparison — is the difference the strategy, or the run? — that
+  was unanswerable by construction, and said nothing about sample size. `--swarm-attempts`
+  now exists, both sides report `sample_sizes`, a single observation is named as
+  one, the swarm side is described as one sample even after replication (role
+  separation is nondeterministic, so a per-attempt delta stays confounded with
+  run-to-run variation), and the roll-up records `attempts_per_task` and says when
+  every pooled task contributed a single attempt.
+
+  The honest limit is stated rather than implied away: replication makes variance
+  observable, it does not make one task generalisable.
+
 - **The corpus-shape table implied a breadth of task-type coverage the corpus does
   not have.** It reported "families 5" against a 3-repository corpus, which reads as
   broader than it is: `bug_fix` spans all three repositories, but `code_review`,

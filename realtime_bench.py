@@ -162,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="stage to run; repeatable. Defaults to single+swarm.")
     run.add_argument("--single-attempts", type=int, default=1,
                      help="how many single attempts to run per task (default: 1)")
+    run.add_argument("--swarm-attempts", type=int, default=1,
+                     help=("how many swarm attempts to run per task (default: 1). "
+                           "A single swarm sample cannot be told apart from noise, "
+                           "so any comparison of strategy against it is one "
+                           "observation, not a measurement."))
     run.add_argument("--patch-file", type=Path,
                      help="candidate patch for the review stage (required with --stage review)")
     run.add_argument("--scout-file", type=Path,
@@ -503,6 +508,7 @@ def command_run(args: argparse.Namespace) -> int:
                 task,
                 stages,
                 single_attempts=args.single_attempts,
+                swarm_attempts=args.swarm_attempts,
                 patch_override=patch_override,
                 scout_override=scout_override,
             )

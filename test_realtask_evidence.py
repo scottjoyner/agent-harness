@@ -564,3 +564,55 @@ class SourceManifestArtifactTests(HarnessTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SampleSizeDisclosureTests(unittest.TestCase):
+    """The comparison must state how many samples it actually has.
+
+    It already declared that one task is not evidence that role separation helps.
+    It did not say that one *sample* is not evidence, which is the easier mistake:
+    a single swarm run against a single single run produces a delta that reads
+    like a result and is indistinguishable from noise.
+    """
+
+    def build(self, n_single: int, with_swarm: bool = True):
+        singles = [
+            AttemptMetrics(
+                attempt_id="t::single{}".format("#{}".format(i) if i else ""),
+                strategy="single",
+                outcome=Outcome.SUCCESS,
+            )
+            for i in range(n_single)
+        ]
+        swarm = AttemptMetrics(
+            attempt_id="t::swarm", strategy="swarm", outcome=Outcome.SUCCESS
+        ) if with_swarm else None
+        return build_comparison("t", "bug_fix", "f", singles, swarm)
+
+    def test_the_sample_sizes_are_recorded(self):
+        comparison = self.build(3)
+        self.assertEqual(comparison["sample_sizes"], {"single": 3, "swarm": 1})
+
+    def test_a_single_sample_says_so(self):
+        joined = " ".join(self.build(1)["scope_limits"])
+        self.assertIn("cannot be distinguished from noise", joined)
+        self.assertIn("is not a measurement", joined)
+
+    def test_the_swarm_side_is_always_called_out_as_one_sample(self):
+        joined = " ".join(self.build(5)["scope_limits"])
+        self.assertIn("nondeterministic", joined)
+        self.assertIn("--swarm-attempts", joined)
+
+    def test_no_swarm_means_no_swarm_specific_caveat(self):
+        joined = " ".join(self.build(3, with_swarm=False)["scope_limits"])
+        self.assertNotIn("--swarm-attempts", joined)
+
+    def test_a_replicated_swarm_is_not_claimed_to_solve_anything(self):
+        """n>1 still cannot isolate the strategy. Do not imply it does."""
+        joined = " ".join(self.build(3)["scope_limits"])
+        self.assertIn("One task is not evidence", joined)
+        self.assertIn("No component is aggregated", joined)
+
+
+if __name__ == "__main__":
+    unittest.main()

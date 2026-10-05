@@ -1519,3 +1519,52 @@ class CandidateProvenanceTests(HarnessTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplicationTests(HarnessTestCase):
+    """A comparison of one sample against one sample is not a measurement.
+
+    The artifact already said one *task* is not evidence that role separation
+    helps. It said nothing about one *sample* -- and the swarm side could not even
+    be repeated, so every single-vs-swarm comparison this harness produced was
+    structurally n=1 on the interesting side. The difference between "role
+    separation helped" and "that run went better" is unobservable at n=1.
+    """
+
+    def test_the_swarm_side_can_be_repeated(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [scout_reply(), patch_reply(), review_reply("accept")] * 2,
+            ["swarm"],
+            swarm_attempts=2,
+        )
+        swarm = [a for a in result.attempts if a.metrics.strategy == "swarm"]
+        self.assertEqual(len(swarm), 2)
+        self.assertEqual(
+            [a.attempt_id for a in swarm],
+            [AUTO_INGEST_BUG_FIX + "::swarm", AUTO_INGEST_BUG_FIX + "::swarm#2"],
+            "repeated attempts must be individually addressable",
+        )
+
+    def test_one_swarm_by_default(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [scout_reply(), patch_reply(), review_reply("accept")],
+            ["swarm"],
+        )
+        self.assertEqual(
+            len([a for a in result.attempts if a.metrics.strategy == "swarm"]), 1
+        )
+
+    def test_single_attempts_still_work(self):
+        task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX, [patch_reply(), patch_reply()], ["single"],
+            single_attempts=2,
+        )
+        self.assertEqual(
+            len([a for a in result.attempts if a.metrics.strategy == "single"]), 2
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

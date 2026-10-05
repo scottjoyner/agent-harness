@@ -50,6 +50,34 @@ class Rollup:
     integrity: Dict[str, Any] = field(default_factory=dict)
     harness_errors: List[str] = field(default_factory=list)
 
+    def _replicate_limits(self) -> List[str]:
+        """A campaign of one run per configuration is not a measurement.
+
+        The roll-up already refuses to pool across schemas and flags mixed harness
+        revisions. It said nothing about *replication*, which is the quietest way
+        to over-read a result: one run per task per endpoint, pooled and totalled,
+        reads like a population and is a single observation each.
+        """
+        per_task = [
+            (task.get("task_id"), len(task["attempts"]))
+            for task in self.tasks
+        ]
+        if not per_task:
+            return []
+        singletons = sorted(name for name, count in per_task if count < 2)
+        if not singletons:
+            return []
+        return [
+            "{} of {} pooled task(s) contributed a single attempt ({}). Totals "
+            "across them are a record of runs that happened, not an average over "
+            "replicates: no variance is observable, so a difference between "
+            "configurations cannot be told apart from run-to-run variation. Raise "
+            "--single-attempts / --swarm-attempts for the claim to mean "
+            "anything.".format(
+                len(singletons), len(per_task), ", ".join(singletons[:6])
+            )
+        ]
+
     def _attempts_by_candidate_source(self) -> Dict[str, int]:
         """How many pooled attempts judged a model's candidate vs an operator's."""
         counts: Dict[str, int] = {}
@@ -84,6 +112,7 @@ class Rollup:
             "This artifact records evidence only. What to do with it belongs to an "
             "authoritative controller.",
         ]
+        limits.extend(self._replicate_limits())
         by_source = self._attempts_by_candidate_source()
         total_attempts = sum(by_source.values())
         operator = by_source.get("operator_patch_file", 0)
@@ -124,6 +153,9 @@ class Rollup:
             "harness_git_shas": sorted(set(self.harness_shas)),
             "mixed_harness_revisions": len(set(self.harness_shas)) > 1,
             "attempts_by_candidate_source": self._attempts_by_candidate_source(),
+            "attempts_per_task": {
+                str(task.get("task_id")): len(task["attempts"]) for task in self.tasks
+            },
             "model_runtimes": self.endpoint_identities,
             "runs_with_integrity_failures": sorted(self.integrity.get("dirty_runs", [])),
             "harness_errors": list(self.harness_errors),
