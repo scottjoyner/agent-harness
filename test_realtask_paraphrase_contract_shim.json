@@ -1,0 +1,20 @@
+{
+  "root_cause": "The shim advertises a single source-of-truth event envelope by re-exporting assistx.contracts when available and falling back to local mirrors otherwise, but the fallback implementation is incomplete and not guaranteed API-compatible with the canonical package, so consumers silently run against a divergent local implementation when the canonical package is unavailable.",
+  "relevant_files": [
+    "auto_router/contracts_shim.py"
+  ],
+  "plan": [
+    "Document the advertised contract: canonical re-export with identical EventEnvelope, Actor, AuthState, EventLink, TraceEvent, TraceGroup and SCHEMA_VERSION, with fallback only for standalone runs.",
+    "Inspect the canonical assistx.contracts.event_envelope and assistx.contracts.version to capture exact public fields, types, defaults, ConfigDict and validators for all exported types.",
+    "Replace the stub class TraceEvent: pass and class TraceGroup: pass with full BaseModel mirrors matching the canonical definitions, and align Actor, EventLink and EventEnvelope fields, ConfigDict, defaults and validators to the canonical API.",
+    "Synchronize the fallback SCHEMA_VERSION and model definitions with the canonical source of truth and add a runtime compatibility assertion when canonical is importable to detect drift.",
+    "Add import-time tests that exercise the shim with canonical present and absent, asserting structural equivalence of the public API and that _USING_CANONICAL correctly reflects the import state while preserving standalone capability."
+  ],
+  "risks": [
+    "Removing or altering the fallback breaks standalone runs that depend on local mirrors when assistx.contracts is not installed.",
+    "Hardcoded SCHEMA_VERSION in the fallback can drift from the canonical version, causing silent version skew in emitted envelopes.",
+    "Empty TraceEvent and TraceGroup stubs cause late runtime failures for consumers expecting real models, and the divergence is not observable at import time.",
+    "Consumers cannot detect they are using the fallback versus canonical without inspecting _USING_CANONICAL, leading to undetectable behavioral divergence."
+  ],
+  "confidence": 0.85
+}

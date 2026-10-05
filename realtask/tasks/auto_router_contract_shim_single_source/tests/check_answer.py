@@ -36,7 +36,11 @@ REQUIRED_FINDINGS = (
     ),
     (
         "identifies the silent ImportError fallback as a second, independent definition",
-        ("importerror",),
+        # The construct anchor is the *fallback branch itself*, not the literal
+        # token "ImportError". Requiring that exact identifier rejected a correct
+        # answer that said "falling back to local mirrors ... a divergent local
+        # implementation", which is the same fact in the model's own words.
+        ("fallback",),
         (
             "fallback",
             "silently",
@@ -79,6 +83,18 @@ REQUIRED_FINDINGS = (
             "downstream",
             "only when",
             "deferred",
+            # Added after a real 30B answer was rejected for saying it better
+            # than the reference did: "cause late runtime failures for consumers
+            # expecting real models, and the divergence is not observable at
+            # import time". That is the finding. "later" was already in this
+            # list, but the clause carried "late runtime failures" instead.
+            "late runtime",
+            "runtime failure",
+            "not observable at import",
+            "invisible at import",
+            "not detectable at import",
+            "no error at import",
+            "at instantiation",
         ),
     ),
     (

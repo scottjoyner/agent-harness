@@ -57,6 +57,19 @@ REFERENCE_ANSWERS: Dict[str, str] = {
         "test_realtask_reference_contract_shim.json",
 }
 
+#: Real model answers that are *not* the reference, kept because they were
+#: graded wrongly. Each was produced by a live run and each exposed a grader that
+#: had become lexically brittle: hardening against keyword stuffing had turned
+#: into requiring particular words, so a correct paraphrase scored zero.
+#:
+#: These are not reference answers -- they are not written by us and they do not
+#: all pass. ``ParaphraseAnswerTests`` pins the exact score each one earns, so a
+#: future change to the vocabulary that quietly re-breaks recall fails a test.
+PARAPHRASE_ANSWERS: Dict[str, str] = {
+    "auto_router_contract_shim_single_source":
+        "test_realtask_paraphrase_contract_shim.json",
+}
+
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
 #: prove the broader tier catches collateral damage, not only the primary defect.
 COLLATERAL_DAMAGE: Dict[str, str] = {
@@ -774,6 +787,362 @@ class AnalysisGraderTests(unittest.TestCase):
                 completed.returncode, 0,
                 "{} is not tracked".format(filename),
             )
+
+
+class AnalysisGraderHelpers:
+    """Shared access to an analysis fixture's grader, with its noise suppressed.
+
+    Both the reference-answer tests and the paraphrase tests need the same two
+    things. They live here so the two cannot drift apart -- which matters,
+    because the paraphrase test's whole claim is that it applies the same
+    evidence-removal check to a real model answer.
+    """
+
+    def _grader(self, task_id):
+        return load_grader(task_id)
+
+    def _judge_quietly(self, task_id: str, path: Path) -> int:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            return self._grader(task_id).main(["check_answer.py", str(path)])
+
+
+class ParaphraseAnswerTests(AnalysisGraderHelpers, HarnessTestCase):
+    """A correct answer in different words must score the same.
+
+    This is the regression test for the defect a live 30B run found: the analysis
+    graders had been hardened against keyword stuffing until they required
+    specific vocabulary, and then rejected an answer for saying the finding better
+    than the reference did. The model wrote "cause late runtime failures ... not
+    observable at import time" where the grader accepted only "at use" / "later" /
+    "downstream" / "deferred", and "falling back to local mirrors ... a divergent
+    local implementation" where it demanded the literal token ``importerror``.
+
+    Both were the finding. Both scored zero.
+
+    The assertion is deliberately exact rather than "must pass". This model did
+    miss one finding -- it treated ``_USING_CANONICAL`` as something a consumer
+    could inspect and never noticed that nothing reads it -- and that miss is real.
+    Pinning the precise score keeps the distinction: the grader recovered the two
+    false negatives and still catches the genuine one.
+    """
+
+    #: Findings this particular model genuinely did not reach.
+    KNOWN_GAPS = {
+        "auto_router_contract_shim_single_source": (
+            "notes that _USING_CANONICAL is exported but read by nobody",
+        ),
+    }
+
+    #: Findings that were false negatives before the vocabulary was widened.
+    RECOVERED = {
+        "auto_router_contract_shim_single_source": (
+            "identifies the silent ImportError fallback as a second, "
+            "independent definition",
+            "notes the failure surfaces at use rather than at import",
+        ),
+    }
+
+    def _failed_findings(self, task_id: str, path: Path) -> List[str]:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            self._grader(task_id).main(["check_answer.py", str(path)])
+        failed = []
+        for line in buffer.getvalue().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[FAIL]"):
+                failed.append(stripped[len("[FAIL]"):].strip())
+        return failed
+
+    def test_a_paraphrased_answer_scores_exactly_what_it_earned(self):
+        for task_id, filename in PARAPHRASE_ANSWERS.items():
+            path = REPO_ROOT / filename
+            with self.subTest(task=task_id):
+                self.assertTrue(path.is_file(), filename)
+                failed = set(self._failed_findings(task_id, path))
+                self.assertEqual(
+                    failed, set(self.KNOWN_GAPS.get(task_id, ())),
+                    "the model's score changed; either the grader moved or the "
+                    "known gap is no longer a gap",
+                )
+
+    def test_the_two_recovered_findings_are_recovered(self):
+        """Guards the specific widening, so it cannot be silently undone."""
+        for task_id, filename in PARAPHRASE_ANSWERS.items():
+            failed = set(self._failed_findings(task_id, REPO_ROOT / filename))
+            for finding in self.RECOVERED.get(task_id, ()):
+                with self.subTest(task=task_id, finding=finding):
+                    self.assertNotIn(
+                        finding, failed,
+                        "a finding the model stated correctly is being rejected "
+                        "again -- the vocabulary was narrowed back",
+                    )
+
+    def test_a_paraphrased_answer_still_fails_leave_one_out(self):
+        """Recall must not have been bought with precision.
+
+        A grader that accepts any phrasing will also accept a phrase with nothing
+        behind it. So the same evidence-removal check that runs against the
+        reference answer runs against the real one: delete the sentences carrying a
+        finding and that finding must stop being satisfied.
+        """
+        import re
+
+        tmp = self.tmp / "answer.json"
+        for task_id, filename in PARAPHRASE_ANSWERS.items():
+            grader = self._grader(task_id)
+            payload = json.loads((REPO_ROOT / filename).read_text(encoding="utf-8"))
+            for name, all_of, any_of in grader.REQUIRED_FINDINGS:
+                needles = [n for n in list(all_of) + list(any_of) if n]
+                removed = []
+
+                def strip(value):
+                    if isinstance(value, str):
+                        sentences = re.split(r"(?<=[.!?])\s+", value)
+                        kept = [
+                            s for s in sentences
+                            if not any(n.lower() in s.lower() for n in needles)
+                        ]
+                        if len(kept) < len(sentences):
+                            removed.append(True)
+                        return " ".join(kept)
+                    if isinstance(value, list):
+                        return [strip(v) for v in value]
+                    if isinstance(value, dict):
+                        return {k: strip(v) for k, v in value.items()}
+                    return value
+
+                stripped = strip(payload)
+                with self.subTest(task=task_id, finding=name):
+                    self.assertTrue(
+                        removed, "nothing carried {!r}".format(name)
+                    )
+                    tmp.write_text(json.dumps(stripped), encoding="utf-8")
+                    self.assertNotEqual(
+                        self._judge_quietly(task_id, tmp), 0,
+                        "{!r} still passes with its evidence removed".format(name),
+                    )
+
+    def test_paraphrase_answers_are_tracked(self):
+        for filename in PARAPHRASE_ANSWERS.values():
+            with self.subTest(filename=filename):
+                completed = subprocess.run(
+                    ["git", "-C", str(REPO_ROOT), "ls-files", "--error-unmatch",
+                     filename],
+                    capture_output=True, text=True, timeout=60,
+                )
+                self.assertEqual(
+                    completed.returncode, 0,
+                    "{} is untracked; a real model answer outside version control "
+                    "is not reviewable".format(filename),
+                )
+
+
+class LeaveOneOutFindingTests(AnalysisGraderHelpers, HarnessTestCase):
+    """Every required finding must depend on the sentence that asserts it.
+
+    This is the strongest discrimination claim the analysis fixtures can make
+    without a model in the loop, and it exists because no model has ever passed
+    one. Until a capable model runs, "the grader rejects a keyword dump" is a
+    weak claim: it is satisfied by a grader that only counts words. What
+    matters is whether the grader can tell a complete answer from one that is
+    missing exactly one substantive point.
+
+    So for each required finding, the sentences carrying its vocabulary are
+    deleted from an otherwise-perfect reference answer, and the grader must then
+    fail. A finding that still passes has leaked: it is decoration, and a model
+    could satisfy it without understanding anything.
+
+    Measured across all four analysis fixtures: 22 required findings, 0 leaks.
+
+    What this does *not* establish, recorded because I checked by trying to
+    break it: it tests dependence, not specificity. Broadening a finding's
+    vocabulary -- accepting an extra, common word -- is invisible here, because
+    deleting the sentences carrying a *wider* vocabulary still breaks the
+    grader. So this cannot tell you a finding is hard to satisfy; it tells you
+    the finding is not decoration. The other direction is covered by
+    :class:`MemorisationTests`, which feeds keyword dumps and scattered
+    vocabulary to the same graders.
+    """
+
+    def _reference_passes(self, task_id: str, path: Path) -> None:
+        path.write_text(reference_answer(task_id), encoding="utf-8")
+        self.assertEqual(self._judge_quietly(task_id, path), 0)
+
+    def test_removing_a_finding_evidence_fails_the_grader(self):
+        import re
+
+        tmp = self.tmp / "answer.json"
+        checked = 0
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                self._reference_passes(task_id, tmp)
+                reference = reference_answer(task_id)
+                findings = getattr(self._grader(task_id), "REQUIRED_FINDINGS", ())
+                self.assertTrue(findings, "{} declares no findings".format(task_id))
+                for name, all_of, any_of in findings:
+                    checked += 1
+                    needles = [n for n in list(all_of) + list(any_of) if n]
+                    self.assertTrue(needles, "finding has no vocabulary: {}".format(name))
+                    sentences = re.split(r"(?<=[.!?])\s+", reference)
+                    kept = [
+                        s for s in sentences
+                        if not any(n.lower() in s.lower() for n in needles)
+                    ]
+                    self.assertLess(
+                        len(kept), len(sentences),
+                        "{}: nothing in the reference carries {!r}, so this "
+                        "finding cannot be shown to matter".format(task_id, name),
+                    )
+                    tmp.write_text(" ".join(kept), encoding="utf-8")
+                    with self.subTest(finding=name):
+                        self.assertNotEqual(
+                            self._judge_quietly(task_id, tmp), 0,
+                            "{}: {!r} still passes with its evidence removed".format(
+                                task_id, name
+                            ),
+                        )
+        self.assertGreater(checked, 0)
+
+    def test_a_wholly_different_answer_also_fails(self):
+        """Belt and braces: the same property at the extreme."""
+        tmp = self.tmp / "answer.json"
+        tmp.write_text(
+            '{"root_cause": "I am not sure what this code does.", '
+            '"relevant_files": [], "plan": [], "risks": [], "confidence": 0.1}',
+            encoding="utf-8",
+        )
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                self.assertNotEqual(self._judge_quietly(task_id, tmp), 0)
+
+
+class FailureEvidenceTests(HarnessTestCase):
+    """A failed attempt must say *why*, in the artifact, not just that it failed.
+
+    ``metrics.json`` carries each acceptance command's stdout, which for an
+    analysis fixture is the grader's per-finding report. That is the difference
+    between an operator reading "this model missed the capability gate" and
+    reading ``TARGETED_TEST_FAILURE`` and going to look at the source.
+
+    Nothing asserted that. The stdout is capped at 8000 characters, the grader's
+    output could grow, and an artifact that silently degraded to a bare verdict
+    would look entirely healthy in every other test. This pins the property on
+    the file on disk, not on the in-memory object, because the file is what a
+    reader opens.
+
+    The near-miss answers are built the same way
+    :class:`LeaveOneOutFindingTests` builds them, so the two tests cannot drift
+    apart: each drops the sentences carrying one finding's vocabulary, and here
+    we additionally require the artifact to name that finding.
+    """
+
+    def _near_miss(self, task_id: str, finding_index: int):
+        """The reference answer with one finding's evidence removed.
+
+        The sentences are stripped from every string in the payload rather than
+        from the raw text, because the answer must stay valid JSON. An earlier
+        version flattened the prose and the attempt came back
+        ``PROTOCOL_FAILURE`` -- which is the harness correctly refusing a
+        malformed reply, and useless here, because the point is to grade a
+        well-formed answer that is missing one finding.
+        """
+        import re
+
+        grader = load_grader(task_id)
+        name, all_of, any_of = grader.REQUIRED_FINDINGS[finding_index]
+        needles = [n for n in list(all_of) + list(any_of) if n]
+        payload = json.loads(reference_answer(task_id))
+        removed = []
+
+        def strip(value):
+            if isinstance(value, str):
+                sentences = re.split(r"(?<=[.!?])\s+", value)
+                kept = [
+                    s for s in sentences
+                    if not any(n.lower() in s.lower() for n in needles)
+                ]
+                if len(kept) < len(sentences):
+                    removed.append(True)
+                return " ".join(kept)
+            if isinstance(value, list):
+                return [strip(v) for v in value]
+            if isinstance(value, dict):
+                return {k: strip(v) for k, v in value.items()}
+            return value
+
+        stripped = strip(payload)
+        self.assertTrue(removed, "{}: nothing carried {!r}".format(task_id, name))
+        path = self.tmp / "answer.json"
+        path.write_text(json.dumps(stripped, indent=2), encoding="utf-8")
+        return path, name
+
+    def test_a_failed_attempt_names_the_missing_finding_on_disk(self):
+        for index, task_id in enumerate(ANALYSIS_TASKS):
+            grader = load_grader(task_id)
+            position = index % len(grader.REQUIRED_FINDINGS)
+            answer, finding = self._near_miss(task_id, position)
+            from test_realtask_support import ScriptedResponse
+
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content=answer.read_text())], ["single"]
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertIn(
+                    Outcome.TARGETED_TEST_FAILURE, state.outcomes,
+                    "a wrong answer must be recorded as a wrong answer, not as "
+                    "a protocol or tool failure",
+                )
+                artifact = result.run_dir.role_file("single", "metrics.json")
+                self.assertTrue(artifact.is_file(), artifact)
+                blob = json.loads(artifact.read_text(encoding="utf-8"))
+                recorded = "\n".join(
+                    command.get("stdout", "")
+                    for command in blob["tests"]["targeted"]
+                )
+                self.assertIn(
+                    "[FAIL]", recorded,
+                    "{}: the artifact records the failure without saying which "
+                    "finding was missed".format(task_id),
+                )
+                # The grader prints its own finding label; require a distinctive
+                # fragment of it so this cannot pass on an unrelated FAIL line.
+                fragment = finding.split("(")[0].strip()[:40]
+                self.assertIn(
+                    fragment.lower(), recorded.lower(),
+                    "{}: the artifact does not name the missed finding {!r}".format(
+                        task_id, fragment
+                    ),
+                )
+
+    def test_a_passing_attempt_records_no_missing_finding(self):
+        for task_id in ANALYSIS_TASKS:
+            from test_realtask_support import ScriptedResponse
+
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content=reference_answer(task_id))],
+                ["single"],
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertTrue(state.metrics.tests.targeted_all_passed)
+                artifact = result.run_dir.role_file("single", "metrics.json")
+                recorded = "\n".join(
+                    command.get("stdout", "")
+                    for command in json.loads(artifact.read_text())["tests"]["targeted"]
+                )
+                self.assertNotIn(
+                    "[FAIL]", recorded,
+                    "{}: a passing attempt must not ship failing findings in its "
+                    "own evidence".format(task_id),
+                )
 
 
 class AnalysisSatisfiableTests(HarnessTestCase):

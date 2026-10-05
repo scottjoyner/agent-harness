@@ -1012,6 +1012,141 @@ class AnalysisDeliverableTests(HarnessTestCase):
         self.assertOutcome(result.attempts[0], Outcome.REVIEW_REJECTED)
 
 
+class SwarmEarnsItsCostTests(HarnessTestCase):
+    """The harness's central claim, end to end: a second role changes the result.
+
+    This repository is a multi-agent harness whose stated purpose is to measure
+    whether role separation is worth its overhead. Nothing demonstrated that. The
+    swarm tests covered ordering, per-call charging, rejection labels and the
+    refinement budget -- all of them asserted on *scripted* behaviour, and all of
+    them stopped before the interesting state. No test had a reviewer reject a
+    candidate and a refinement then succeed. The loop the whole design rests on
+    was unexercised.
+
+    The trap is the fixture's own designed one. ``test_realtask_trap_dropped_driver.diff``
+    is a clean, plausible fix: it moves planning inside the driver's live scope,
+    which is the actual defect, and it keeps close-once on every path. It also
+    drops ``driver=driver``, on the reasonable reading that the driver is already
+    in scope. The consequence is silent -- graph mining stops and the command
+    falls back to templated text -- and the fixture's oracle rejects it.
+
+    A single attempt takes that bait. A swarm gets a second opinion, and the
+    revision is right. That is the claim, and it is worth having in a test
+    because it is the one thing the harness exists to be able to say.
+    """
+
+    TRAP = "test_realtask_trap_dropped_driver.diff"
+
+    def trap_reply(self):
+        from test_realtask_support import REPO_ROOT, patch_reply
+
+        return patch_reply((REPO_ROOT / self.TRAP).read_text(encoding="utf-8"))
+
+    def test_a_single_attempt_takes_the_bait_and_the_swarm_does_not(self):
+        from test_realtask_support import AUTO_INGEST_BUG_FIX, patch_reply
+        from test_realtask_support import REFERENCE_REPAIR, scout_reply
+
+        trap = self.trap_reply()
+
+        # One pass: plausible fix, silently wrong. `single` is a single
+        # Role.SINGLE call -- no scout -- so the bait goes in first.
+        _t, single = self.run_stages(AUTO_INGEST_BUG_FIX, [trap], ["single"])
+        single_state = single.attempts[0]
+        self.assertFalse(
+            single_state.metrics.tests.targeted_all_passed,
+            "the trap patch was accepted, so this test proves nothing",
+        )
+
+        # Same first attempt, plus a reviewer and one revision.
+        _t, both = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [
+                trap,
+                scout_reply(), trap,
+                review_reply(
+                    "revise",
+                    [{
+                        "severity": "high",
+                        "location": "auto_ingest/shorts/cli.py:_cmd_plan",
+                        "description": (
+                            "planning is now inside the live scope, but the "
+                            "driver argument was dropped, so graph mining stops "
+                            "and the command silently falls back to templated text"
+                        ),
+                    }],
+                ),
+                patch_reply(REFERENCE_REPAIR),
+            ],
+            ["single", "swarm"],
+        )
+        single_state, swarm_state = both.attempts
+
+        roles = [c.role.value for c in swarm_state.metrics.calls]
+        self.assertEqual(
+            roles, ["scout", "implementer", "reviewer", "implementer"],
+            "the swarm should scout, implement, review, then revise",
+        )
+        self.assertEqual(swarm_state.metrics.refinements_used, 1)
+        self.assertTrue(
+            swarm_state.metrics.tests.targeted_all_passed,
+            "the revised patch should satisfy the oracle: {}".format(
+                [c.stdout[-400:] for c in swarm_state.metrics.tests.targeted_failed]
+            ),
+        )
+        self.assertOutcome(swarm_state, Outcome.SUCCESS)
+
+    def test_the_extra_roles_are_paid_for_in_the_record(self):
+        """Earning the result must not hide what it cost.
+
+        The comparison artifact exists to answer whether separation is worth the
+        overhead. If a swarm could reach SUCCESS without the artifact showing
+        that it spent three more calls to get there, the artifact would be
+        reporting the outcome and suppressing the cost.
+        """
+        from test_realtask_support import AUTO_INGEST_BUG_FIX, REFERENCE_REPAIR, scout_reply
+
+        _t, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [
+                self.trap_reply(),
+                scout_reply(), self.trap_reply(),
+                review_reply("revise", [{
+                    "severity": "high",
+                    "location": "auto_ingest/shorts/cli.py:_cmd_plan",
+                    "description": "the driver argument was dropped, so mining is lost",
+                }]),
+                patch_reply(REFERENCE_REPAIR),
+            ],
+            ["single", "swarm"],
+        )
+        single_state, swarm_state = result.attempts
+        single_calls = len(single_state.metrics.calls)
+        swarm_calls = len(swarm_state.metrics.calls)
+        self.assertGreater(
+            swarm_calls, single_calls,
+            "the swarm spent {} calls against the single's {}; role separation "
+            "that costs nothing would mean the cost model is wrong".format(
+                swarm_calls, single_calls
+            ),
+        )
+        # The record is metrics.json, which run_task writes; comparison.json is
+        # emitted one layer up by the CLI, and is covered by its own tests.
+        payload = json.loads(
+            result.run_dir.file("metrics.json").read_text(encoding="utf-8")
+        )
+        recorded = [len(a["calls"]) for a in payload["attempts"]]
+        self.assertEqual(
+            recorded, sorted(recorded),
+            "expected the single attempt first, then the costlier swarm",
+        )
+        self.assertEqual(recorded[0], single_calls)
+        self.assertEqual(recorded[1], swarm_calls)
+        self.assertGreater(recorded[1], recorded[0])
+        # and every attempt still says where it came from
+        for state in (single_state, swarm_state):
+            self.assertEqual(state.metrics.candidate_source, "model")
+
+
 class TestGenerationTests(HarnessTestCase):
     def candidate_body(self) -> str:
         from test_realtask_support import TASKS_ROOT

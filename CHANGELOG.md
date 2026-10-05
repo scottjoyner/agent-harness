@@ -4,6 +4,34 @@
 
 ### Added
 
+- **A live 30B run, which found a defect in the analysis graders.** No download was
+  needed: 32 models were already on disk, and reading GGUF headers directly
+  (`general.architecture`) picked one the running LM Studio build could load --
+  `meta/muse-glimmer`, 30B, llama arch, Q4_K_M -- after a ternary quant and an
+  unsupported architecture both failed to load.
+
+  On `auto_router_contract_shim_single_source` its scout reached `outcome=SUCCESS`
+  with `grounding.expected_overlap` of 1.0, and its `root_cause` independently found
+  all three findings the fixture encodes. **The 0.8B/3B protocol wall was model
+  capability, not a harness defect.**
+
+  A full `--stage single` attempt was then graded `TARGETED_TEST_FAILURE` at 3 of 6
+  findings -- and two of those three are grader false negatives. The model wrote
+  "falling back to local mirrors ... a divergent local implementation" where the
+  grader demanded the literal token `importerror`, and "cause late runtime failures
+  ... not observable at import time" where it accepted only `at use` / `later` /
+  `downstream` / `deferred`. Hardening the graders against keyword stuffing made them
+  lexically brittle, so they now reject correct paraphrases.
+
+  **Fixed**, by widening consequence vocabulary while keeping construct anchors
+  strict: a paraphrase must still name `TraceEvent` or `_USING_CANONICAL`, but may
+  describe the consequence in its own words. The model's answer now scores 5 of 6
+  instead of 3, and the sixth is a genuine miss that was left failing. Precision was
+  verified rather than assumed -- a bare list of the newly added phrases is still
+  rejected, and leave-one-out still fails on both the reference answer and the real
+  one. The model's answer is tracked verbatim with its exact score pinned, so
+  re-narrowing the vocabulary fails a test instead of quietly costing two findings.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
