@@ -43,6 +43,7 @@ from .roles import (
     Role,
     RoleProtocolError,
     ScoutResult,
+    delivers_result,
     requested_tools,
 )
 from .metrics import CANDIDATE_SOURCE_OPERATOR
@@ -302,7 +303,15 @@ class BenchmarkRunner:
         # call, which was filed as TRUNCATED -- true, but it sent an operator
         # looking at the token budget instead of at the role contract.
         tools = requested_tools(response.content)
-        if tools:
+        if tools and delivers_result(role, response.content):
+            # A tool call wrapped around a payload the model actually produced.
+            # Grade the payload; do not file this as no answer at all.
+            state.metrics.notes.append(
+                "reply contained a tool call for {} but also a well-formed {} "
+                "payload; the spurious tag is ignored and the payload is "
+                "graded on its merits".format(", ".join(tools), role.value)
+            )
+        elif tools:
             state.metrics.notes.append(
                 "model requested unavailable tool(s): {}. The harness is "
                 "read-only and passes the bound source in the prompt; the role "

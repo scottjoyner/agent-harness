@@ -282,3 +282,115 @@ class PromptTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ToolCallLabellingTests(unittest.TestCase):
+    """A reply is a tool request only when no deliverable came with it.
+
+    Found by running the corpus against a real 3B tool-tuned model, not by
+    reading: all four analysis fixtures came back ``TOOL_CALL_REQUESTED``. Three
+    were genuinely degenerate -- a ``call_id`` of several hundred repeated
+    digits, with no path in them at all, so there was nothing to serve even if
+    the harness had a read tool. The fourth was different, and worth the fix.
+
+    It emitted a complete, well-formed scout payload wrapped in a spurious
+    ``<tool_call>`` tag. The payload diagnosed a different bug than the
+    fixture's, so it would have failed anyway -- but it was filed as
+    ``TOOL_CALL_REQUESTED``, "the model asked for a tool", rather than as a
+    wrong answer. That is the one number the comparison artifact exists to get
+    right, and it was wrong for a reason that had nothing to do with the model.
+    """
+
+    PAYLOAD = (
+        '{"root_cause": "driver closed before planning", '
+        '"relevant_files": ["auto_ingest/shorts/cli.py"], '
+        '"plan": ["read the finally block"], "risks": [], "confidence": 0.6}'
+    )
+
+    def test_a_tagged_payload_is_not_a_tool_request(self):
+        from realtask.roles import Role, delivers_result, requested_tools
+
+        text = "<tool_call>" + self.PAYLOAD + "</tool_call>"
+        self.assertTrue(requested_tools(text), "the tag should still be seen")
+        self.assertTrue(
+            delivers_result(Role.SCOUT, text),
+            "a well-formed payload wrapped in a spurious tag is still a payload",
+        )
+
+    def test_a_real_tool_request_is_still_a_tool_request(self):
+        from realtask.roles import Role, delivers_result
+
+        text = '<tool_call name="read" call_id="call_0856"></tool_call>'
+        self.assertFalse(delivers_result(Role.SCOUT, text))
+
+    def test_a_tagged_payload_with_the_wrong_schema_is_not_accepted(self):
+        """Recovery must not launder a malformed answer into a graded one."""
+        from realtask.roles import Role, delivers_result
+
+        text = '<tool_call>{"answer": "the bug is in the parser"}</tool_call>'
+        self.assertFalse(
+            delivers_result(Role.SCOUT, text),
+            "a payload missing the role's required fields is not a deliverable",
+        )
+
+    def test_prose_is_not_a_payload(self):
+        from realtask.roles import Role, delivers_result
+
+        self.assertFalse(delivers_result(Role.SCOUT, "I think it is the parser."))
+
+    def test_unrelated_json_is_not_a_payload(self):
+        from realtask.roles import Role, delivers_result
+
+        self.assertFalse(delivers_result(Role.SCOUT, '{"result": 42}'))
+
+    def test_an_empty_tool_call_is_not_a_payload(self):
+        from realtask.roles import Role, delivers_result
+
+        self.assertFalse(delivers_result(Role.REVIEWER, '<tool_call name="read"/>'))
+
+    def test_it_does_not_weaken_tool_call_detection(self):
+        """The degenerate case the fix was *not* for must stay detected.
+
+        This is the important negative. If a model emits a tool call and nothing
+        usable, the harness must still say so -- otherwise the fix has quietly
+        turned every failure into a graded attempt and made the corpus look
+        kinder than it is.
+        """
+        from realtask.roles import Role, delivers_result
+
+        degenerate = (
+            '<tool_call name="read" call_id="call_0856794312a5f0a9c4e0d0'
+            + "9" * 400
+            + '"></tool_call>'
+        )
+        self.assertFalse(delivers_result(Role.SCOUT, degenerate))
+
+    def test_every_role_with_a_payload_is_covered(self):
+        from realtask.roles import ROLE_RESULT_CLASS, Role, delivers_result
+
+        for role in (Role.SCOUT, Role.IMPLEMENTER, Role.REVIEWER):
+            with self.subTest(role=role):
+                # A scout payload is not an implementer payload, so each role
+                # must reject the other's shape rather than accept anything.
+                self.assertTrue(
+                    delivers_result(role, _payload_for(role)),
+                    "no payload class wired for {}".format(role),
+                )
+                self.assertFalse(delivers_result(role, "not json at all"))
+
+
+def _payload_for(role) -> str:
+    if role.value == "scout":
+        return (
+            '{"root_cause": "x", "relevant_files": [], "plan": [], '
+            '"risks": [], "confidence": 0.5}'
+        )
+    if role.value == "implementer":
+        return (
+            '{"patch": "", "tests": ["t"], "assumptions": ["a"], '
+            '"confidence": 0.5}'
+        )
+    return (
+        '{"defects": [], "missing_coverage": [], '
+        '"contract_violations": [], "verdict": "accept", "confidence": 0.5}'
+    )

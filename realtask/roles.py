@@ -411,6 +411,39 @@ _TOOL_CALL_PATTERNS = (
 _TOOL_NAME = re.compile(r"""name\s*=\s*["']([A-Za-z_][\w.\-]{0,64})["']""")
 
 
+#: Which result class carries each role's payload. Used to ask whether a reply
+#: that *looks* like a tool call nevertheless delivered the deliverable.
+ROLE_RESULT_CLASS = {
+    Role.SCOUT: "ScoutResult",
+    Role.IMPLEMENTER: "ImplementerResult",
+    Role.REVIEWER: "ReviewerResult",
+}
+
+
+def delivers_result(role: "Role", text: str) -> bool:
+    """True when ``text`` parses as this role's payload, tags notwithstanding.
+
+    A tool-tuned model asked to return JSON will sometimes wrap a perfectly
+    well-formed object in a spurious ``<tool_call>`` tag. Classifying that as a
+    tool request throws away a deliverable the model did produce, and files the
+    attempt under the wrong outcome -- which is the one number the comparison
+    artifact exists to get right.
+
+    This only decides the *label*. The payload is still graded on its merits, so
+    recognising it buys nothing by itself: an answer that is structurally valid
+    but wrong still fails its fixture. It stops a wrong answer being reported as
+    no answer.
+    """
+    name = ROLE_RESULT_CLASS.get(role)
+    if name is None:
+        return False
+    try:
+        globals()[name].parse(text)
+    except Exception:
+        return False
+    return True
+
+
 def requested_tools(text: str) -> Tuple[str, ...]:
     """Names of tools the reply asked to call, in order, without duplicates."""
     found: List[str] = []

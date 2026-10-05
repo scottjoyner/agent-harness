@@ -776,6 +776,96 @@ class AnalysisGraderTests(unittest.TestCase):
             )
 
 
+class LeaveOneOutFindingTests(HarnessTestCase):
+    """Every required finding must depend on the sentence that asserts it.
+
+    This is the strongest discrimination claim the analysis fixtures can make
+    without a model in the loop, and it exists because no model has ever passed
+    one. Until a capable model runs, "the grader rejects a keyword dump" is a
+    weak claim: it is satisfied by a grader that only counts words. What
+    matters is whether the grader can tell a complete answer from one that is
+    missing exactly one substantive point.
+
+    So for each required finding, the sentences carrying its vocabulary are
+    deleted from an otherwise-perfect reference answer, and the grader must then
+    fail. A finding that still passes has leaked: it is decoration, and a model
+    could satisfy it without understanding anything.
+
+    Measured across all four analysis fixtures: 22 required findings, 0 leaks.
+
+    What this does *not* establish, recorded because I checked by trying to
+    break it: it tests dependence, not specificity. Broadening a finding's
+    vocabulary -- accepting an extra, common word -- is invisible here, because
+    deleting the sentences carrying a *wider* vocabulary still breaks the
+    grader. So this cannot tell you a finding is hard to satisfy; it tells you
+    the finding is not decoration. The other direction is covered by
+    :class:`MemorisationTests`, which feeds keyword dumps and scattered
+    vocabulary to the same graders.
+    """
+
+    def _grader(self, task_id):
+        return load_grader(task_id)
+
+    def _reference_passes(self, task_id: str, path: Path) -> None:
+        path.write_text(reference_answer(task_id), encoding="utf-8")
+        self.assertEqual(self._judge_quietly(task_id, path), 0)
+
+    def _judge_quietly(self, task_id: str, path: Path) -> int:
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            return self._grader(task_id).main(["check_answer.py", str(path)])
+
+    def test_removing_a_finding_evidence_fails_the_grader(self):
+        import re
+
+        tmp = self.tmp / "answer.json"
+        checked = 0
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                self._reference_passes(task_id, tmp)
+                reference = reference_answer(task_id)
+                findings = getattr(self._grader(task_id), "REQUIRED_FINDINGS", ())
+                self.assertTrue(findings, "{} declares no findings".format(task_id))
+                for name, all_of, any_of in findings:
+                    checked += 1
+                    needles = [n for n in list(all_of) + list(any_of) if n]
+                    self.assertTrue(needles, "finding has no vocabulary: {}".format(name))
+                    sentences = re.split(r"(?<=[.!?])\s+", reference)
+                    kept = [
+                        s for s in sentences
+                        if not any(n.lower() in s.lower() for n in needles)
+                    ]
+                    self.assertLess(
+                        len(kept), len(sentences),
+                        "{}: nothing in the reference carries {!r}, so this "
+                        "finding cannot be shown to matter".format(task_id, name),
+                    )
+                    tmp.write_text(" ".join(kept), encoding="utf-8")
+                    with self.subTest(finding=name):
+                        self.assertNotEqual(
+                            self._judge_quietly(task_id, tmp), 0,
+                            "{}: {!r} still passes with its evidence removed".format(
+                                task_id, name
+                            ),
+                        )
+        self.assertGreater(checked, 0)
+
+    def test_a_wholly_different_answer_also_fails(self):
+        """Belt and braces: the same property at the extreme."""
+        tmp = self.tmp / "answer.json"
+        tmp.write_text(
+            '{"root_cause": "I am not sure what this code does.", '
+            '"relevant_files": [], "plan": [], "risks": [], "confidence": 0.1}',
+            encoding="utf-8",
+        )
+        for task_id in ANALYSIS_TASKS:
+            with self.subTest(task=task_id):
+                self.assertNotEqual(self._judge_quietly(task_id, tmp), 0)
+
+
 class AnalysisSatisfiableTests(HarnessTestCase):
     """The reference answer has to survive the whole runner, not just the grader.
 
