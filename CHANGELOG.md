@@ -56,6 +56,20 @@
   model property, not a harness defect, and not worked around. Also documents that
   reasoning models need a far larger completion budget than a conventional default.
 
+- **A two-model comparison, and a caveat that weakens our own headline.** Two models
+  were run against the same two analysis fixtures in one session with identical
+  settings. They came back differently: the 3B produced `TOOL_CALL_REQUESTED` on
+  both, the 30B produced `SUCCESS` and `TRUNCATED`. So the harness discriminates
+  between models on real output.
+
+  But one fixture had already passed at those exact settings and then truncated at
+  them. Reasoning models on GPU are not reproducible at temperature 0 -- batching and
+  floating-point noise perturb the reasoning length, and once that is the binding
+  constraint it decides pass versus truncation. Recorded because it cuts against us:
+  every figure in the docs is n=1 unless stated, and "two fixtures passed" is really
+  "one passed unretried, one passed once and truncated once". This is what
+  `--single-attempts` and the sample-size scope limits exist for.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
