@@ -323,22 +323,53 @@ class OverheadAccountingTests(HarnessTestCase):
         self.addCleanup(runner.close)
         return runner.run_task(self.task(task_id), stages).attempts[0].metrics
 
-    def test_a_slow_model_is_not_billed_to_the_harness(self):
+    #: Cached (added_model, added_overhead) from one fast and one slow run.
+    _differential = None
+
+    def overhead_differential(self):
+        """How much overhead the harness reports when the model gets slower.
+
+        The invariant is a *difference*, not a threshold: whatever genuine
+        harness work costs on this machine -- running the campaign oracle is
+        seconds of pytest, and more when the box is busy -- it should cost the
+        same whether or not the model was slow. Only the delta can be asserted
+        tightly.
+
+        The earlier version of these tests compared ``harness_overhead_s``
+        against a fixed 3.0s of simulated model latency. That passed on an idle
+        machine and failed under load, because real harness work had grown past
+        3s. A test whose verdict depends on how busy the host is is the same
+        defect ``UndeclaredDependencyTests`` was written to prevent, so it is
+        fixed here rather than papered over with a bigger constant.
+        """
         from test_realtask_support import AUTO_INGEST_BUG_FIX, patch_reply
 
-        # The live symptom was harness_overhead_s == model_wall_s. Make the
-        # model slow enough that genuine harness work (~1.7s of pytest) cannot
-        # be mistaken for it.
-        slow = self.run_with_latency(
-            3.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+        if OverheadAccountingTests._differential is None:
+            fast = self.run_with_latency(
+                0.2, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+            )
+            slow = self.run_with_latency(
+                5.0, [patch_reply()], ["single"], AUTO_INGEST_BUG_FIX
+            )
+            OverheadAccountingTests._differential = (
+                slow.model_wall_s - fast.model_wall_s,
+                slow.harness_overhead_s - fast.harness_overhead_s,
+            )
+        return OverheadAccountingTests._differential
+
+    def test_a_slow_model_is_not_billed_to_the_harness(self):
+        added_model, added_overhead = self.overhead_differential()
+        self.assertGreater(
+            added_model, 3.0,
+            "the slow run was not actually slower by {}s; the fixture cannot "
+            "be measuring what it claims".format(added_model),
         )
-        self.assertGreaterEqual(slow.model_wall_s, 2.5)
         self.assertLess(
-            slow.harness_overhead_s, slow.model_wall_s,
-            "harness overhead {} is not less than the {}s the model spent; "
+            added_overhead, 0.5,
+            "adding {:.1f}s of model time added {:.1f}s of harness overhead; "
             "the window around _call is billing model time to the harness, "
             "exactly as the first live run showed".format(
-                slow.harness_overhead_s, slow.model_wall_s
+                added_model, added_overhead
             ),
         )
 
@@ -354,15 +385,15 @@ class OverheadAccountingTests(HarnessTestCase):
             places=3,
         )
         # With the model time removed from overhead, total is model + genuine
-        # harness work. Before the fix it was very close to 2x the model time.
+        # harness work. Before the fix it was very close to 2x the model time,
+        # so the leftover tracks model latency. Stated as a difference rather
+        # than a ratio: see overhead_differential for why an absolute threshold
+        # here would depend on how loaded the host is.
+        _added_model, added_overhead = self.overhead_differential()
         self.assertLess(
-            metrics.total_wall_s - metrics.model_wall_s,
-            metrics.model_wall_s,
-            "total_wall_s minus model_wall_s is {} while the model took {}; "
-            "the model's time is being counted twice".format(
-                metrics.total_wall_s - metrics.model_wall_s,
-                metrics.model_wall_s,
-            ),
+            added_overhead, 0.5,
+            "total_wall_s minus model_wall_s grows with model latency, so the "
+            "model's time is being counted twice",
         )
 
     def test_a_swarm_charges_each_role_call_once(self):

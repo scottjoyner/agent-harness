@@ -1103,6 +1103,43 @@ truncation: the module knows, and nobody looks.
 stubbed: an analysis deliverable judges the answer text, so the snapshot is never
 imported. That is the reason stated, not a blanket exemption.
 
+### A refactor whose "cleanup" is the bug
+
+`auto_router_idempotency_connection_lifetime` is the fixture that makes
+`small_refactor` a measurement rather than a style preference.
+
+The task is ordinary: four copies of a connection-lifetime guard should become
+one helper. What makes it worth freezing is that the guard is *load-bearing*.
+`_connect` hands back a single shared connection for `:memory:`, so
+`if not self.in_memory` is the only reason an in-memory ledger survives its first
+operation. A refactor that tidies it to a plain `finally: conn.close()` removes
+four lines, passes every structural assertion in the oracle, and then raises
+`sqlite3.ProgrammingError: Cannot operate on a closed database` on every call
+after the first.
+
+So the oracle asserts both halves, and the behavioural half is not decorative: it
+drives twelve reserve/get/transition cycles through one in-memory ledger. Validated
+in four states before shipping —
+
+| state | outcome |
+|---|---|
+| unmodified | 3 structural failures, 9 behavioural passes |
+| reference helper | 12 passed |
+| guard tidied away | 7 failures |
+
+A second trap is pinned for the same reason. `_database_path` keeps a leading
+slash, so `sqlite:///ledger.sqlite3` resolves to the absolute path
+`/ledger.sqlite3`. That reads as a bug, and a refactor gathering the connection
+setup would be tempted to normalise it — which changes where the ledger is
+written. The oracle pins the current parsing, quirks included, so normalising it
+fails.
+
+One methodological note, recorded because I got it wrong first: the structural
+check is a regex matching a *guarded* close, not a count of
+`if not self.in_memory`. `__init__` also branches on `in_memory`, to create the
+parent directory. A bare substring count would have flagged that legitimate second
+use and made the fixture unsatisfiable by a correct answer.
+
 ## 12. Tests
 
 Everything here runs in CI on every push and pull request

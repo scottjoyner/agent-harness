@@ -4,6 +4,41 @@
 
 ### Added
 
+- **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
+  the last family that was still measured on a single codebase.
+  `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
+  places (`_init_db`, `reserve`, `get`, `transition`), each spelling out the same
+  acquire / commit-or-rollback / close shape, three of them opening their own
+  `BEGIN IMMEDIATE`.
+
+  The point of the fixture is that one of those four copies is load-bearing.
+  `_connect` returns a single shared connection for `:memory:`, so
+  `if not self.in_memory` is the only reason an in-memory ledger survives past its
+  first operation. A refactor that tidies it into a plain `finally: conn.close()`
+  satisfies every structural assertion and then raises
+  `sqlite3.ProgrammingError` on every later call. The oracle drives twelve
+  reserve/get/transition cycles through one in-memory ledger so that version is
+  rejected rather than rewarded.
+
+  A second trap is pinned: `_database_path` keeps the leading slash, so
+  `sqlite:///ledger.sqlite3` resolves to the absolute path `/ledger.sqlite3`. That
+  looks wrong, and a refactor gathering connection setup would be tempted to
+  normalise it, silently changing where the ledger is written. The oracle pins the
+  current parsing, quirks included.
+
+  The structural check is a regex, not a substring count: `__init__` also branches
+  on `in_memory` to create the parent directory, and a bare count would have
+  forbidden that legitimate second use. My first version had exactly that bug.
+
+- **`TargetedCollateralDamageTests`** — a second collateral-damage tier, tracking
+  `COLLATERAL_DAMAGE_TARGETED`. The existing `CollateralDamageTests` assumes the
+  targeted tier still passes and only the broader tier notices; that is true for the
+  campaign fixture and false here, where the oracle pins behaviour directly and the
+  damage surfaces as a targeted failure. Forcing it into the existing shape would
+  have made that test assert something untrue. Worth stating plainly: a fixture
+  whose collateral damage only showed up in a broader tier would be trusting luck to
+  enforce behaviour preservation. This one does not.
+
 - **`auto_router_task_contract_keyword_precedence`** — a `test_generation` fixture,
   and the first time a second codebase exercises the meta-oracle that executes
   candidate-authored code. `normalize_task_kind` classifies a task by scanning a
