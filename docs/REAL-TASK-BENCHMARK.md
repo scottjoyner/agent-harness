@@ -955,6 +955,66 @@ record is truthful about all of it. Nothing has yet demonstrated that a model ca
 *pass* these fixtures. A reader should treat a non-`SUCCESS` run from a 0.8B model
 as evidence about that model, not about the benchmark.
 
+### A 30B model, and what it exposed about the graders
+
+Every run above used a 0.8B or 3B model, and both fail at the protocol layer before
+producing anything gradeable. That confounded two very different explanations: the
+harness being hard to drive, and the models being too small. It was worth
+separating, because the answer decides whether more fixtures are worth building.
+
+No download was needed. Thirty-two models were already on disk, and reading the GGUF
+headers directly — rather than guessing — settled which would load in the running
+LM Studio build:
+
+| model | outcome |
+|---|---|
+| `ternary-bonsai-2-27b` PTQ1_0 | `llama_model_loader: failed to load model` |
+| `k2-horizon-7b` | `unknown model architecture: 'k2-horizon'` |
+| `meta/muse-glimmer` (30B, llama arch, Q4_K_M) | **loaded in 45.6s** |
+
+Two of three failures were the local runtime being older than the models beside it.
+That is worth recording as a method note: three multi-minute load cycles were
+avoided by reading `general.architecture` out of the file headers and choosing a
+model with an architecture and quantisation this build actually supports.
+
+On `auto_router_contract_shim_single_source` the 30B model's **scout** produced
+`outcome=SUCCESS` in 99.9s with `grounding.expected_overlap` of 1.0 and named the
+file correctly. Its `root_cause` independently reached all three findings the fixture
+was built around, including the subtle one:
+
+> consumers importing from the shim cannot detect they are using a non-canonical,
+> incomplete contract unless they explicitly check `_USING_CANONICAL`
+
+So the protocol wall was **model capability, not a harness defect** — same harness,
+same fixture, 3B against 30B.
+
+A full `--stage single` attempt then produced a valid deliverable, graded
+`TARGETED_TEST_FAILURE` at **3 of 6 findings**. Two of those three failures are
+defects in the grader, not in the answer:
+
+| finding | what the model wrote | what the grader wanted |
+|---|---|---|
+| fallback is a second definition | "falling back to local mirrors … a divergent local implementation" | the literal token `importerror` |
+| failure surfaces at use | "cause **late runtime failures** … **not observable at import time**" | one of `at use` / `later` / `downstream` / `deferred` |
+
+Both are the required finding, said in words the vocabulary does not contain. The
+third failure is genuine: the model reframed `_USING_CANONICAL` as something a
+consumer *could* inspect and never observed that nothing does.
+
+That is the finding worth having. The analysis graders were hardened against
+keyword stuffing, and in doing so they became **lexically brittle** — they reject a
+correct paraphrase for want of a specific word. That is the same failure as
+rewarding stuffed keywords, inverted: instead of counting words, they now require
+particular ones. The harness measures word choice rather than comprehension, and on
+its first real model answer that distinction cost two findings.
+
+This is an open defect in the benchmark, recorded here rather than quietly fixed,
+because the fix trades recall against the anti-stuffing property and that trade is
+worth making deliberately. `LeaveOneOutFindingTests` covers only half the problem —
+it shows a finding is not decoration, not that it is hard to satisfy — so widening a
+vocabulary list is invisible to it. Widening these three lists and re-running
+`MemorisationTests` is the obvious next step; it has not been done yet.
+
 ### The second candidate must not inherit the first one's safety verdict
 
 Scripting a swarm end to end — scout, implementer, reviewer saying "revise",

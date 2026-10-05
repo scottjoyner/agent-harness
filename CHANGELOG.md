@@ -4,6 +4,27 @@
 
 ### Added
 
+- **A live 30B run, which found a defect in the analysis graders.** No download was
+  needed: 32 models were already on disk, and reading GGUF headers directly
+  (`general.architecture`) picked one the running LM Studio build could load --
+  `meta/muse-glimmer`, 30B, llama arch, Q4_K_M -- after a ternary quant and an
+  unsupported architecture both failed to load.
+
+  On `auto_router_contract_shim_single_source` its scout reached `outcome=SUCCESS`
+  with `grounding.expected_overlap` of 1.0, and its `root_cause` independently found
+  all three findings the fixture encodes. **The 0.8B/3B protocol wall was model
+  capability, not a harness defect.**
+
+  A full `--stage single` attempt was then graded `TARGETED_TEST_FAILURE` at 3 of 6
+  findings -- and two of those three are grader false negatives. The model wrote
+  "falling back to local mirrors ... a divergent local implementation" where the
+  grader demanded the literal token `importerror`, and "cause late runtime failures
+  ... not observable at import time" where it accepted only `at use` / `later` /
+  `downstream` / `deferred`. Hardening the graders against keyword stuffing made them
+  lexically brittle, so they now reject correct paraphrases. Recorded in the docs as
+  an open defect rather than quietly fixed, because widening the vocabulary trades
+  recall against the anti-stuffing property.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
