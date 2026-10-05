@@ -1431,3 +1431,91 @@ class EvidenceRootInsideCheckoutTests(HarnessTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CandidateProvenanceTests(HarnessTestCase):
+    """An operator's patch must never read as a model's result.
+
+    ``--scout-file`` records where a recorded scout came from. ``--patch-file``
+    recorded nothing at all, so an attempt a human solved by hand and an attempt a
+    model solved were indistinguishable in ``metrics.json``, ``comparison.json``
+    and the roll-up.
+
+    That is not hypothetical: a live ``--stage review`` run with a hand-written
+    reference patch scored targeted 1/1 and broader 1/1. Pooled, that is a
+    benchmark score nobody earned.
+    """
+
+    def operator_run(self):
+        from test_realtask_support import (
+            AUTO_INGEST_BUG_FIX, REFERENCE_REPAIR, ScriptedResponse,
+        )
+
+        return self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [ScriptedResponse(content="```diff\n" + REFERENCE_REPAIR + "\n```")],
+            ["review"],
+            patch_override=REFERENCE_REPAIR,
+        )
+
+    def test_an_operator_candidate_is_marked_as_such(self):
+        _task, result = self.operator_run()
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.candidate_source, "operator_patch_file")
+
+    def test_the_marker_survives_into_the_written_artifact(self):
+        _task, result = self.operator_run()
+        self.assertEqual(
+            result.attempts[0].metrics.to_dict()["candidate_source"],
+            "operator_patch_file",
+        )
+
+    def test_a_model_candidate_is_marked_as_the_model_s(self):
+        _task, result = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
+        metrics = result.attempts[0].metrics
+        self.assertEqual(metrics.candidate_source, "model")
+        self.assertEqual(metrics.to_dict()["candidate_source"], "model")
+
+    def test_the_attempt_says_it_says_nothing_about_the_model(self):
+        _task, result = self.operator_run()
+        joined = " ".join(result.attempts[0].metrics.notes)
+        self.assertIn("--patch-file", joined)
+        self.assertIn("says nothing about model ability", joined)
+
+    def test_the_marker_survives_the_review_merge_path(self):
+        """The review path is where a hand-maintained merge list lost fields once."""
+        from test_realtask_support import ScriptedResponse
+
+        _task, result = self.run_stages(
+            AUTO_INGEST_BUG_FIX,
+            [ScriptedResponse(content="```diff\n" + REFERENCE_REPAIR + "\n```")],
+            ["review"],
+            patch_override=REFERENCE_REPAIR,
+        )
+        for attempt in result.attempts:
+            self.assertEqual(
+                attempt.metrics.candidate_source, "operator_patch_file",
+                "{} lost its candidate provenance".format(attempt.attempt_id),
+            )
+
+    def test_no_attempt_reaches_the_artifact_without_an_origin(self):
+        for stage in ("single", "swarm", "scout", "implement"):
+            with self.subTest(stage=stage):
+                responses = {
+                    "single": [patch_reply()],
+                    "swarm": [scout_reply(), patch_reply(), review_reply("accept")],
+                    "scout": [scout_reply()],
+                    "implement": [patch_reply()],
+                }[stage]
+                _task, result = self.run_stages(
+                    AUTO_INGEST_BUG_FIX, responses, [stage]
+                )
+                for attempt in result.attempts:
+                    self.assertIn(
+                        attempt.metrics.to_dict().get("candidate_source"),
+                        ("model", "operator_patch_file"),
+                    )
+
+
+if __name__ == "__main__":
+    unittest.main()

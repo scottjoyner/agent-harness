@@ -390,6 +390,48 @@ class ComparisonTests(HarnessTestCase):
         self.assertTrue(best_of(Outcome.TARGETED_TEST_FAILURE,
                                 Outcome.PROTOCOL_FAILURE))
 
+    def test_the_comparison_names_where_each_candidate_came_from(self):
+        """An operator's patch must not read as a model's result."""
+        from realtask.metrics import CANDIDATE_SOURCE_OPERATOR
+
+        operator = AttemptMetrics(
+            attempt_id="t::review", strategy="review", outcome=Outcome.SUCCESS
+        )
+        operator.candidate_source = CANDIDATE_SOURCE_OPERATOR
+        comparison = build_comparison("t", "bug_fix", "f", [operator], None)
+
+        self.assertEqual(
+            comparison["single_attempts_considered"][0]["candidate_source"],
+            "operator_patch_file",
+        )
+        joined = " ".join(comparison["scope_limits"])
+        self.assertIn("--patch-file", joined)
+        self.assertIn("must not be read as a model result", joined)
+
+    def test_a_model_only_comparison_carries_no_such_limit(self):
+        model = AttemptMetrics(
+            attempt_id="t::single", strategy="single", outcome=Outcome.SUCCESS
+        )
+        comparison = build_comparison("t", "bug_fix", "f", [model], None)
+        self.assertEqual(
+            comparison["single_attempts_considered"][0]["candidate_source"], "model"
+        )
+        self.assertFalse(any("--patch-file" in l for l in comparison["scope_limits"]))
+
+    def test_the_swarm_side_origin_is_reported_too(self):
+        from realtask.metrics import CANDIDATE_SOURCE_OPERATOR
+
+        model = AttemptMetrics(
+            attempt_id="t::single", strategy="single", outcome=Outcome.SUCCESS
+        )
+        swarm = AttemptMetrics(
+            attempt_id="t::swarm", strategy="swarm", outcome=Outcome.SUCCESS
+        )
+        swarm.candidate_source = CANDIDATE_SOURCE_OPERATOR
+        comparison = build_comparison("t", "bug_fix", "f", [model], swarm)
+        self.assertEqual(comparison["swarm_candidate_source"], "operator_patch_file")
+        self.assertIn("t::swarm", " ".join(comparison["scope_limits"]))
+
     def test_comparison_handles_a_missing_side(self):
         _t, single = self.run_stages(AUTO_INGEST_BUG_FIX, [patch_reply()], ["single"])
         _t2, swarm = self.single_and_swarm()

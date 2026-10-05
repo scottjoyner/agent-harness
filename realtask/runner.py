@@ -45,6 +45,7 @@ from .roles import (
     ScoutResult,
     requested_tools,
 )
+from .metrics import CANDIDATE_SOURCE_OPERATOR
 from .taxonomy import Outcome
 from .version import MAX_REFINEMENTS, SCHEMA_ROLE_RESULT, SCHEMA_TEST_RESULTS
 
@@ -1171,6 +1172,14 @@ class BenchmarkRunner:
                     states.append(state)
                 else:
                     state = self._new_state(task, "review", ordinal("review"))
+                    # The candidate came from a file, not from a model. Recorded
+                    # on the attempt before anything runs, so no stage of the
+                    # review path can lose it.
+                    state.metrics.candidate_source = CANDIDATE_SOURCE_OPERATOR
+                    state.metrics.notes.append(
+                        "candidate supplied by an operator via --patch-file; "
+                        "this attempt says nothing about model ability"
+                    )
                     states.append(
                         self._run_guarded(
                             state,

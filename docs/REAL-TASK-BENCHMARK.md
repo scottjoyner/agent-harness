@@ -466,6 +466,8 @@ fault, and none of them should erase the attempts that already succeeded.
 what cost?
 
 - best single attempt and the explicit, recorded rule used to pick it
+- **where each candidate came from** (`candidate_source`), and a scope limit when
+  it came from an operator rather than a model
 - quality difference, **component by component**, never a composite
 - cost difference: model calls, model wall time, harness overhead, total wall
   time, tokens
@@ -501,6 +503,11 @@ Same stance as `comparison.json`:
   make sure nothing resembling a verdict cannot appear.
 - Token totals are `null` when any contributing attempt's endpoint omitted usage.
   A partial sum is worse than none. Call counts stay exact.
+- Attempts are counted by `candidate_source`, so an operator-supplied candidate is
+  never pooled into a model's result
+- Artifacts written before provenance existed are bucketed `unknown`, not assumed
+  to be model attempts — the missing value could just as easily have been a
+  hand-written patch
 - A corrupt, foreign-schema or interrupted run lands in `skipped_runs` rather
   than raising: a corpus should never fail to summarise because one run died. A
   manifest whose schema is not `realtask.run_manifest.v1` is skipped, so legacy
@@ -944,6 +951,32 @@ looks like the ceiling being raisable. It isn't — `clamp()` has to be called, 
 runner is what calls it. The bug was in the probe. Worth recording, because the
 instinct on finding a defect is to report the anomaly, and the discipline is to
 check whether the anomaly is real before writing it down.
+
+### Who produced the candidate
+
+`--scout-file` recorded where a recorded scout came from. `--patch-file` recorded
+nothing at all, so an attempt a human solved by hand and an attempt a model solved
+were indistinguishable in `metrics.json`, `comparison.json` and the roll-up.
+
+That is not hypothetical. A live `--stage review` run with a hand-written reference
+patch scored targeted 1/1 and broader 1/1. Pooled into a roll-up, that is a
+benchmark score nobody earned.
+
+`AttemptMetrics.candidate_source` is now `model` or `operator_patch_file`, stamped
+the moment the attempt exists and reported in all three artifacts. It sits on the
+attempt rather than on `PatchMetric` because `PatchMetric` fields are copied by hand
+in `_merge_review` — which is exactly where `safety_ok` and `safety_reason` once
+went missing. Attempt-level placement makes it immune to that class of bug.
+
+The manifest records the operator's file path, its SHA-256 and its length. Hashed,
+not merely named: a path can be rewritten between runs, so the record has to
+identify *which* candidate was judged.
+
+This is the third hand-maintained field list in this harness to drop a field on the
+floor — after the best-single ranking table and `_merge_review` — and the roll-up's
+`_ATTEMPT_FIELDS` was the one that surfaced it here. The pattern is consistent
+enough to be worth naming: **a list of names someone typed is a place for a field to
+go missing, and nothing about it looks wrong when it does.**
 
 ## 12. Tests
 

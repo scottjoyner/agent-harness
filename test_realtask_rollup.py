@@ -62,6 +62,8 @@ def attempt(attempt_id, strategy, outcome, **overrides):
         "refinements_used": 0,
         "refinement_budget": 1,
         "harness_error": None,
+        # Synthetic attempts are model attempts; real metrics.json says so too.
+        "candidate_source": "model",
         "grounding": {"score": 0.75},
         "patch": dict(PATCH),
         "tests": dict(TESTS),
@@ -355,6 +357,101 @@ class RobustnessTests(RollupTestCase):
         self.assertEqual(
             payload["tasks"][0]["attempts"][0]["harness_error"], "RuntimeError: boom"
         )
+
+
+class LegacyArtifactCandidateSourceTests(RollupTestCase):
+    """An artifact written before provenance existed is unknown, not "model".
+
+    Found while adding the field: older ``metrics.json`` files have no
+    ``candidate_source`` key at all, and the first version of the rollup crashed
+    sorting ``None``. Bucketing those as ``"model"`` would be the wrong guess in
+    exactly the direction that flatters a result -- the missing value could just as
+    easily have been an operator-supplied patch.
+    """
+
+    def test_an_absent_source_is_bucketed_as_unknown(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                {"attempt_id": "t1::single", "strategy": "single",
+                 "outcome": Outcome.SUCCESS.value, "model_calls": 1}]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertEqual(payload["attempts_by_candidate_source"], {"unknown": 1})
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("predate candidate-source provenance", joined)
+        self.assertIn("rather than assumed to be", joined)
+
+    def test_unknown_does_not_claim_to_be_a_model_attempt(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                {"attempt_id": "t1::single", "strategy": "single",
+                 "outcome": Outcome.SUCCESS.value, "model_calls": 1}]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertNotIn("model", payload["attempts_by_candidate_source"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class CandidateSourceRollupTests(RollupTestCase):
+    """A roll-up must not count an operator's patch as a model's result.
+
+    Found by running the harness for real: a ``--stage review`` run with a
+    hand-written reference patch scored targeted 1/1 and broader 1/1, and the
+    roll-up had no way to say so.
+    """
+
+    def seed_mixed(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value)]),
+        )
+        self.write_run(
+            "r2",
+            manifest("r2"),
+            metrics("t2", "bug_fix", [
+                dict(attempt("t2::review", "review", Outcome.SUCCESS.value),
+                     candidate_source="operator_patch_file")]),
+        )
+        return summarize_runs(self.runs).to_dict()
+
+    def test_the_rollup_counts_attempts_by_candidate_source(self):
+        payload = self.seed_mixed()
+        self.assertEqual(
+            payload["attempts_by_candidate_source"],
+            {"model": 1, "operator_patch_file": 1},
+        )
+        self.assertEqual(
+            payload["aggregate"]["by_candidate_source"],
+            {"model": 1, "operator_patch_file": 1},
+        )
+
+    def test_an_operator_attempt_adds_a_scope_limit(self):
+        payload = self.seed_mixed()
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("--patch-file", joined)
+        self.assertIn("not about", joined)
+        self.assertIn("any model's ability", joined)
+
+    def test_a_model_only_rollup_carries_no_such_limit(self):
+        self.seed()
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertEqual(payload["attempts_by_candidate_source"], {"model": 2})
+        self.assertFalse(any("--patch-file" in lim for lim in payload["scope_limits"]))
+
+    def test_the_limit_survives_alongside_the_other_ones(self):
+        payload = self.seed_mixed()
+        joined = " ".join(payload["scope_limits"])
+        self.assertIn("does not establish that a model qualifies", joined)
+        self.assertIn("belongs to an authoritative controller", joined)
 
 
 if __name__ == "__main__":

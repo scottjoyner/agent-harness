@@ -24,7 +24,7 @@ _ATTEMPT_FIELDS = (
     "attempt_id", "strategy", "outcome", "task_success", "model_calls",
     "model_wall_s", "harness_overhead_s", "total_wall_s", "prompt_tokens",
     "completion_tokens", "total_tokens", "refinements_used", "refinement_budget",
-    "harness_error",
+    "harness_error", "candidate_source",
 )
 
 
@@ -49,6 +49,15 @@ class Rollup:
     endpoint_identities: List[Dict[str, Any]] = field(default_factory=list)
     integrity: Dict[str, Any] = field(default_factory=dict)
     harness_errors: List[str] = field(default_factory=list)
+
+    def _attempts_by_candidate_source(self) -> Dict[str, int]:
+        """How many pooled attempts judged a model's candidate vs an operator's."""
+        counts: Dict[str, int] = {}
+        for task in self.tasks:
+            for attempt in task["attempts"]:
+                source = attempt.get("candidate_source") or "unknown"
+                counts[source] = counts.get(source, 0) + 1
+        return dict(sorted(counts.items()))
 
     def _scope_limits(self) -> List[str]:
         """The standing limits, plus one earned by what actually got pooled.
@@ -75,6 +84,25 @@ class Rollup:
             "This artifact records evidence only. What to do with it belongs to an "
             "authoritative controller.",
         ]
+        by_source = self._attempts_by_candidate_source()
+        total_attempts = sum(by_source.values())
+        operator = by_source.get("operator_patch_file", 0)
+        if operator:
+            limits.append(
+                "{} of {} pooled attempt(s) judged a candidate supplied by an "
+                "operator via --patch-file rather than one produced by a model. "
+                "They are evidence about the fixture and the harness, not about "
+                "any model's ability; aggregate.by_candidate_source separates "
+                "them.".format(operator, total_attempts)
+            )
+        unknown = by_source.get("unknown", 0)
+        if unknown:
+            limits.append(
+                "{} of {} pooled attempt(s) predate candidate-source "
+                "provenance, so where their candidates came from is unrecorded. "
+                "They are counted under 'unknown' rather than assumed to be "
+                "model attempts.".format(unknown, total_attempts)
+            )
         shas = sorted(set(self.harness_shas))
         if len(shas) > 1:
             limits.append(
@@ -95,6 +123,7 @@ class Rollup:
             "run_ids": list(self.run_ids),
             "harness_git_shas": sorted(set(self.harness_shas)),
             "mixed_harness_revisions": len(set(self.harness_shas)) > 1,
+            "attempts_by_candidate_source": self._attempts_by_candidate_source(),
             "model_runtimes": self.endpoint_identities,
             "runs_with_integrity_failures": sorted(self.integrity.get("dirty_runs", [])),
             "harness_errors": list(self.harness_errors),
@@ -119,8 +148,18 @@ class Rollup:
         by_family: Dict[str, Dict[str, Any]] = {}
         by_strategy: Dict[str, Dict[str, Any]] = {}
 
+        by_candidate_source: Dict[str, int] = {}
         for attempt in attempts:
             by_outcome[attempt["outcome"]] = by_outcome.get(attempt["outcome"], 0) + 1
+            # An attempt whose candidate came from --patch-file was solved by an
+            # operator. Counting it the same as a model's is how a hand-written
+            # reference patch becomes a benchmark score.
+            #
+            # A null here means the artifact predates the field. That is bucketed
+            # as "unknown" rather than assumed to be "model": the assumption would
+            # be wrong in exactly the direction that flatters the result.
+            source = attempt.get("candidate_source") or "unknown"
+            by_candidate_source[source] = by_candidate_source.get(source, 0) + 1
             strat = by_strategy.setdefault(
                 attempt["strategy"],
                 {"attempts": 0, "successes": 0, "model_calls": 0},
@@ -151,6 +190,7 @@ class Rollup:
             "outcome_histogram": dict(sorted(by_outcome.items())),
             "by_task_family": dict(sorted(by_family.items())),
             "by_strategy": dict(sorted(by_strategy.items())),
+            "by_candidate_source": dict(sorted(by_candidate_source.items())),
             "totals": {
                 "model_calls": _sum(attempts, "model_calls"),
                 "model_wall_s": _sum(attempts, "model_wall_s"),

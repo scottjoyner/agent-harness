@@ -349,6 +349,35 @@ class StandaloneStageTests(CliTestCase):
         self.assertTrue((run_dir / "patch.diff").is_file())
         self.assertTrue((run_dir / "test-results.json").is_file())
 
+    def test_an_operator_patch_is_recorded_in_the_manifest(self):
+        """Provenance has to survive to disk, not just to memory.
+
+        Hashed rather than merely named: a path can be rewritten between runs, so
+        the record must identify *which* candidate was judged.
+        """
+        import hashlib
+
+        server = self.endpoint({"reviewer": review_payload()})
+        patch_file = self.tmp / "candidate.diff"
+        patch_file.write_text(REFERENCE_REPAIR)
+        self.run_stage("review", server, "--patch-file", str(patch_file))
+
+        manifest = json.loads((self.run_dirs()[0] / "manifest.json").read_text())
+        override = manifest["options"]["candidate_override"]
+        self.assertIsNotNone(override, "no candidate provenance in the manifest")
+        self.assertEqual(override["path"], str(patch_file))
+        self.assertEqual(override["bytes"], len(REFERENCE_REPAIR.encode()))
+        self.assertEqual(
+            override["sha256"],
+            hashlib.sha256(REFERENCE_REPAIR.encode()).hexdigest(),
+        )
+
+    def test_a_model_run_records_no_candidate_override(self):
+        server = self.endpoint({"single": patch_payload()})
+        self.run_stage("single", server)
+        manifest = json.loads((self.run_dirs()[0] / "manifest.json").read_text())
+        self.assertIsNone(manifest["options"]["candidate_override"])
+
     def test_review_stage_consumes_a_patch_file(self):
         server = self.endpoint({"reviewer": review_payload()})
         patch_file = self.tmp / "candidate.diff"

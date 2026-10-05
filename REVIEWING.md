@@ -56,6 +56,7 @@ CI runs all of the above on Python 3.11 and 3.12 on every push.
 | Acceptance does not depend on the host | Pillow stub + `UndeclaredDependencyTests` |
 | No patch escapes the worktree | `test_realtask_containment.py` |
 | Cost accounting is not double-counted | `OverheadAccountingTests`, verified live |
+| An operator's patch cannot read as a model's result | `CandidateProvenanceTests` + rollup/comparison limits |
 | A model can diagnose a real defect | **verified against a live endpoint** |
 | A model can *pass* a fixture | **not demonstrated** — no local model can write a unified diff |
 

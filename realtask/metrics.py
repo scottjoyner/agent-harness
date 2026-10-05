@@ -228,6 +228,17 @@ class ReviewMetric:
         }
 
 
+#: The candidate under test was produced by a model role.
+CANDIDATE_SOURCE_MODEL = "model"
+
+#: The candidate under test was supplied by an operator via ``--patch-file``. An
+#: attempt with this origin says nothing about the model's ability, and every
+#: artifact that reports it says so.
+CANDIDATE_SOURCE_OPERATOR = "operator_patch_file"
+
+CANDIDATE_SOURCES = (CANDIDATE_SOURCE_MODEL, CANDIDATE_SOURCE_OPERATOR)
+
+
 @dataclass
 class AttemptMetrics:
     """One attempt (``single`` or ``swarm``) on one task."""
@@ -248,6 +259,19 @@ class AttemptMetrics:
     #: Set when the harness itself failed unexpectedly, as distinct from anything
     #: the model did. The attempt still terminates and still writes evidence.
     harness_error: Optional[str] = None
+    #: Where the candidate this attempt judged came from: ``"model"`` when a role
+    #: produced it, ``"operator_patch_file"`` when an operator supplied it via
+    #: ``--patch-file``.
+    #:
+    #: This lives on the attempt rather than on :class:`PatchMetric` because
+    #: ``PatchMetric`` fields are copied by hand in ``_merge_review``, which is
+    #: exactly where ``safety_ok`` and ``safety_reason`` once went missing. Attempt
+    #: level placement makes it immune to that whole class of bug.
+    #:
+    #: Without it, an attempt a human solved by hand and one a model solved are
+    #: indistinguishable in ``metrics.json``, ``comparison.json`` and the roll-up --
+    #: so an operator-assisted review run reads as a model result.
+    candidate_source: str = CANDIDATE_SOURCE_MODEL
 
     # -- aggregates, all derived, none authoritative ----------------------
 
@@ -306,6 +330,7 @@ class AttemptMetrics:
             "refinements_used": self.refinements_used,
             "refinement_budget": self.refinement_budget,
             "harness_error": self.harness_error,
+            "candidate_source": self.candidate_source,
             "outcomes_seen": [o.value for o in self.outcomes_seen],
             "notes": list(self.notes),
             "calls": [c.to_dict() for c in self.calls],

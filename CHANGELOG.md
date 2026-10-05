@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixed
+
+- **An operator-supplied patch was indistinguishable from a model's result.**
+  `--scout-file` recorded provenance; `--patch-file` recorded nothing. Attempts are
+  now stamped `candidate_source` (`model` or `operator_patch_file`) and it is
+  reported in `metrics.json`, `comparison.json` and the roll-up, with a scope limit
+  whenever an operator-supplied candidate is involved. The manifest records the
+  operator's path, SHA-256 and length.
+
+  Found by running the harness for real: a live `--stage review` run with a
+  hand-written reference patch scored targeted 1/1 and broader 1/1, and nothing in
+  the evidence said a human had done it.
+
+  The field lives on `AttemptMetrics`, not `PatchMetric`, because `PatchMetric`
+  fields are copied by hand in `_merge_review` — where `safety_ok` and
+  `safety_reason` once went missing. This is the third hand-maintained field list
+  in the harness to drop a field; the roll-up's `_ATTEMPT_FIELDS` was the one that
+  surfaced it.
+
+- **Artifacts predating provenance are bucketed `unknown`, not assumed to be model
+  attempts.** The first version of the roll-up crashed sorting `None`, and the
+  obvious repair — defaulting to `model` — would have been the wrong guess in
+  exactly the direction that flatters a result.
+
 ### Verified
 
 - **The last unexercised live link is a model writing a patch, and the obvious
