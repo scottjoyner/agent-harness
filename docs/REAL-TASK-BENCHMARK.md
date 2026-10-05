@@ -1072,10 +1072,22 @@ So `INVALID_PATCH` was the correct outcome, and `git apply`/`patch` agree. This 
 not the pedantry of demanding a `diff --git` header — the harness accepted the
 headerless form and still rejected the content.
 
-That makes the picture consistent across three model sizes, for different reasons:
-the 0.8B and 3B models emitted whole files where a diff belonged, and a 30B
-reasoning model emits diffs whose line counts it cannot get right. **No locally
+Escalating further did not help. `ornith-1.5-35b-a3b-apex-mtp` — a 35B MoE with
+3B active, the strongest thing on this machine that fits in 34GB of VRAM with
+partial offload — was loaded and given the same fixture. It spent 741s and its whole
+12,000-token budget reasoning, and emitted nothing.
+
+That makes the picture consistent across four models from 0.8B to 35B, for
+different reasons: the 0.8B and 3B models emitted whole files where a diff
+belonged, and the two reasoning models burn their entire budget thinking — the 30B
+reached a diff at 20,000 tokens and got the line counts wrong. **No locally
 available model can produce an applicable unified diff.**
+
+A practical note for anyone running this: reasoning models need a completion budget
+proportional to how much they think, and the useful floor here is far above a
+conventional default. The 30B needed 8,192 just to finish a 6KB analysis fixture,
+and 20,000 to reach a patch at all. Treating a `TRUNCATED` result from such a model
+as a model failure would be wrong; it is a budget setting.
 
 This is a property of the models, not a defect in the harness, and it is worth
 stating plainly rather than working around: counting hunk lines is a real skill, and
