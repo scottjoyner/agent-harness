@@ -1043,6 +1043,47 @@ An in-band stream error and a reasoning model that never emits content were each
 mapped onto the nearest available wrong answer, and an operator would have gone
 looking for a model problem in both cases.
 
+#### Two models, same fixtures, same settings — and a reproducibility caveat
+
+Everything above measures one model. That is not enough to claim what this harness
+exists for, which is telling models apart. So two were run against the same two
+analysis fixtures in one session, with identical settings: `--stage single`,
+`--temperature 0`, `--max-tokens 8192`, same harness commit.
+
+| fixture | `toolcall-v5-3b` (3B) | `meta/muse-glimmer` (30B) |
+|---|---|---|
+| `auto_ingest_plan_shorts_contract` | `TOOL_CALL_REQUESTED`, 319.5s | **SUCCESS**, 109.1s |
+| `auto_ingest_shorts_plan_review` | `TOOL_CALL_REQUESTED`, 282.4s | `TRUNCATED`, 1050.4s |
+
+Different outcomes on identical fixtures under identical settings, so the harness
+does discriminate between models on real output rather than only on synthetic
+candidates. The 3B never produced a gradeable reply; the 30B did.
+
+**The caveat matters more than the table.** `auto_ingest_shorts_plan_review` had
+already passed at these exact settings earlier in the session — `muse30b-8k`,
+`completion_tokens: 4003`, `finish_reason: "stop"`, `SUCCESS` — and on this run the
+same model, same fixture, same `--max-tokens 8192` and same `--temperature 0` ran
+for 1050s and was cut off. Reasoning models on GPU are **not reproducible at
+temperature 0**: batching and floating-point non-determinism perturb the reasoning
+trajectory, and once reasoning length is the binding constraint, a small
+perturbation decides pass versus truncation.
+
+Two consequences, both of which cut against the numbers in this document:
+
+- **A single run is a sample, not a measurement.** Every figure above is n=1 unless
+  stated, and the one fixture measured twice gave both answers. This is precisely
+  why `--single-attempts`, `--swarm-attempts` and the sample-size scope limits exist;
+  they are not decoration.
+- **The "two fixtures passed" claim needs its exact shape.** One fixture passed and
+  was not retried; the other passed once and truncated once at identical settings.
+  The honest statement is that a 30B model passes analysis fixtures whose reasoning
+  fits its budget, and that whether it fits is not currently predictable from a
+  single run.
+
+It is worth being explicit that this is a property of the *models and the hardware*,
+not of the harness. The harness did the same thing both times and reported both
+outcomes faithfully, including the token counts that explain the difference.
+
 #### The patch half is still unmeasured — and now known to be out of reach
 
 Eight of the twelve fixtures need a unified diff. None has been attempted by a real
