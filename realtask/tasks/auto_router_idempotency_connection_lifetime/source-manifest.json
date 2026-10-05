@@ -1,0 +1,20 @@
+{
+  "capture_note": "Bounded snapshot of the files this fixture binds. Produced by reading the named checkout; the fixture never depends on that checkout remaining available or unmodified.",
+  "captured_at": "2026-10-02T00:00:00Z",
+  "files": [
+    {
+      "path": "auto_router/request_idempotency.py",
+      "sha256": "012e937ea59983ae9ec35506baa7a5301f81e2d2489a94a31de1cfacc3b1433e",
+      "size_bytes": 15009
+    },
+    {
+      "path": "auto_router/settings.py",
+      "sha256": "46f51b2abafc175aa79a978cf6f9ea301c58ea5527812e85cfb56dd4b0287f7d",
+      "size_bytes": 7096
+    }
+  ],
+  "head": "7575d2b1400a5d799c9710927366cf1523ad4cd3",
+  "repository": "scottjoyner/auto-router",
+  "root_dir": "source",
+  "schema": "realtask.source_manifest.v1"
+}

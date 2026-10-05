@@ -539,6 +539,7 @@ Same stance as `comparison.json`:
 | `assistx_allocation_llm_capability_gate` | `code_review` | analysis | a capability gate that admits any node for `llm` tasks, and suppresses the diagnostic that would show it |
 | `auto_router_contract_shim_single_source` | `contract_reasoning` | analysis | a shim that advertises one source of truth and keeps a silent second definition, hollow trace types and a drifting version literal |
 | `auto_router_task_contract_keyword_precedence` | `test_generation` | patch | first-substring-match classification, so one incidental keyword decides a task's whole contract |
+| `auto_router_idempotency_connection_lifetime` | `small_refactor` | patch | a connection-lifetime guard repeated four times, one copy of which is load-bearing |
 
 ### Corpus shape
 
@@ -551,7 +552,7 @@ that share no code, no author, and no bug class with the campaign:
 | | repositories | distinct source identities | families | families outside the campaign repo |
 |---|---|---|---|---|
 | campaign | 1 | 1 | 5 | 0 |
-| corpus | 3 | 8 | 5 | 4 |
+| corpus | 3 | 9 | 5 | 5 |
 
 Read that last column before drawing a conclusion from "five families". Bug
 diversity and *task-type* diversity are different things, and only the first is
@@ -567,10 +568,11 @@ nor "reviews" is measured on one codebase. Four of the five families —
 `bug_fix`, `code_review`, `contract_reasoning` and `test_generation` — reach outside
 the campaign.
 
-The remaining asymmetry, stated rather than left for a reader to infer from a count
-of families: `small_refactor` is now the only family confined to the campaign
-repository and its single defect. So a model weak at refactoring is still measured
-on one codebase only.
+Every family now reaches outside the campaign repository, and both deliverable
+types span all three repositories. What is *not* yet claimed: the corpus is eleven
+fixtures over nine source identities, so several defects still sit in a file that
+another fixture already uses, and no family has more than two fixtures. A model can
+still do well by pattern-matching one repository's shape.
 
 One deliberate exception to the "different defect" rule:
 `auto_router_task_contract_keyword_precedence` shares its source identity with

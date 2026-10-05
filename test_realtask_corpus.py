@@ -32,6 +32,8 @@ from realtask.version import SCHEMA_TASK
 REFERENCE_SOLUTIONS: Dict[str, str] = {
     "auto_ingest_plan_shorts_live_driver": "test_realtask_reference_live_driver.diff",
     "auto_ingest_shorts_driver_helper": "test_realtask_reference_refactor.diff",
+    "auto_router_idempotency_connection_lifetime":
+        "test_realtask_reference_idempotency_lifetime.diff",
     "auto_router_task_contract_lane_mismatch": "test_realtask_reference_task_contract.diff",
     "auto_router_settings_latency_cache_path": "test_realtask_reference_settings.diff",
     "assistx_answers_store_cursor_drops_ties": "test_realtask_reference_answers_store.diff",
@@ -933,6 +935,7 @@ class DerivedArtifactTests(unittest.TestCase):
         self.assertLessEqual(
             on_disk - registered,
             {"test_realtask_reference_refactor.diff",
+             "test_realtask_reference_idempotency_lifetime.diff",
              "test_realtask_reference_regression.diff",
              "test_realtask_reference_settings.diff",
              "test_realtask_reference_task_contract.diff",
