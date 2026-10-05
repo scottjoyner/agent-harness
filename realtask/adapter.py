@@ -458,7 +458,22 @@ class OpenAIChatAdapter(ChatAdapter):
             with urllib.request.urlopen(http, timeout=self.config.timeout_s) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8", errors="replace").strip()
-                    if not line or not line.startswith("data:"):
+                    if not line:
+                        continue
+                    if not line.startswith("data:"):
+                        # A server may answer 200 with a bare JSON error instead
+                        # of an SSE frame. Same silent-empty outcome if skipped.
+                        if line.startswith("{"):
+                            try:
+                                bare = json.loads(line)
+                            except json.JSONDecodeError:
+                                bare = None
+                            if isinstance(bare, dict) and isinstance(
+                                bare.get("error"), (dict, str)
+                            ):
+                                raise _EndpointRejected(
+                                    400, json.dumps(bare["error"])[:600]
+                                )
                         continue
                     data = line[5:].strip()
                     if data == "[DONE]":
@@ -467,6 +482,19 @@ class OpenAIChatAdapter(ChatAdapter):
                         chunk = json.loads(data)
                     except json.JSONDecodeError:
                         continue
+                    # A server-side error delivered over SSE arrives as
+                    # ``event: error`` followed by ``data: {"error": {...}}``.
+                    # Some servers answer HTTP 200 and only then report the
+                    # refusal in-band -- a context overflow looks exactly like
+                    # this. Skipping it (there are no ``choices``) made the
+                    # attempt look like a model that returned nothing, which is
+                    # a false record: the truth was that the request was
+                    # refused. Surface it as a rejection so the caller's
+                    # degrade ladder can drop a parameter or report the reason.
+                    if isinstance(chunk.get("error"), (dict, str)):
+                        raise _EndpointRejected(
+                            400, json.dumps(chunk["error"])[:600]
+                        )
                     if isinstance(chunk.get("timings"), dict):
                         server_timings = dict(chunk["timings"])
                     chunk_usage = _usage_from(chunk)

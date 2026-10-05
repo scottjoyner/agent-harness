@@ -294,6 +294,21 @@ class BenchmarkRunner:
         state.raw[role.value] = response.content
 
         if not response.content.strip():
+            # Empty *and* truncated is not an empty answer. A reasoning model
+            # can spend an entire completion budget thinking and emit no
+            # deliverable at all, which was recorded here as EMPTY_OUTPUT with
+            # no note -- filing a budget problem as a model problem, with a
+            # remedy that does not work. Found by running against a real 30B:
+            # finish_reason "length", exactly the cap consumed, zero bytes.
+            if response.finish_reason == "length":
+                state.note(Outcome.TRUNCATED)
+                state.metrics.notes.append(
+                    "the model spent its whole completion budget without "
+                    "emitting a deliverable (finish_reason=length); this is a "
+                    "truncation rather than an empty answer, and the remedy is "
+                    "a larger --max-tokens"
+                )
+                return response, Outcome.TRUNCATED
             state.note(Outcome.EMPTY_OUTPUT)
             return response, Outcome.EMPTY_OUTPUT
 
