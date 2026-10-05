@@ -866,6 +866,128 @@ class LeaveOneOutFindingTests(HarnessTestCase):
                 self.assertNotEqual(self._judge_quietly(task_id, tmp), 0)
 
 
+class FailureEvidenceTests(HarnessTestCase):
+    """A failed attempt must say *why*, in the artifact, not just that it failed.
+
+    ``metrics.json`` carries each acceptance command's stdout, which for an
+    analysis fixture is the grader's per-finding report. That is the difference
+    between an operator reading "this model missed the capability gate" and
+    reading ``TARGETED_TEST_FAILURE`` and going to look at the source.
+
+    Nothing asserted that. The stdout is capped at 8000 characters, the grader's
+    output could grow, and an artifact that silently degraded to a bare verdict
+    would look entirely healthy in every other test. This pins the property on
+    the file on disk, not on the in-memory object, because the file is what a
+    reader opens.
+
+    The near-miss answers are built the same way
+    :class:`LeaveOneOutFindingTests` builds them, so the two tests cannot drift
+    apart: each drops the sentences carrying one finding's vocabulary, and here
+    we additionally require the artifact to name that finding.
+    """
+
+    def _near_miss(self, task_id: str, finding_index: int):
+        """The reference answer with one finding's evidence removed.
+
+        The sentences are stripped from every string in the payload rather than
+        from the raw text, because the answer must stay valid JSON. An earlier
+        version flattened the prose and the attempt came back
+        ``PROTOCOL_FAILURE`` -- which is the harness correctly refusing a
+        malformed reply, and useless here, because the point is to grade a
+        well-formed answer that is missing one finding.
+        """
+        import re
+
+        grader = load_grader(task_id)
+        name, all_of, any_of = grader.REQUIRED_FINDINGS[finding_index]
+        needles = [n for n in list(all_of) + list(any_of) if n]
+        payload = json.loads(reference_answer(task_id))
+        removed = []
+
+        def strip(value):
+            if isinstance(value, str):
+                sentences = re.split(r"(?<=[.!?])\s+", value)
+                kept = [
+                    s for s in sentences
+                    if not any(n.lower() in s.lower() for n in needles)
+                ]
+                if len(kept) < len(sentences):
+                    removed.append(True)
+                return " ".join(kept)
+            if isinstance(value, list):
+                return [strip(v) for v in value]
+            if isinstance(value, dict):
+                return {k: strip(v) for k, v in value.items()}
+            return value
+
+        stripped = strip(payload)
+        self.assertTrue(removed, "{}: nothing carried {!r}".format(task_id, name))
+        path = self.tmp / "answer.json"
+        path.write_text(json.dumps(stripped, indent=2), encoding="utf-8")
+        return path, name
+
+    def test_a_failed_attempt_names_the_missing_finding_on_disk(self):
+        for index, task_id in enumerate(ANALYSIS_TASKS):
+            grader = load_grader(task_id)
+            position = index % len(grader.REQUIRED_FINDINGS)
+            answer, finding = self._near_miss(task_id, position)
+            from test_realtask_support import ScriptedResponse
+
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content=answer.read_text())], ["single"]
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertIn(
+                    Outcome.TARGETED_TEST_FAILURE, state.outcomes,
+                    "a wrong answer must be recorded as a wrong answer, not as "
+                    "a protocol or tool failure",
+                )
+                artifact = result.run_dir.role_file("single", "metrics.json")
+                self.assertTrue(artifact.is_file(), artifact)
+                blob = json.loads(artifact.read_text(encoding="utf-8"))
+                recorded = "\n".join(
+                    command.get("stdout", "")
+                    for command in blob["tests"]["targeted"]
+                )
+                self.assertIn(
+                    "[FAIL]", recorded,
+                    "{}: the artifact records the failure without saying which "
+                    "finding was missed".format(task_id),
+                )
+                # The grader prints its own finding label; require a distinctive
+                # fragment of it so this cannot pass on an unrelated FAIL line.
+                fragment = finding.split("(")[0].strip()[:40]
+                self.assertIn(
+                    fragment.lower(), recorded.lower(),
+                    "{}: the artifact does not name the missed finding {!r}".format(
+                        task_id, fragment
+                    ),
+                )
+
+    def test_a_passing_attempt_records_no_missing_finding(self):
+        for task_id in ANALYSIS_TASKS:
+            from test_realtask_support import ScriptedResponse
+
+            _task, result = self.run_stages(
+                task_id, [ScriptedResponse(content=reference_answer(task_id))],
+                ["single"],
+            )
+            state = result.attempts[0]
+            with self.subTest(task=task_id):
+                self.assertTrue(state.metrics.tests.targeted_all_passed)
+                artifact = result.run_dir.role_file("single", "metrics.json")
+                recorded = "\n".join(
+                    command.get("stdout", "")
+                    for command in json.loads(artifact.read_text())["tests"]["targeted"]
+                )
+                self.assertNotIn(
+                    "[FAIL]", recorded,
+                    "{}: a passing attempt must not ship failing findings in its "
+                    "own evidence".format(task_id),
+                )
+
+
 class AnalysisSatisfiableTests(HarnessTestCase):
     """The reference answer has to survive the whole runner, not just the grader.
 
