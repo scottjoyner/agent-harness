@@ -1291,3 +1291,109 @@ class DocumentationCoverageTests(unittest.TestCase):
         self.assertIn("billed to the harness a second time", changelog)
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeliverableCoverageDisclosureTests(unittest.TestCase):
+    """The corpus must not imply a breadth of coverage it does not have.
+
+    The shipped-fixtures table says "five families", and that is true. It is also
+    misleading on its own: four of those five families, and *both* fixtures whose
+    deliverable is ``analysis``, come from one repository and one defect. A model
+    that writes patches well and reviews badly cannot be distinguished by this
+    corpus, and the hardened analysis graders have only ever faced one defect
+    class.
+
+    Rather than assert a breadth the corpus does not yet have -- which would mean
+    either shipping a fixture on a defect that may not be one, or landing a skipped
+    test, both worse than the gap -- these tests pin the *disclosure*. If a future
+    change widens or narrows the coverage, the documented figures must move with it,
+    so the gap cannot quietly stop being true while the table still implies it is.
+    """
+
+    def coverage(self):
+        """Repository spread by deliverable and family, as short names.
+
+        Short names because that is how the document writes them; comparing
+        against ``scottjoyner/auto-ingest`` would fail against a correct doc.
+        """
+        by_deliverable: Dict[str, set] = {}
+        by_family: Dict[str, set] = {}
+        per_repo: Dict[str, int] = {}
+        for manifest in iter_fixture_manifests(TASKS_ROOT):
+            task = load_task(manifest)
+            repo = task.source.repository.split("/")[-1]
+            by_deliverable.setdefault(task.deliverable, set()).add(repo)
+            by_family.setdefault(task.task_family, set()).add(repo)
+            per_repo[repo] = per_repo.get(repo, 0) + 1
+        campaign = max(per_repo, key=lambda r: per_repo[r])
+        outside = sorted(f for f, repos in by_family.items() if repos - {campaign})
+        return by_deliverable, by_family, campaign, outside
+
+    def doc_text(self) -> str:
+        return (REPO_ROOT / "docs/REAL-TASK-BENCHMARK.md").read_text(encoding="utf-8")
+
+    def doc_flat(self) -> str:
+        """Whitespace-collapsed, because Markdown hard-wraps.
+
+        And assertions run against this rather than ``assertIn`` on the raw text:
+        a failure would otherwise dump 900 lines around a one-line problem.
+        """
+        return " ".join(self.doc_text().split())
+
+    def test_the_document_states_the_actual_deliverable_spread(self):
+        by_deliverable, _by_family, _campaign, _outside = self.coverage()
+        for deliverable, repos in by_deliverable.items():
+            with self.subTest(deliverable=deliverable):
+                self.assertTrue(
+                    "| `{}` | {} |".format(
+                        deliverable,
+                        "auto-ingest only" if repos == {"auto-ingest"}
+                        else ", ".join(sorted(repos)),
+                    ) in self.doc_flat(),
+                    "docs/REAL-TASK-BENCHMARK.md does not state the real "
+                    "repository spread for the {!r} deliverable".format(deliverable),
+                )
+
+    def test_the_document_states_the_actual_family_count_outside_the_campaign(self):
+        _by_deliverable, _by_family, _campaign, outside = self.coverage()
+        self.assertTrue(
+            "| corpus | 3 | 4 | 5 | {} |".format(len(outside)) in self.doc_flat(),
+            "the corpus-shape table must carry the true count of families "
+            "outside the campaign repository (currently {})".format(outside),
+        )
+
+    def test_the_analysis_gap_is_named_rather_than_implied(self):
+        """While `analysis` is single-repository, the document must say so."""
+        by_deliverable, _by_family, _campaign, _outside = self.coverage()
+        analysis = by_deliverable.get("analysis", set())
+        if len(analysis) <= 1:
+            for phrase in (
+                "only ever been pointed at one defect",
+                "excellent at writing patches and poor at reviewing",
+            ):
+                self.assertTrue(
+                    phrase in self.doc_flat(),
+                    "the analysis coverage gap must be stated in the document, "
+                    "not left for a reader to infer from a table of families",
+                )
+
+    def test_the_campaign_repository_is_still_identified_as_the_campaign(self):
+        _bd, _bf, campaign, outside = self.coverage()
+        campaign_fixture = load_task(
+            TASKS_ROOT / "auto_ingest_plan_shorts_live_driver" / "task.json"
+        )
+        self.assertEqual(
+            campaign_fixture.source.repository.split("/")[-1],
+            campaign,
+            "the campaign repository must still be the one supplying the fixture "
+            "this document calls the campaign",
+        )
+        self.assertTrue(
+            outside,
+            "no family exists outside the campaign repository, so the "
+            "corpus-shape table has no meaningful last column",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

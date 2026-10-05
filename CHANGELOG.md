@@ -4,6 +4,27 @@
 
 ### Fixed
 
+- **The corpus-shape table implied a breadth of task-type coverage the corpus does
+  not have.** It reported "families 5" against a 3-repository corpus, which reads as
+  broader than it is: `bug_fix` spans all three repositories, but `code_review`,
+  `contract_reasoning`, `small_refactor` and `test_generation` all come from the
+  campaign repository, and **both** `analysis`-deliverable fixtures are
+  auto-ingest only. So a model that writes patches well and reviews badly cannot
+  be distinguished by this corpus, and the hardened analysis graders have only
+  ever faced one defect class.
+
+  The table now carries a "families outside the campaign repo" column and the real
+  deliverable-to-repository spread, with the gap stated in prose rather than left
+  for a reader to infer from a count. `DeliverableCoverageDisclosureTests` derives
+  the actual spread from the fixtures and fails if the documented figures drift,
+  so the gap cannot quietly stop being true while the table still implies it is.
+
+  Not asserted: that `analysis` spans two repositories. That would require either
+  shipping a fixture built on a defect that may not be one, or landing a skipped
+  test — both worse than a disclosed gap. The honest position is that closing it
+  needs an `analysis` fixture from `auto-router` or `auto-assist`, found by reading
+  frozen source the way the other three were.
+
 - **An operator-supplied patch was indistinguishable from a model's result.**
   `--scout-file` recorded provenance; `--patch-file` recorded nothing. Attempts are
   now stamped `candidate_source` (`model` or `operator_patch_file`) and it is

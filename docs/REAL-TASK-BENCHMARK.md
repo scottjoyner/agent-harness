@@ -543,10 +543,31 @@ the same defect, five independent angles on it. That is deliberate — it isolat
 generalisation, so the corpus also carries defects from two further repositories
 that share no code, no author, and no bug class with the campaign:
 
-| | repositories | distinct source identities | families |
-|---|---|---|---|
-| campaign | 1 | 1 | 5 |
-| corpus | 3 | 4 | 5 |
+| | repositories | distinct source identities | families | families outside the campaign repo |
+|---|---|---|---|---|
+| campaign | 1 | 1 | 5 | 0 |
+| corpus | 3 | 4 | 5 | 1 |
+
+Read that last column before drawing a conclusion from "five families". Bug
+diversity and *task-type* diversity are different things, and only the first is
+currently broad:
+
+| deliverable | repositories |
+|---|---|
+| `patch` | auto-assist, auto-ingest, auto-router |
+| `analysis` | auto-ingest only |
+
+Every fixture whose deliverable is `analysis` — both `code_review` and
+`contract_reasoning` — comes from the campaign repository, as do `small_refactor`
+and `test_generation`. So a model that is excellent at writing patches and poor at
+reviewing cannot be distinguished by this corpus, and the hardened analysis graders
+have only ever been pointed at one defect.
+
+That is a known gap, stated here rather than left for a reader to infer from a
+table of families. Closing it means an `analysis` fixture drawn from
+`auto-router` or `auto-assist`, which also subjects the graders to a second defect
+class. `test_realtask_corpus.py` enforces the disclosure below, so the gap cannot
+quietly stop being true while the table still implies it is.
 
 `test_realtask_corpus.py` enforces that shape rather than assuming it: it fails
 if the corpus collapses onto a single source identity, if two fixtures sharing a
