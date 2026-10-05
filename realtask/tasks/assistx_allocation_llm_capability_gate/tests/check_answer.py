@@ -101,6 +101,22 @@ REQUIRED_FINDINGS = (
         "identifies the silent consequence: the wrong node receives the work",
         (),
         (
+            # Added after a real 30B answer was failed for saying it in its own
+            # words: "this allows a node that does not advertise 'llm' to be
+            # admitted for tasks requiring it". That is the wrong node receiving
+            # the work. The compounds below are deliberate rather than bare
+            # "admitted", because "a node lacking llm is admitted, not
+            # rejected" is the *gate-level* finding and the two must stay
+            # distinguishable.
+            "admitted for tasks requiring",
+            "assigned the task",
+            "assigned a task",
+            "receives the work",
+            "runs the work",
+            "picks up the work",
+            "wrong node",
+            "node that does not advertise",
+            "cannot serve",
             "dispatch",
             "executed on",
             "runs the task",

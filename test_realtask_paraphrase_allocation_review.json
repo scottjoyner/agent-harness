@@ -1,0 +1,19 @@
+{
+  "root_cause": "The capability gate in build_allocation_plan treats 'llm' as implicitly present by checking required.issubset(capabilities | {'llm'}) and by computing missing_capabilities as required - capabilities - {'llm'}. This allows a node that does not advertise 'llm' to be admitted for tasks requiring it and hides 'llm' from the rejection reason, violating the advertised contract that a node must advertise every required capability.",
+  "relevant_files": [
+    "assistx/allocation_engine.py"
+  ],
+  "plan": [
+    "Remove the implicit 'llm' exemption from the eligibility test so the check is required.issubset(capabilities) with no union.",
+    "Update the missing_capabilities calculation to required - capabilities without subtracting {'llm'} so rejections accurately report all missing capabilities.",
+    "Ensure rejected entries for capability_mismatch are generated consistently for online nodes and that the rejection reason reflects the true missing set.",
+    "Verify the change does not alter handling of blocked/offline nodes and re-run placement logic against tasks with required_capabilities containing 'llm'.",
+    "Add explicit tests for nodes lacking 'llm' capability to confirm they are rejected and never recommended."
+  ],
+  "risks": [
+    "Placeable count may decrease and previously placed tasks may become blocked if nodes actually lack 'llm' capability.",
+    "Existing deployments that relied on the implicit 'llm' exemption could experience allocation failures after the fix.",
+    "Changing the rejection record format may affect downstream consumers that expect missing_capabilities to never contain 'llm'."
+  ],
+  "confidence": 0.95
+}

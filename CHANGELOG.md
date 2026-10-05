@@ -32,6 +32,17 @@
   one. The model's answer is tracked verbatim with its exact score pinned, so
   re-narrowing the vocabulary fails a test instead of quietly costing two findings.
 
+- **Two fixtures now passed by a real model.** `auto_ingest_plan_shorts_contract`
+  and `auto_ingest_shorts_plan_review`, both `SUCCESS` at `--stage single` from the
+  30B `meta/muse-glimmer`. `assistx_allocation_llm_capability_gate` grades 6/6 once
+  its grader stops demanding particular words, and `auto_router_contract_shim_single_source`
+  stands at 5/6.
+
+  The largest fixture first reported `EMPTY_OUTPUT` twice, for reasons that were
+  ours rather than the model's: an in-band stream error being discarded, and a
+  reasoning model spending its entire token budget without emitting content. Both
+  are fixed and detailed in #7.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four

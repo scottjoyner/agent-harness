@@ -1008,6 +1008,41 @@ rewarding stuffed keywords, inverted: instead of counting words, they now requir
 particular ones. The harness measures word choice rather than comprehension, and on
 its first real model answer that distinction cost two findings.
 
+#### What the model actually scored
+
+Four analysis fixtures, one 30B model, `--stage single`, temperature 0:
+
+| fixture | outcome |
+|---|---|
+| `auto_ingest_plan_shorts_contract` | **SUCCESS** |
+| `auto_ingest_shorts_plan_review` | **SUCCESS** (after 8k token budget) |
+| `assistx_allocation_llm_capability_gate` | 6/6 findings, after its own grader was corrected |
+| `auto_router_contract_shim_single_source` | 5/6 — one genuine miss |
+
+**Two fixtures have now been passed by a real model.** The third grades clean once
+its grader stops demanding particular words, and the fourth is one finding short.
+
+Two of the four runs initially reported failure for reasons that turned out to be
+ours, and both are worth recording because the recorded outcome named the wrong
+cause:
+
+- The largest fixture came back `EMPTY_OUTPUT` -- 0.5s, no tokens, zero bytes,
+  which reads as a model that produced nothing. The endpoint had answered HTTP 200
+  and then reported a context overflow *inside the stream body*. Once surfaced, the
+  note read `request (16387 tokens) exceeds the available context size (16384
+  tokens)`, which is how it became known that the model was three tokens short.
+- With context corrected it ran for 164s and still reported `EMPTY_OUTPUT`:
+  `finish_reason: "length"`, exactly the 4096-token cap consumed, no content and no
+  note. This model is a reasoning model and it spent the whole budget thinking. At
+  `--max-tokens 8192` the same fixture on the same model returned `SUCCESS` in
+  146.7s with `finish_reason: "stop"`.
+
+Both were the taxonomy's fault rather than the model's: it was written against a
+scripted adapter and had no room for failure modes only a real endpoint produces.
+An in-band stream error and a reasoning model that never emits content were each
+mapped onto the nearest available wrong answer, and an operator would have gone
+looking for a model problem in both cases.
+
 #### The fix, and what it cost
 
 The principle applied was narrow on purpose: **widen consequence vocabulary, never

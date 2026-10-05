@@ -68,6 +68,8 @@ REFERENCE_ANSWERS: Dict[str, str] = {
 PARAPHRASE_ANSWERS: Dict[str, str] = {
     "auto_router_contract_shim_single_source":
         "test_realtask_paraphrase_contract_shim.json",
+    "assistx_allocation_llm_capability_gate":
+        "test_realtask_paraphrase_allocation_review.json",
 }
 
 #: A repair of the campaign defect that also changes unrelated defaults. Used to
@@ -835,6 +837,9 @@ class ParaphraseAnswerTests(AnalysisGraderHelpers, HarnessTestCase):
         "auto_router_contract_shim_single_source": (
             "notes that _USING_CANONICAL is exported but read by nobody",
         ),
+        # This one now passes every finding: the only failure it had was a
+        # false negative, so there is no genuine gap left to record.
+        "assistx_allocation_llm_capability_gate": (),
     }
 
     #: Findings that were false negatives before the vocabulary was widened.
@@ -843,6 +848,9 @@ class ParaphraseAnswerTests(AnalysisGraderHelpers, HarnessTestCase):
             "identifies the silent ImportError fallback as a second, "
             "independent definition",
             "notes the failure surfaces at use rather than at import",
+        ),
+        "assistx_allocation_llm_capability_gate": (
+            "identifies the silent consequence: the wrong node receives the work",
         ),
     }
 
