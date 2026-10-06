@@ -234,3 +234,167 @@ class FleetCliTests(_Tmp):
         self.assertEqual(report["summary"]["backends"], 2)
         self.assertEqual(report["summary"]["reachable"], 1)
         self.assertEqual(report["summary"]["unreachable"], 1)
+
+
+class FleetAttemptTests(_Tmp):
+    """What each backend can *do*, as opposed to what it advertises."""
+
+    def _fleet(self):
+        return [
+            FleetEndpoint("good", "http://good/v1", "m1", node="g"),
+            FleetEndpoint("unloadable", "http://bad/v1", "m2", node="b"),
+            FleetEndpoint("down", "http://down/v1", "m3", node="d"),
+            FleetEndpoint("nomodel", "http://nm/v1", "", node="n"),
+        ]
+
+    def _probes(self):
+        return probe_fleet(self._fleet(), opener=lambda *a, **k: _Resp(
+            {"data": [{"id": "m"}]}
+        ), check_loadable=False).probes
+
+    def test_a_backend_that_cannot_load_is_not_worth_attempting(self):
+        """The reason the sweep probes first. Without this the sweep spends most
+        of its wall clock rediscovering, one backend at a time, what a single
+        GET /v1/models already said."""
+        from realtask.fleet import eligible_endpoints
+
+        fleet = self._fleet()
+        probes = probe_fleet(
+            fleet,
+            opener=lambda *a, **k: _Resp({"data": [{"id": "m"}]}),
+            check_loadable=True,
+        ).probes
+        # make "unloadable" genuinely fail its load check
+        by = {p.name: p for p in probes}
+        by["unloadable"].loadable = False
+        eligible, skipped = eligible_endpoints(fleet, probes)
+        # 'unloadable' is excluded; 'nomodel' has nothing to attempt against.
+        self.assertEqual([e.name for e in eligible], ["good", "down"])
+        joined = " ".join(skipped)
+        self.assertIn("cannot load one", joined)
+        self.assertIn("no model named", joined)
+        self.assertNotIn("unloadable: did not answer", joined)
+
+    def test_a_backend_with_no_model_named_is_skipped(self):
+        from realtask.fleet import eligible_endpoints
+
+        fleet = self._fleet()
+        probes = probe_fleet(
+            fleet, opener=lambda *a, **k: _Resp({"data": [{"id": "m"}]})
+        ).probes
+        for p in probes:
+            p.loadable = True
+        eligible, skipped = eligible_endpoints(fleet, probes)
+        names = [e.name for e in eligible]
+        self.assertIn("good", names)
+        self.assertNotIn("nomodel", names)
+        self.assertTrue(any("no model named" in s for s in skipped))
+
+    def test_each_cell_is_recorded_and_carries_the_honesty_fields(self):
+        from realtask.fleet import attempt_fleet
+
+        fleet = [FleetEndpoint("b1", "http://b1/v1", "m"),
+                 FleetEndpoint("b2", "http://b2/v1", "m")]
+
+        def executor(endpoint, task_id):
+            if endpoint.name == "b2":
+                return {"outcome": "TRUNCATED", "model_calls": 1,
+                        "total_wall_s": 5.0, "total_tokens": 8192,
+                        "budget_bound": True, "targeted_passed": False}
+            return {"outcome": "SUCCESS", "model_calls": 1, "total_wall_s": 2.0,
+                    "total_tokens": 900, "targeted_passed": True,
+                    "evidence": "/tmp/b1"}
+
+        report = attempt_fleet(fleet, ["t1", "t2"], executor)
+        self.assertEqual(len(report.attempts), 4)
+        by_cell = {(r["backend"], r["task_id"]): r for r in report.attempts}
+        self.assertEqual(by_cell[("b1", "t1")]["outcome"], "SUCCESS")
+        self.assertTrue(by_cell[("b2", "t1")]["budget_bound"])
+        self.assertFalse(by_cell[("b2", "t1")]["targeted_passed"])
+
+    def test_one_backend_failing_does_not_end_the_sweep(self):
+        from realtask.fleet import attempt_fleet
+
+        def executor(endpoint, task_id):
+            if endpoint.name == "boom":
+                raise RuntimeError("connection reset")
+            return {"outcome": "SUCCESS"}
+
+        report = attempt_fleet(
+            [FleetEndpoint("boom", "http://b/v1", "m"),
+             FleetEndpoint("ok", "http://o/v1", "m")],
+            ["t1"], executor,
+        )
+        outcomes = {r["backend"]: r["outcome"] for r in report.attempts}
+        self.assertEqual(outcomes["boom"], "HARNESS_ERROR")
+        self.assertIn("connection reset", [r["error"] for r in report.attempts
+                                           if r["backend"] == "boom"][0])
+        self.assertEqual(outcomes["ok"], "SUCCESS")
+
+    def test_it_states_that_one_attempt_is_a_sample(self):
+        from realtask.fleet import attempt_fleet
+
+        report = attempt_fleet(
+            [FleetEndpoint("b", "http://b/v1", "m")], ["t1"],
+            lambda e, t: {"outcome": "SUCCESS"},
+        )
+        joined = " ".join(report.scope_limits)
+        self.assertIn("a sample, not a measurement", joined)
+        self.assertIn("no replication", joined)
+
+    def test_budget_bound_cells_are_called_out_in_the_limits(self):
+        from realtask.fleet import attempt_fleet
+
+        report = attempt_fleet(
+            [FleetEndpoint("b", "http://b/v1", "m")], ["t1"],
+            lambda e, t: {"outcome": "TRUNCATED", "budget_bound": True},
+        )
+        joined = " ".join(report.scope_limits)
+        self.assertIn("budget-bound", joined)
+        self.assertIn("not about the backend's capability", joined)
+
+    def test_the_report_emits_no_composite_score_after_attempting(self):
+        from realtask.fleet import attempt_fleet
+
+        payload = attempt_fleet(
+            [FleetEndpoint("b", "http://b/v1", "m")], ["t1"],
+            lambda e, t: {"outcome": "SUCCESS"},
+        ).to_dict()
+        self.assertIsNone(payload["composite_score"])
+        self.assertEqual(payload["summary"]["tasks_attempted"], 1)
+        blob = json.dumps(payload)
+        for banned in ("pass_rate", "overall_score", "fleet_rank", "\"verdict\":",
+                       "better_than"):
+            self.assertNotIn(banned, blob, banned)
+
+
+class FleetDiagnosticTests(_Tmp):
+    """A cell must say why it could not run, in the sweep itself.
+
+    Found on the first real sweep: two remote backends returned
+    ``request (8200 tokens) exceeds the available context size``, which is a
+    capability finding about the backend. Reporting those cells as bare
+    ``PROTOCOL_FAILURE`` would have discarded the only sentence that explains it.
+    """
+
+    def test_the_first_non_boilerplate_note_is_kept(self):
+        from realtask.fleet import _first_real_note
+
+        notes = [
+            "evaluation work root moved out of /tmp/x because it was inside "
+            "the read-only tree",
+            "single call failed: endpoint rejected the request: HTTP 400: "
+            "request (8200 tokens) exceeds the available context size (8192)",
+        ]
+        kept = _first_real_note(notes)
+        self.assertIn("exceeds the available context size", kept)
+        self.assertNotIn("read-only tree", kept)
+
+    def test_boilerplate_only_yields_no_error(self):
+        from realtask.fleet import _first_real_note
+
+        self.assertEqual(
+            _first_real_note(["evaluation work root moved out of /tmp/x"]), ""
+        )
+        self.assertEqual(_first_real_note([]), "")
+        self.assertEqual(_first_real_note(["   "]), "")

@@ -165,6 +165,34 @@ def build_parser() -> argparse.ArgumentParser:
              "models it cannot load",
     )
     fleet.add_argument("--json", action="store_true")
+    fleet.add_argument(
+        "--attempt", action="store_true",
+        help="drive tasks on every eligible backend, not just probe them",
+    )
+    fleet.add_argument(
+        "--task", action="append", default=[],
+        help="task_id; repeatable. Omit to use every fixture.",
+    )
+    # default=None, not ["single"]: `action="append"` *extends* a non-empty
+    # default, so `--stage single` would drive ["single", "single"] and run every
+    # task twice while claiming one stage.
+    fleet.add_argument("--stage", action="append", default=None,
+                       choices=VALID_STAGES)
+    fleet.add_argument("--single-attempts", type=int, default=1)
+    fleet.add_argument("--swarm-attempts", type=int, default=1)
+    fleet.add_argument(
+        "--max-tokens", type=int, default=8192,
+        help="completion budget per call. the harness-wide default is 1600, "
+             "which reasoning models exhaust while thinking, producing TRUNCATED "
+             "results that say nothing about the backend",
+    )
+    fleet.add_argument("--test-timeout-s", type=float, default=300.0)
+    fleet.add_argument("--max-source-bytes", type=int, default=262144)
+    fleet.add_argument(
+        "--attempt-unloadable", action="store_true",
+        help="also attempt on backends that advertised models and failed to load "
+             "one. off by default: those attempts predictably waste the sweep",
+    )
 
     # ---- list --------------------------------------------------------
     listing = sub.add_parser("list", parents=[common], help="list available fixtures")
@@ -356,10 +384,50 @@ def command_fleet(args: argparse.Namespace) -> int:
     reachability-only check would count that as working -- which is not hypothetical
     on this fleet.
     """
-    from realtask.fleet import load_fleet, probe_fleet
+    from realtask.fleet import (
+        attempt_fleet, eligible_endpoints, load_fleet, make_runner_executor,
+        probe_fleet,
+    )
 
     fleet = load_fleet(args.endpoint_config)
-    report = probe_fleet(fleet, check_loadable=args.check_loadable)
+    probed = probe_fleet(fleet, check_loadable=args.check_loadable)
+    probes = probed.probes
+
+    report = probed
+    stages = list(args.stage or ["single"])
+    if args.attempt:
+        tasks = select_tasks(args)
+        eligible, skipped = eligible_endpoints(
+            fleet, probes, skip_unloadable=not args.attempt_unloadable
+        )
+        if not eligible:
+            print("no eligible backend: nothing to attempt against", file=sys.stderr)
+        else:
+            options = RunnerOptions(
+                max_source_bytes=args.max_source_bytes,
+                test_timeout_s=args.test_timeout_s,
+            )
+            executor = make_runner_executor(
+                args.tasks_root, args.out, HERE, options,
+                stages=stages,
+                single_attempts=args.single_attempts,
+                swarm_attempts=args.swarm_attempts,
+                max_tokens_default=args.max_tokens,
+            )
+            attempts = attempt_fleet(
+                eligible, [t.task_id for t in tasks], executor, stages=stages,
+                skip_unloadable=not args.attempt_unloadable,
+            )
+            report.attempts = attempts.attempts
+            report.scope_limits = report.scope_limits + attempts.scope_limits
+            if skipped:
+                report.scope_limits.append(
+                    "{} backend(s) were not attempted ({}). a backend that was "
+                    "never asked is unknown, not incapable.".format(
+                        len(skipped), "; ".join(skipped)
+                    )
+                )
+
     payload = report.to_dict()
 
     # --out is the shared evidence root; fleet.json lands beside whatever else a
@@ -386,6 +454,22 @@ def command_fleet(args: argparse.Namespace) -> int:
             probe["models_advertised"], str(probe["reachable"]), note))
     summary = payload["summary"]
     print()
+    if payload["attempts"]:
+        print("{:<18} {:<44} {:>9}  {}".format("backend", "task", "outcome", "note"))
+        print("-" * 110)
+        for row in payload["attempts"]:
+            note = ""
+            if row["budget_bound"]:
+                note = "budget-bound"
+            elif row["error"]:
+                note = row["error"][:44]
+            print("{:<18} {:<44} {:>9}  {}".format(
+                row["backend"][:18], row["task_id"][:44],
+                row["outcome"][:9], note))
+        print()
+        passed = sum(1 for r in payload["attempts"] if r["outcome"] == "SUCCESS")
+        print("{} of {} cell(s) reached SUCCESS".format(
+            passed, len(payload["attempts"])))
     print("{} backend(s): {} reachable, {} unreachable, {} reachable but "
           "failed to load, {} task(s) attempted".format(
               summary["backends"], summary["reachable"], summary["unreachable"],
