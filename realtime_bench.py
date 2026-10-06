@@ -417,6 +417,7 @@ def command_fleet(args: argparse.Namespace) -> int:
             attempts = attempt_fleet(
                 eligible, [t.task_id for t in tasks], executor, stages=stages,
                 skip_unloadable=not args.attempt_unloadable,
+                health_by_backend={pr.name: pr.health for pr in probes},
             )
             report.attempts = attempts.attempts
             report.scope_limits = report.scope_limits + attempts.scope_limits
@@ -445,10 +446,14 @@ def command_fleet(args: argparse.Namespace) -> int:
     print("-" * 110)
     for probe in payload["probes"]:
         note = probe["error"][:44] if probe["error"] else ""
-        if probe["loadable"] is False:
-            note = "advertises models, cannot load one" + ((" | " + note) if note else "")
-        elif probe["loadable"] is True:
+        health = probe.get("health")
+        if health == "ok":
             note = "loads and answers" + ((" | " + note) if note else "")
+        elif health == "backend_unavailable_now":
+            note = ("cannot load even a small probe model now -- busy or broken, "
+                    "one observation cannot say which" + ((" | " + note) if note else ""))
+        elif probe["loadable"] is False:
+            note = "cannot load" + ((" | " + note) if note else "")
         print("{:<18} {:<38} {:>5} {:>9}  {}".format(
             probe["name"][:18], probe["base_url"][:38],
             probe["models_advertised"], str(probe["reachable"]), note))
@@ -463,6 +468,8 @@ def command_fleet(args: argparse.Namespace) -> int:
                 note = "budget-bound"
             elif row["error"]:
                 note = row["error"][:44]
+            if row.get("backend_health") == "ok" and row["outcome"] != "SUCCESS":
+                note = (note + " | backend healthy" ).strip(" |")
             print("{:<18} {:<44} {:>9}  {}".format(
                 row["backend"][:18], row["task_id"][:44],
                 row["outcome"][:9], note))
