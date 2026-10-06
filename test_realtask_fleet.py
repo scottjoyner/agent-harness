@@ -398,3 +398,115 @@ class FleetDiagnosticTests(_Tmp):
         )
         self.assertEqual(_first_real_note([]), "")
         self.assertEqual(_first_real_note(["   "]), "")
+
+
+class LoadHealthTests(_Tmp):
+    """A load failure is not one thing, and reporting it as one thing is wrong.
+
+    This exists because a sweep got it wrong. It reported three healthy backends as
+    "advertises models and cannot load one":
+
+      x1-370   a transient ROCm allocator wedge; the same model loaded in 3.97s
+               minutes later
+      xwing    an active finetune job holding 13.4 GB of VRAM, plus another
+               agent's twelve concurrent load attempts, all hung on the same memory
+      beelink  a healthy 13 GB CPU-only node that answers fine on the 1.2B model it
+               serves -- the 12B the inventory named simply does not fit
+
+    None of those is a broken backend. The fix is to ask a question the probe can
+    actually answer -- *can this backend load anything at all right now* -- by naming
+    a small ``probe_model``, and to stop claiming a distinction one observation
+    cannot make. "now" is in the verdict name deliberately.
+    """
+
+    def _advertising(self):
+        return {"data": [{"id": "big"}, {"id": "small"}]}
+
+    def _opener(self, healthy):
+        def opener(req, timeout=None):
+            if not hasattr(req, "data"):
+                return _Resp(self._advertising())
+            if healthy:
+                return _Resp({"choices": [{"message": {"content": "ok"}}]})
+            raise urllib.error.HTTPError("u", 400, "SIGABRT", {}, None)
+        return opener
+
+    def test_a_healthy_backend_is_ok(self):
+        probe = probe_endpoint(
+            FleetEndpoint("b", "http://h/v1", "m", probe_model="small"),
+            opener=self._opener(True), check_loadable=True,
+        )
+        self.assertTrue(probe.loadable)
+        self.assertEqual(probe.health, "ok")
+        self.assertEqual(probe.probed_model, "small")
+
+    def test_the_probe_asks_the_probe_model_not_the_work_model(self):
+        """Otherwise a too-big work model masquerades as a broken backend."""
+        seen = []
+
+        def opener(req, timeout=None):
+            if not hasattr(req, "data"):
+                return _Resp(self._advertising())
+            seen.append(req.data.decode())
+            return _Resp({"choices": [{"message": {"content": "ok"}}]})
+
+        probe_endpoint(
+            FleetEndpoint("b", "http://h/v1", "google/gemma-4-12b-qat",
+                          probe_model="liquid/lfm2.5-1.2b"),
+            opener=opener, check_loadable=True,
+        )
+        self.assertTrue(any("liquid/lfm2.5-1.2b" in s for s in seen))
+        self.assertFalse(any("gemma-4-12b" in s for s in seen))
+
+    def test_a_backend_that_cannot_load_even_a_small_model(self):
+        probe = probe_endpoint(
+            FleetEndpoint("b", "http://h/v1", "m", probe_model="small"),
+            opener=self._opener(False), check_loadable=True,
+        )
+        self.assertFalse(probe.loadable)
+        self.assertEqual(probe.health, "backend_unavailable_now")
+
+    def test_health_is_unknown_when_not_tested(self):
+        probe = probe_endpoint(
+            FleetEndpoint("b", "http://h/v1", "m"), opener=self._opener(True)
+        )
+        self.assertEqual(probe.health, "unknown")
+        self.assertIsNone(probe.loadable)
+
+    def test_the_limit_refuses_to_call_a_busy_node_broken(self):
+        fleet = [FleetEndpoint("b", "http://h/v1", "m", probe_model="small")]
+        report = probe_fleet(fleet, opener=self._opener(False), check_loadable=True)
+        joined = " ".join(report.scope_limits)
+        self.assertIn("single observation", joined)
+        self.assertIn("does not separate a broken engine from a busy node", joined)
+        self.assertIn("re-probe", joined)
+
+    def test_a_healthy_backend_that_cannot_run_its_work_model_is_called_out(self):
+        """The beelink case, at the attempt layer rather than the probe layer."""
+        from realtask.fleet import attempt_fleet
+
+        def executor(endpoint, task_id):
+            return {"outcome": "PROTOCOL_FAILURE",
+                    "error": "Failed to load model SIGABRT"}
+
+        report = attempt_fleet(
+            [FleetEndpoint("beelink", "http://b/v1", "google/gemma-4-12b-qat")],
+            ["t1"], executor, health_by_backend={"beelink": "ok"},
+        )
+        cell = report.attempts[0]
+        self.assertEqual(cell["backend_health"], "ok")
+        joined = " ".join(report.scope_limits)
+        self.assertIn("healthy but could not run the model named for them", joined)
+        self.assertIn("the capability limit there is the model's", joined)
+
+    def test_an_inventory_can_name_a_probe_model(self):
+        p = Path(self.tmp.name) / "f.json"
+        p.write_text(json.dumps({"endpoints": {
+            "b": {"base_url": "http://h/v1", "model": "big",
+                  "probe_model": "small", "max_tokens": 8192, "timeout_s": 240},
+        }}))
+        endpoint = load_fleet(p)[0]
+        self.assertEqual(endpoint.probe_model, "small")
+        self.assertEqual(endpoint.max_tokens, 8192)
+        self.assertEqual(endpoint.timeout_s, 240)
+        self.assertEqual(endpoint.to_dict()["probe_model"], "small")

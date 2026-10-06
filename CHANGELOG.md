@@ -112,8 +112,19 @@
   Reachability is reported **separately** from loadability, and `--check-loadable`
   earned its place on first use: swept across the eight registry backends, **three of
   six reachable ones advertise models and then fail to load one**, including the
-  machine this was written on. A reachability-only check would have called all three
-  working.
+  machine this was written on.
+
+  **Corrected later the same day, because that claim was wrong about two of the
+  three.** x1-370 was a transient ROCm allocator wedge that cleared in seconds;
+  xwing was busy running an `auto-finetune` job holding 13.4 GB of VRAM while another
+  agent's twelve concurrent load attempts hung on the same memory; and beelink is
+  entirely healthy, answering fine on the 1.2B model it serves -- the 12B the
+  inventory named simply does not fit a 13 GB CPU-only box. **No backend was broken.**
+
+  An inventory may now name a `probe_model` known to fit, so health answers a question
+  one observation can actually answer: `ok`, or `backend_unavailable_now`. Attempt
+  cells carry `backend_health`, so a healthy backend that cannot run the model named
+  for it reads as a limit on the model rather than on the fleet.
 
   Two refusals: a backend that did not answer is recorded as absent and excluded from
   comparison rather than counted as failing, and there is no composite score, since

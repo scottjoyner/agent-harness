@@ -61,6 +61,11 @@ class FleetEndpoint:
     #: Name of an environment variable holding the credential. The value is read
     #: from the environment and never from the file, so an inventory is safe to
     #: keep next to evidence.
+    #: A model known to fit this backend, used to answer "is this backend working?"
+    #: separately from "does this model fit here?". Set it when the work model is
+    #: large. Omitted, the two questions cannot be told apart -- which is how one
+    #: sweep reported three healthy backends as broken.
+    probe_model: str = ""
     api_key_env: str = ""
     max_tokens: int = 0
     temperature: float = 0.0
@@ -74,6 +79,7 @@ class FleetEndpoint:
             "label": self.label,
             "node": self.node,
             "api_key_env": self.api_key_env,
+            "probe_model": self.probe_model,
             "max_tokens": self.max_tokens,
             "timeout_s": self.timeout_s,
             "probe_timeout_s": self.probe_timeout_s,
@@ -91,6 +97,17 @@ class Probe:
     reachable: bool = False
     models: Tuple[str, ...] = ()
     loadable: Optional[bool] = None
+    #: One of "unknown", "ok", "backend_unavailable_now".
+    #:
+    #: The probe deliberately asks only the *probe model* -- one small enough to fit
+    #: anywhere -- so the only question it can answer is "can this backend load
+    #: anything at all right now". A bare boolean answered with the work model
+    #: conflated three different things: a broken engine, a busy node, and a model
+    #: that does not fit. Which of those it is, cannot be told from one probe, and
+    #: claiming otherwise is what produced a fleet-health report that was wrong
+    #: about two of three backends. "now" is in the name deliberately.
+    health: str = "unknown"
+    probed_model: str = ""
     latency_s: float = 0.0
     error: str = ""
 
@@ -106,6 +123,8 @@ class Probe:
             # None means "not tested". False means it advertises models and then
             # fails to load one, which is the case a reachability-only check misses.
             "loadable": self.loadable,
+            "health": self.health,
+            "probed_model": self.probed_model,
             "latency_s": round(self.latency_s, 4),
             "error": self.error,
         }
@@ -187,6 +206,7 @@ def load_fleet(path: Path) -> List[FleetEndpoint]:
                 node=str(entry.get("node", "")),
                 probe_timeout_s=float(entry.get("probe_timeout_s", 10.0)),
                 timeout_s=float(entry.get("timeout_s", 180.0)),
+                probe_model=str(entry.get("probe_model", "")),
                 api_key_env=str(entry.get("api_key_env", "")),
                 max_tokens=int(entry.get("max_tokens", 0) or 0),
                 temperature=float(entry.get("temperature", 0.0)),
@@ -234,9 +254,22 @@ def probe_endpoint(
         probe.error = "{}: {}".format(type(exc).__name__, exc)
     probe.latency_s = time.monotonic() - started
 
-    if probe.reachable and check_loadable and endpoint.model:
-        probe.loadable, probe.error = _check_loadable(endpoint, opener)
+    if probe.reachable and check_loadable:
+        target = endpoint.probe_model or endpoint.model
+        if not target:
+            probe.health = "unknown"
+        else:
+            asked = _with_model(endpoint, target)
+            probe.probed_model = target
+            probe.loadable, probe.error = _check_loadable(asked, opener)
+            probe.health = "ok" if probe.loadable else "backend_unavailable_now"
     return probe
+
+
+def _with_model(endpoint: FleetEndpoint, model: str) -> FleetEndpoint:
+    import dataclasses
+
+    return dataclasses.replace(endpoint, model=model)
 
 
 def _check_loadable(
@@ -304,6 +337,18 @@ def probe_fleet(
                 len(broken), ", ".join(broken)
             )
         )
+    busy = sorted(
+        p.name for p in report.probes if p.health == "backend_unavailable_now"
+    )
+    if busy:
+        limits.append(
+            "{} backend(s) could not load even a small probe model ({}). that is a "
+            "single observation and does not separate a broken engine from a busy "
+            "node -- a training job or another agent holding the memory produces the "
+            "same signature. re-probe before concluding anything is broken.".format(
+                len(busy), ", ".join(busy)
+            )
+        )
     if untested and not check_loadable:
         limits.append(
             "loadability was not tested ({} reachable backend(s)); --check-loadable "
@@ -366,6 +411,7 @@ def attempt_row(
     targeted_passed: Optional[bool] = None,
     evidence: str = "",
     error: str = "",
+    backend_health: str = "unknown",
 ) -> Dict[str, Any]:
     """One (backend, task) cell.
 
@@ -385,6 +431,9 @@ def attempt_row(
         "total_tokens": tokens,
         "budget_bound": budget_bound,
         "targeted_passed": targeted_passed,
+        # Carried so a cell where the backend was healthy but the model would not
+        # load reads as such, instead of looking like a backend failure.
+        "backend_health": backend_health,
         "evidence": evidence,
         "error": error,
     }
@@ -397,6 +446,7 @@ def attempt_fleet(
     *,
     stages: Sequence[str] = ("single",),
     skip_unloadable: bool = True,
+    health_by_backend: Optional[Dict[str, str]] = None,
 ) -> FleetReport:
     """Drive every eligible backend against every task and record the outcome.
 
@@ -407,6 +457,7 @@ def attempt_fleet(
     supplies one that delegates to the ordinary runner.
     """
     report = FleetReport()
+    health_by_backend = health_by_backend or {}
 
     for endpoint in fleet:
         for task_id in task_ids:
@@ -426,6 +477,7 @@ def attempt_fleet(
                 targeted_passed=result.get("targeted_passed"),
                 evidence=str(result.get("evidence") or ""),
                 error=str(result.get("error") or ""),
+                backend_health=health_by_backend.get(endpoint.name, "unknown"),
             )
             report.attempts.append(row)
 
@@ -446,6 +498,19 @@ def _attempt_limits(report: FleetReport, stages: Tuple[str, ...]) -> FleetReport
         "rows carry no replication, and a backend that succeeded once here may "
         "succeed unreliably.",
     ]
+    wrong_model = sorted({
+        r["backend"] for r in report.attempts
+        if r.get("backend_health") == "ok" and r.get("outcome") in (
+            "PROTOCOL_FAILURE", "HARNESS_ERROR",
+        )
+    })
+    if wrong_model:
+        limits.append(
+            "{} backend(s) were healthy but could not run the model named for "
+            "them ({}). the capability limit there is the model's, not the "
+            "backend's; name a probe_model to confirm the backend and a smaller "
+            "model for the work.".format(len(wrong_model), ", ".join(wrong_model))
+        )
     if any(r.get("budget_bound") for r in report.attempts):
         limits.append(
             "{} cell(s) were budget-bound. those are results about the completion "

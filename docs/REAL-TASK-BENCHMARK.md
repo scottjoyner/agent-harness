@@ -1177,8 +1177,7 @@ accepts. A second format would have been an inventory nobody else could read.
 `default_endpoint` is deliberately ignored: a sweep is precisely the case where
 picking one is wrong.
 
-Run against the eight backends in the service registry, `--check-loadable` earned its
-place on the first attempt:
+Run against the eight backends in the service registry, `--check-loadable` reported:
 
 | backend | advertised | reachable | loads a model |
 |---|---|---|---|
@@ -1191,10 +1190,40 @@ place on the first attempt:
 | `lmstudio-deathstar` | 0 | no | not tested |
 | `lmstudio-macbook-air` | 0 | no | not tested |
 
-**Three of six reachable backends advertise models and then fail to load one** --
-including the machine this document is being written on. A reachability-only check
-would have counted all three as working, which is the entire reason
-`--check-loadable` exists and why `loadable` is a separate field from `reachable`.
+That table was published as "three of six reachable backends are broken". **It was
+wrong about two of the three**, and diagnosing them properly is worth more than the
+claim was.
+
+| backend | what it was reported as | what it actually was |
+|---|---|---|
+| `lmstudio-x1-370` | broken | a **transient** ROCm allocator wedge; the same model loaded in 3.97s minutes later |
+| `lmstudio-xwing` | broken | **busy** -- an `auto-finetune` training job held 13.4 GB of VRAM, and another agent had twelve concurrent `lms load` attempts hung on the same memory |
+| `inference-beelink` | broken | **healthy** -- it answers fine on the 1.2B model it serves; the 12B the inventory named does not fit a 13 GB CPU-only box |
+
+**Not one backend was broken.** A bare `loadable: false` cannot tell a broken engine
+from a busy node from a model that does not fit, and one observation cannot either --
+a training job and a dead engine produce the same signature.
+
+So the probe now asks a question it can actually answer. An inventory may name a
+`probe_model` known to fit the backend, and health is reported as `ok` (it loaded
+something) or `backend_unavailable_now` -- "now" deliberately. Re-probed with that
+field populated:
+
+| backend | health |
+|---|---|
+| `lmstudio-x1-370` | **ok** |
+| `inference-beelink` | **ok** |
+| `inference-joyner` | **ok** |
+| `inference-lenovo` | **ok** |
+| `lmstudio-destroyer` | **ok** |
+| `lmstudio-xwing` | `backend_unavailable_now` -- training in progress |
+
+Five of six healthy, one temporarily occupied. Each attempt cell also carries
+`backend_health`, so a healthy backend that could not run the model named for it --
+beelink and its 12B -- reads as a limit on the *model*, not on the fleet.
+
+The lesson generalises past this fleet: **a fleet-health report built from one
+observation per backend is a report about when you looked.**
 
 Two deliberate refusals, both in the module docstring:
 
