@@ -1266,6 +1266,48 @@ The capable models are still the two unreachable ones: `xwing`'s 24 models and
 beelink's 11 remain unloadable, so the fleet's best capability is unmeasurable until
 those engines are fixed. That is now a statement the sweep makes on its own.
 
+#### The analysis ability matrix, fleet-wide
+
+Four analysis fixtures against the four independent backends, `--stage single`,
+`--max-tokens 8192`. `x1-370` and `xwing` are excluded and the reason is worth
+stating, because it is not a fault:
+
+**`x1-370` and `xwing` are one meshed backend.** `lms load` issued on x1 loads onto
+*xwing* as well — verified by loading a 1B model with a distinctive identifier and
+finding it served on `127.0.0.1:1234` *and* `100.108.99.47:1234`, then unloading on
+xwing and losing it locally too. `lms` prints "loaded successfully on xwing" when run
+from x1, which is the first clue and reads like a hostname.
+
+That matters here because xwing is running someone else's `auto-finetune` job holding
+13.4 GB of VRAM, and a mesh-wide load spends inference memory on a node that is
+training. Several of the load attempts that made xwing look broken were **my own**,
+landing there from x1. They were cleaned up, and this matrix does not add to that
+node's load.
+
+| fixture | `inference-lenovo` | `lmstudio-destroyer` | `inference-joyner` | `inference-beelink` |
+|---|---|---|---|---|
+| plan review | `PROTOCOL_FAILURE` (9628 tok > context) | `TARGETED_TEST_FAILURE` | `TRUNCATED` | `PROTOCOL_FAILURE` (8200 tok > context) |
+| contract review | `TARGETED_TEST_FAILURE` | `TARGETED_TEST_FAILURE` | `TRUNCATED` | `PROTOCOL_FAILURE` |
+| contract shim | `TARGETED_TEST_FAILURE` | `TARGETED_TEST_FAILURE` | `TRUNCATED` | `PROTOCOL_FAILURE` (model does not fit) |
+| allocation review | `TARGETED_TEST_FAILURE` | `TARGETED_TEST_FAILURE` | `TRUNCATED` | `PROTOCOL_FAILURE` |
+
+**0 of 16 cells reached SUCCESS**, and the shape is more informative than the tally:
+
+- **`inference-lenovo` and `lmstudio-destroyer` can drive the analysis path end to
+  end.** Six `TARGETED_TEST_FAILURE` cells mean six replies parsed as deliverables and
+  were graded on content. They are not too small to attempt these fixtures; they are
+  not good enough to pass them. That is a capability statement, not a protocol one.
+- **`inference-joyner` fails at the protocol layer** every time -- reasoning that never
+  terminates in a JSON object.
+- **`inference-beelink` is healthy and cannot run the model named for it.** Its
+  12B does not fit a 13 GB CPU-only box; it serves 1.2B and 1.3B models. The sweep
+  says exactly that rather than counting it as a fleet failure.
+
+So the fleet's analysis ability is: **two backends that answer and grade, one that
+cannot answer, one that is healthy but too small for the model asked of it.** The
+patch half remains unmeasured fleet-wide, because no backend currently serves a model
+large enough to attempt one.
+
 Every cell goes through `BenchmarkRunner.run_task`, the same path a single-backend run
 uses, so the evidence and honesty fields are produced by one code path rather than a
 fleet-specific one.

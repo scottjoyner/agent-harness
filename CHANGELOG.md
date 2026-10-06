@@ -147,6 +147,22 @@
   diagnosis together, discarding `request (8200 tokens) exceeds the available context
   size`.
 
+- **The analysis ability matrix, fleet-wide: 16 cells, 0 successes, and a real
+  capability statement.** Four analysis fixtures against the four independent
+  backends. `inference-lenovo` and `lmstudio-destroyer` produced six
+  `TARGETED_TEST_FAILURE` cells between them -- replies that parsed as deliverables and
+  were graded on content -- so they can drive the analysis path end to end and are
+  simply not good enough to pass. `inference-joyner` fails at the protocol layer every
+  time. `inference-beelink` is healthy and cannot run the 12B the inventory named,
+  which the sweep attributes to the model rather than the backend.
+
+  **`x1-370` and `xwing` are one meshed backend.** `lms load` on x1 also loads onto
+  xwing: verified by loading a 1B model with a distinctive identifier, finding it
+  served on both `127.0.0.1:1234` and `100.108.99.47:1234`, then unloading on xwing
+  and losing it locally. Several of the load attempts that made xwing look broken were
+  mine, landing there from x1, on a node running someone else's finetune. Cleaned up;
+  the matrix does not add to that node's load.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
