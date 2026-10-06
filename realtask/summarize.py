@@ -50,6 +50,69 @@ class Rollup:
     integrity: Dict[str, Any] = field(default_factory=dict)
     harness_errors: List[str] = field(default_factory=list)
 
+    #: How a task's attempts actually fell out. "passed at least once" and "passed
+    #: every time" are different claims and the roll-up used to conflate them.
+    def _task_replication(self) -> Dict[str, Dict[str, Any]]:
+        """Per task: how many attempts, how many passed, and which that means.
+
+        A task with one attempt that passed and a task with five attempts of which
+        one passed both used to count as one ``successful_tasks``. The key is named
+        ``replication`` rather than ``verdict``: this artifact already reserves
+        ``verdict`` and ``review_verdict`` for judgement about a candidate, and
+        ``HonestyTests`` bans the bare key so a qualification verdict cannot hide
+        in it. For a
+        deterministic model that is harmless. For a reasoning model on a GPU it is
+        not: such a model was measured passing at identical settings and then
+        truncating at them, so a single lucky attempt is a sample, not a
+        capability. Reporting the two the same way is how a benchmark ends up
+        flattering a model by accident.
+        """
+        profile: Dict[str, Dict[str, Any]] = {}
+        for task in self.tasks:
+            attempts = task.get("attempts") or []
+            successes = sum(
+                1
+                for attempt in attempts
+                if attempt.get("outcome") == Outcome.SUCCESS.value
+            )
+            if not attempts:
+                verdict = "untested"
+            elif successes == 0:
+                verdict = "none"
+            elif successes == len(attempts):
+                verdict = "reliable"
+            else:
+                verdict = "flaky"
+            profile[str(task.get("task_id"))] = {
+                "attempts": len(attempts),
+                "successes": successes,
+                "replication": verdict,
+            }
+        return profile
+
+    def _flaky_limits(self, profile: Dict[str, Dict[str, Any]]) -> List[str]:
+        flaky = sorted(
+            name
+            for name, record in profile.items()
+            if record["replication"] == "flaky"
+        )
+        if not flaky:
+            return []
+        detail = ", ".join(
+            "{name} {record[successes]}/{record[attempts]}".format(
+                name=name, record=profile[name]
+            )
+            for name in flaky[:6]
+        )
+        return [
+            "{} of {} task(s) passed at least once but not on every attempt ({}). "
+            "A pass-at-least-once count is an upper bound: the model can do the "
+            "task and fail to do it again under identical settings, so treat "
+            "these as capability-with-variance rather than capability.".format(
+                len(flaky), len(profile), detail
+            )
+        ]
+
     def _replicate_limits(self) -> List[str]:
         """A campaign of one run per configuration is not a measurement.
 
@@ -153,6 +216,7 @@ class Rollup:
             "harness_git_shas": sorted(set(self.harness_shas)),
             "mixed_harness_revisions": len(set(self.harness_shas)) > 1,
             "attempts_by_candidate_source": self._attempts_by_candidate_source(),
+            "task_replication": self._task_replication(),
             "attempts_per_task": {
                 str(task.get("task_id")): len(task["attempts"]) for task in self.tasks
             },
@@ -169,7 +233,10 @@ class Rollup:
                 "that applies cleanly and a review that catches a defect are not "
                 "commensurable. Compare them individually, as metrics.json does."
             ),
-            "scope_limits": self._scope_limits(),
+            "scope_limits": (
+                self._scope_limits()
+                + self._flaky_limits(self._task_replication())
+            ),
         }
 
     # -- aggregate ---------------------------------------------------------
@@ -203,7 +270,16 @@ class Rollup:
         for task in self.tasks:
             fam = by_family.setdefault(
                 task["task_family"],
-                {"tasks": 0, "attempts": 0, "successes": 0, "successful_tasks": 0},
+                {
+                    "tasks": 0,
+                    "attempts": 0,
+                    "successes": 0,
+                    # Kept at its original meaning: at least one attempt passed.
+                    "successful_tasks": 0,
+                    # The two the original conflated.
+                    "tasks_passing_every_attempt": 0,
+                    "tasks_flaky": 0,
+                },
             )
             fam["tasks"] += 1
             successes = 0
@@ -214,6 +290,11 @@ class Rollup:
                     successes += 1
             if successes:
                 fam["successful_tasks"] += 1
+            attempt_count = len(task["attempts"])
+            if successes and successes == attempt_count:
+                fam["tasks_passing_every_attempt"] += 1
+            elif successes:
+                fam["tasks_flaky"] += 1
 
         return {
             "runs": len(self.run_ids),

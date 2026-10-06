@@ -1084,6 +1084,44 @@ It is worth being explicit that this is a property of the *models and the hardwa
 not of the harness. The harness did the same thing both times and reported both
 outcomes faithfully, including the token counts that explain the difference.
 
+#### The roll-up now distinguishes a lucky pass from a reliable one
+
+The finding above is not only a warning in prose; it had a concrete counterpart in
+the code, and it was wrong.
+
+`successful_tasks` counted a task on **any** passing attempt. A task that passed 1
+of 1 and a task that passed 1 of 5 therefore produced the same number. For a
+deterministic model that is harmless. For a reasoning model whose reasoning length
+decides pass versus truncation, it flatters the model by accident — and this
+harness had just measured exactly such a model doing both.
+
+The roll-up now reports, per task, how many attempts were made, how many passed,
+and which of four states that is:
+
+| replication | meaning |
+|---|---|
+| `reliable` | every attempt passed |
+| `flaky` | passed at least once, not every time |
+| `none` | never passed |
+| `untested` | contributed no attempts |
+
+`successful_tasks` keeps its original meaning so nothing downstream silently
+changes, and `by_task_family` gains `tasks_passing_every_attempt` and
+`tasks_flaky` beside it. Any flaky task also produces a scope limit naming it and
+its ratio:
+
+> 1 of 1 task(s) passed at least once but not on every attempt (t1 3/5). A
+> pass-at-least-once count is an upper bound: the model can do the task and fail to
+> do it again under identical settings, so treat these as capability-with-variance
+> rather than capability.
+
+The key is `replication`, not `verdict`. This artifact already reserves `verdict`
+and `review_verdict` for judgement about a candidate, and `HonestyTests` bans the
+bare key precisely so a qualification verdict cannot hide inside it.
+
+Verified by reinstating the conflation: six of the seven new assertions fail
+without it.
+
 #### The patch half is still unmeasured — and now known to be out of reach
 
 Eight of the twelve fixtures need a unified diff. None has been attempted by a real
