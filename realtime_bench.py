@@ -147,6 +147,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--json", action="store_true", help="emit JSON")
 
+    # ---- fleet -------------------------------------------------------
+    fleet = sub.add_parser(
+        "fleet", parents=[common],
+        help="probe every configured backend and report what each one can do",
+    )
+    fleet.add_argument(
+        "--endpoint-config", required=True,
+        help="endpoint inventory: the same file format 'run' accepts, with an "
+             "'endpoints' map. every endpoint is swept; default_endpoint is "
+             "ignored because a sweep picks no single backend.",
+    )
+    fleet.add_argument(
+        "--check-loadable", action="store_true",
+        help="also issue a one-token generation per reachable backend, which is "
+             "the only way to tell a working backend from one that advertises "
+             "models it cannot load",
+    )
+    fleet.add_argument("--json", action="store_true")
+
     # ---- list --------------------------------------------------------
     listing = sub.add_parser("list", parents=[common], help="list available fixtures")
     listing.add_argument("--json", action="store_true")
@@ -327,6 +346,54 @@ def command_validate(args: argparse.Namespace) -> int:
             )
         print("{} fixture(s), {} failure(s)".format(len(rows), failures))
     return 1 if failures else 0
+
+
+def command_fleet(args: argparse.Namespace) -> int:
+    """Sweep every configured backend and report reachability honestly.
+
+    Reachability is reported separately from loadability on purpose. A backend can
+    answer ``/v1/models`` and still abort the engine on every model it lists, and a
+    reachability-only check would count that as working -- which is not hypothetical
+    on this fleet.
+    """
+    from realtask.fleet import load_fleet, probe_fleet
+
+    fleet = load_fleet(args.endpoint_config)
+    report = probe_fleet(fleet, check_loadable=args.check_loadable)
+    payload = report.to_dict()
+
+    # --out is the shared evidence root; fleet.json lands beside whatever else a
+    # run would write there, rather than inventing a second output location.
+    out_dir = Path(args.out or ".")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print("fleet report: {}".format(report.write(out_dir / "fleet.json")))
+
+    if args.json:
+        print(json.dumps(payload, indent=2))
+        return 0
+
+    print("{:<18} {:<38} {:>5} {:>9}  {}".format(
+        "backend", "base_url", "models", "reachable", "note"))
+    print("-" * 110)
+    for probe in payload["probes"]:
+        note = probe["error"][:44] if probe["error"] else ""
+        if probe["loadable"] is False:
+            note = "advertises models, cannot load one" + ((" | " + note) if note else "")
+        elif probe["loadable"] is True:
+            note = "loads and answers" + ((" | " + note) if note else "")
+        print("{:<18} {:<38} {:>5} {:>9}  {}".format(
+            probe["name"][:18], probe["base_url"][:38],
+            probe["models_advertised"], str(probe["reachable"]), note))
+    summary = payload["summary"]
+    print()
+    print("{} backend(s): {} reachable, {} unreachable, {} reachable but "
+          "failed to load, {} task(s) attempted".format(
+              summary["backends"], summary["reachable"], summary["unreachable"],
+              summary["reachable_but_failed_to_load"], summary["tasks_attempted"]))
+    print()
+    for limit in payload["scope_limits"]:
+        print("scope limit: {}".format(limit))
+    return 0
 
 
 def command_list(args: argparse.Namespace) -> int:
@@ -723,6 +790,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return command_list(args)
         if args.command == "run":
             return command_run(args)
+        if args.command == "fleet":
+            return command_fleet(args)
         if args.command == "summarize":
             return command_summarize(args)
         if args.command == "plan-command":

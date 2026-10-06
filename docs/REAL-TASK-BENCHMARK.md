@@ -1164,6 +1164,52 @@ they read as None in every roll-up: ['budget_bound']
 That converts a class of silent data loss into a failing test, which is the only
 durable fix available for a hand-maintained list.
 
+#### The fleet, measured rather than described
+
+Every figure so far came from one machine. The harness has also always been pointed
+at **one** backend per invocation, even though its endpoint config has held a whole
+`endpoints` map for a long time -- loading it picks one and refuses if the choice is
+ambiguous. That is correct for a benchmark run and the wrong shape for "what can
+this fleet do".
+
+`realtime_bench.py fleet` sweeps an inventory in the *same* file format `run` already
+accepts. A second format would have been an inventory nobody else could read.
+`default_endpoint` is deliberately ignored: a sweep is precisely the case where
+picking one is wrong.
+
+Run against the eight backends in the service registry, `--check-loadable` earned its
+place on the first attempt:
+
+| backend | advertised | reachable | loads a model |
+|---|---|---|---|
+| `lmstudio-xwing` | 24 | yes | **no** |
+| `inference-beelink` | 11 | yes | **no** |
+| `lmstudio-x1-370` | 1 | yes | **no** |
+| `inference-joyner` | 1 | yes | yes |
+| `inference-lenovo` | 1 | yes | yes |
+| `lmstudio-destroyer` | 1 | yes | yes |
+| `lmstudio-deathstar` | 0 | no | not tested |
+| `lmstudio-macbook-air` | 0 | no | not tested |
+
+**Three of six reachable backends advertise models and then fail to load one** --
+including the machine this document is being written on. A reachability-only check
+would have counted all three as working, which is the entire reason
+`--check-loadable` exists and why `loadable` is a separate field from `reachable`.
+
+Two deliberate refusals, both in the module docstring:
+
+- **Absence is not failure.** `deathstar` and `macbook-air` did not answer, and are
+  recorded as not-answering and excluded from comparison rather than folded into the
+  failing set. A backend nobody asked is unknown, not incapable.
+- **No composite score.** Patch application and review quality are not commensurable,
+  and a fleet whose `xwing` lists 24 models would otherwise be ranked by
+  advertisement size.
+
+Not yet built: driving *tasks* across the fleet in one sweep. `fleet.json` carries an
+empty `attempts` list and the summary counts it, so the absence is visible rather than
+implied. Four backends can load a model; measuring what they can do is the next
+increment.
+
 #### The patch half is still unmeasured — and now known to be out of reach
 
 Eight of the twelve fixtures need a unified diff. None has been attempted by a real
@@ -1481,6 +1527,7 @@ python3 -m pytest test_realtask_*.py -q
 | `test_realtask_evidence.py` | atomic writes, run layout, manifest provenance, API-key redaction, no hardcoded fleet, comparison components, no composite score, scope limits, provenance separation from legacy artifacts |
 | `test_realtask_endpoint.py` | the three endpoint inputs (argv, config file, environment) agree; API keys come from the environment and never reach evidence; no fleet node is named anywhere in the harness or its entrypoint |
 | `test_realtask_resilience.py` | the degradation ladder and its order, profile caching, the bounded retry budget, that degradation does not spend retries, that unrecognised rejections stay terminal, and that unreachable endpoints are reported clearly |
+| `test_realtask_fleet.py` | inventory reading in the same file format `run` accepts, `default_endpoint` ignored because a sweep picks no single backend, URL normalisation, **reachability reported separately from loadability**, a backend that advertises models and then aborts the engine, **absence recorded as absence rather than failure**, no composite score, no credential ever carried, and the subcommand writing a report end to end |
 | `test_realtask_rollup.py` | single and nested multi-task runs, per-family breakdown, null tokens when usage is missing, no composite score or verdict language, and that corrupt/foreign/interrupted runs are skipped rather than fatal |
 | `test_realtask_cli.py` | validate/list/plan-command/summarize; each stage runnable standalone; the `--scout-file` handoff and that the scout really reaches the implementer prompt; a multi-task run keeping per-task evidence; exit-code semantics (0 clean, 3 harness error, model failure is neither); and a full run against a loopback OpenAI-compatible endpoint covering SSE parsing, TTFT, usage accounting, `--no-stream`, role ordering, and the comparison artifact |
 
