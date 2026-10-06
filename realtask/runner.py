@@ -290,7 +290,14 @@ class BenchmarkRunner:
             return None, exc.outcome
         self._model_wall_s += time.monotonic() - call_started
 
-        state.metrics.calls.append(CallMetric.from_response(response, role))
+        call_metric = CallMetric.from_response(response, role)
+        # Read the ceiling off the adapter rather than the options: it lives on
+        # EndpointConfig, so an option-side copy could drift from what was sent.
+        call_metric.max_tokens = getattr(
+            getattr(self.adapter, "config", None), "max_tokens", None
+        )
+        state.metrics.calls.append(call_metric)
+        self._flag_budget_bound(state)
         state.raw[role.value] = response.content
 
         if not response.content.strip():
@@ -337,6 +344,31 @@ class BenchmarkRunner:
         if response.finish_reason == "length":
             state.note(Outcome.TRUNCATED)
         return response, None
+
+    def _flag_budget_bound(self, state: AttemptState) -> None:
+        """Mark an attempt that ran into the completion ceiling.
+
+        Truncation has two very different causes. A model that ran out of budget
+        has not been shown to be incapable of the task, and the remedy is a
+        larger ``--max-tokens``. A model that stopped on its own is a different
+        finding. The roll-up can now tell a task that flaps between success and
+        budget from one that flaps for some other reason, which is the difference
+        between an actionable result and a mysterious one.
+        """
+        if Outcome.TRUNCATED.value not in state.outcomes:
+            return
+        for call in state.metrics.calls:
+            if not call.max_tokens or not call.completion_tokens:
+                continue
+            if call.completion_tokens >= call.max_tokens:
+                state.metrics.budget_bound = True
+                state.metrics.notes.append(
+                    "at least one call consumed its whole completion budget "
+                    "(completion_tokens {} >= max_tokens {}); any truncation "
+                    "here is a budget result, not evidence about the "
+                    "model".format(call.completion_tokens, call.max_tokens)
+                )
+                return
 
     def load_sources(self, task: RealTask, binding: SourceBinding) -> Tuple[Dict[str, str], Tuple[str, ...]]:
         """Bounded verbatim source text for the prompt, plus any truncation."""

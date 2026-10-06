@@ -84,6 +84,24 @@
   `verdict` because that name is reserved in this artifact and `HonestyTests` bans
   it. Verified by reinstating the conflation: six of seven assertions fail.
 
+- **Budget-bound truncation is now distinguishable, and a silent whitelist is fixed.**
+
+  `CallMetric` carries `max_tokens` and `AttemptMetrics.budget_bound` is set when a
+  call reaches its ceiling, so a model that was stopped is separable from a model
+  that stopped -- opposite remedies. The roll-up classifies each flaky task's
+  failures as `budget`, `mixed`, or `capability_or_other` and the scope limit names
+  the cause. Motivated directly by the 30B run that passed at `--max-tokens 8192`
+  and needed 20,000 to emit a diff at all.
+
+  While adding it, `budget_bound` was found being **silently dropped** by
+  `_ATTEMPT_FIELDS`, the roll-up's hand-maintained whitelist. It read `None`
+  everywhere, indistinguishable from a real `None`, and no test failed. This is the
+  third such list in the harness after the best-single ranking table and
+  `_merge_review`; each has now dropped something while looking fine. Every key in
+  `AttemptMetrics.to_dict()` must now be carried, derived, or explicitly declared
+  not-carried, and `AttemptFieldWhitelistTests` fails naming any field that is
+  none of the three.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four

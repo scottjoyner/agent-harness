@@ -609,3 +609,127 @@ class ReplicationReportingTests(RollupTestCase):
         family = payload["aggregate"]["by_task_family"]["bug_fix"]
         self.assertGreater(family["successful_tasks"], family["tasks_passing_every_attempt"])
         self.assertEqual(payload["task_replication"]["t1"]["successes"], 3)
+
+
+class BudgetBoundFlakinessTests(RollupTestCase):
+    """Why a task flapped decides what to do about it.
+
+    A task that fails only by exhausting its completion budget has not been shown
+    to be incapable of the task, and the remedy is a larger ``--max-tokens``. One
+    that fails some other way is a different finding. Reporting both as "flaky"
+    with no cause throws that away, which is the difference between an actionable
+    result and a mysterious one.
+
+    Motivated by a real measurement: a 30B model passed a fixture at
+    ``--max-tokens 8192`` and truncated at the same 8192 on another attempt, and
+    needed 20,000 before it emitted a diff at all.
+    """
+
+    def _flaky(self, budget_bound, extra=None):
+        rows = [
+            attempt("t1::single", "single", Outcome.SUCCESS.value),
+            attempt(
+                "t1::single", "single",
+                Outcome.TRUNCATED.value,
+                budget_bound=budget_bound,
+            ),
+        ]
+        if extra:
+            rows.extend(extra)
+        self.write_run("r1", manifest("r1"), metrics("t1", "bug_fix", rows))
+        return summarize_runs(self.runs).to_dict()
+
+    def test_a_budget_bound_flaky_task_says_so(self):
+        record = self._flaky(True)["task_replication"]["t1"]
+        self.assertEqual(record["replication"], "flaky")
+        self.assertEqual(record["failures"], 1)
+        self.assertEqual(record["failures_budget_bound"], 1)
+        self.assertEqual(record["failure_cause"], "budget")
+
+    def test_a_capability_flaky_task_is_distinguished(self):
+        record = self._flaky(False)["task_replication"]["t1"]
+        self.assertEqual(record["replication"], "flaky")
+        self.assertEqual(record["failures_budget_bound"], 0)
+        self.assertEqual(record["failure_cause"], "capability_or_other")
+
+    def test_mixed_causes_are_reported_as_mixed(self):
+        payload = self._flaky(False, extra=[
+            attempt("t1::single", "single", Outcome.TRUNCATED.value,
+                    budget_bound=True),
+        ])
+        record = payload["task_replication"]["t1"]
+        self.assertEqual(record["failures"], 2)
+        self.assertEqual(record["failures_budget_bound"], 1)
+        self.assertEqual(record["failure_cause"], "mixed")
+
+    def test_the_scope_limit_names_the_cause_and_the_remedy(self):
+        joined = " ".join(self._flaky(True)["scope_limits"])
+        self.assertIn("(budget)", joined)
+        self.assertIn("larger --max-tokens", joined)
+
+    def test_a_reliable_task_carries_no_cause_claim(self):
+        self.write_run("r1", manifest("r1"), metrics("t1", "bug_fix", [
+            attempt("t1::single", "single", Outcome.SUCCESS.value),
+        ]))
+        record = summarize_runs(self.runs).to_dict()["task_replication"]["t1"]
+        self.assertNotIn("failure_cause", record)
+
+
+class AttemptFieldWhitelistTests(RollupTestCase):
+    """Nothing in the attempt metrics may vanish between metrics.json and here.
+
+    ``_ATTEMPT_FIELDS`` is a hand-maintained whitelist, and a whitelist drops
+    whatever is added to the metrics dataclass and not added to it. ``budget_bound``
+    was lost exactly that way while this was being written and nothing failed: the
+    field read ``None`` everywhere, which is indistinguishable from an attempt that
+    genuinely was not budget-bound.
+
+    The roll-up already has three such hand-maintained field lists -- the best-single
+    ranking table, ``_merge_review``, and this one -- and each has dropped something
+    while looking fine. So the tuple gets a test rather than a code review.
+
+    Every key in ``AttemptMetrics.to_dict()`` must be one of three things: a
+    whitelisted field carried verbatim, a derived key, or explicitly not carried.
+    The classification is therefore auditable rather than implied.
+    """
+
+    def test_every_metrics_field_is_accounted_for(self):
+        from realtask.metrics import AttemptMetrics
+        from realtask.summarize import (
+            _ATTEMPT_FIELDS,
+            _DERIVED_ROW_KEYS,
+            _NOT_CARRIED_PER_ATTEMPT,
+        )
+        from realtask.taxonomy import Outcome
+
+        blank = AttemptMetrics(
+            attempt_id="a", strategy="single", outcome=Outcome.SUCCESS
+        ).to_dict()
+        unaccounted = sorted(
+            set(blank) - set(_ATTEMPT_FIELDS) - _DERIVED_ROW_KEYS
+            - _NOT_CARRIED_PER_ATTEMPT
+        )
+        self.assertEqual(
+            unaccounted, [],
+            "these metrics fields are neither carried, derived, nor declared "
+            "not-carried, so they read as None in every roll-up: {}".format(
+                unaccounted
+            ),
+        )
+
+    def test_budget_bound_reaches_the_rollup_row_end_to_end(self):
+        """The specific loss that motivated this, asserted through the real path."""
+        self.write_run("r1", manifest("r1"), metrics("t1", "bug_fix", [
+            attempt("t1::single", "single", Outcome.SUCCESS.value),
+            attempt("t1::single", "single", Outcome.TRUNCATED.value,
+                    budget_bound=True),
+        ]))
+        rows = summarize_runs(self.runs).to_dict()["tasks"][0]["attempts"]
+        by_id = {r["attempt_id"] + r["outcome"]: r for r in rows}
+        truncated = [r for r in rows if r["outcome"] == Outcome.TRUNCATED.value]
+        self.assertTrue(truncated)
+        self.assertIs(
+            truncated[0]["budget_bound"], True,
+            "budget_bound was dropped by the whitelist, so every budget-bound "
+            "attempt would read as None and look like an ordinary truncation",
+        )

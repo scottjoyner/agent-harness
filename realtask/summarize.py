@@ -24,8 +24,30 @@ _ATTEMPT_FIELDS = (
     "attempt_id", "strategy", "outcome", "task_success", "model_calls",
     "model_wall_s", "harness_overhead_s", "total_wall_s", "prompt_tokens",
     "completion_tokens", "total_tokens", "refinements_used", "refinement_budget",
-    "harness_error", "candidate_source",
+    "harness_error", "candidate_source", "budget_bound",
 )
+
+#: Keys the row carries that are *derived* from a nested metrics structure rather
+#: than copied from a flat one.
+_DERIVED_ROW_KEYS = frozenset({
+    "grounding_score", "patch_applied", "files_changed",
+    "unnecessary_changed_files", "syntax_ok", "targeted_passed",
+    "targeted_total", "broader_passed", "broader_total",
+    "review_verdict", "review_defects",
+})
+
+#: Metrics keys deliberately *not* carried per attempt: nested structures whose
+#: contents the derived keys above already represent, plus two per-attempt
+#: constants. Listed explicitly so the classification is auditable -- every key in
+#: ``AttemptMetrics.to_dict()`` must be a whitelisted field, a derived key, or
+#: named here, and ``AttemptFieldWhitelistTests`` enforces exactly that. A field
+#: added to the metrics dataclass and to none of the three reads as ``None``
+#: everywhere, which is indistinguishable from a real ``None``.
+_NOT_CARRIED_PER_ATTEMPT = frozenset({
+    "calls", "grounding", "patch", "review", "tests",  # nested; derived above
+    "notes", "outcomes_seen",                          # narrative, kept elsewhere
+    "schema",                                          # per-attempt constant
+})
 
 
 @dataclass
@@ -83,11 +105,33 @@ class Rollup:
                 verdict = "reliable"
             else:
                 verdict = "flaky"
-            profile[str(task.get("task_id"))] = {
+            failures = [
+                a for a in attempts
+                if a.get("outcome") != Outcome.SUCCESS.value
+            ]
+            budget_bound = sum(
+                1 for a in failures if a.get("budget_bound") is True
+            )
+            record = {
                 "attempts": len(attempts),
                 "successes": successes,
                 "replication": verdict,
             }
+            if failures:
+                # Why a task flapped decides what to do about it. A task that
+                # fails only by running out of budget has not been shown to be
+                # incapable of anything, and the remedy is a larger
+                # --max-tokens. One that fails some other way is a different
+                # finding entirely.
+                record["failures"] = len(failures)
+                record["failures_budget_bound"] = budget_bound
+                if budget_bound == len(failures):
+                    record["failure_cause"] = "budget"
+                elif budget_bound:
+                    record["failure_cause"] = "mixed"
+                else:
+                    record["failure_cause"] = "capability_or_other"
+            profile[str(task.get("task_id"))] = record
         return profile
 
     def _flaky_limits(self, profile: Dict[str, Dict[str, Any]]) -> List[str]:
@@ -99,8 +143,10 @@ class Rollup:
         if not flaky:
             return []
         detail = ", ".join(
-            "{name} {record[successes]}/{record[attempts]}".format(
-                name=name, record=profile[name]
+            "{name} {record[successes]}/{record[attempts]} ({cause})".format(
+                name=name,
+                record=profile[name],
+                cause=profile[name].get("failure_cause", "unclassified"),
             )
             for name in flaky[:6]
         )
@@ -108,7 +154,10 @@ class Rollup:
             "{} of {} task(s) passed at least once but not on every attempt ({}). "
             "A pass-at-least-once count is an upper bound: the model can do the "
             "task and fail to do it again under identical settings, so treat "
-            "these as capability-with-variance rather than capability.".format(
+            "these as capability-with-variance rather than capability. Where the "
+            "cause reads \"budget\", every failure consumed the completion "
+            "ceiling and the remedy is a larger --max-tokens, not a different "
+            "model.".format(
                 len(flaky), len(profile), detail
             )
         ]
