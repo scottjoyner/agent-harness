@@ -120,8 +120,21 @@
   patch application and review quality are not commensurable and a node listing 24
   models would otherwise rank by advertisement size.
 
-  Not yet built: driving tasks across the fleet in one sweep. `fleet.json` carries an
-  empty `attempts` list so the absence is visible.
+  `--attempt` now drives tasks across the fleet, gated on the probe so a backend that
+  cannot load a model is never asked. Across two analysis fixtures on the three
+  loadable backends: **0 of 6 cells reached SUCCESS**, and the outcomes are worth
+  more than the tally. Two backends **cannot accept the medium fixture at all** --
+  their context is smaller than the prompt, refused before any generation. Three
+  cells produced genuinely gradeable answers and were graded down, so two of the
+  three loadable backends can drive the analysis path end to end and are simply not
+  good enough to pass.
+
+  Three bugs of my own surfaced only by running it: `action="append"` with a non-empty
+  default *extends* it, so `--stage single` drove the stage twice; the probe timeout
+  was being used as the generation timeout, killing every attempt at ten seconds with
+  zero model calls; and blanking the error field removed the boilerplate and the
+  diagnosis together, discarding `request (8200 tokens) exceeds the available context
+  size`.
 
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.

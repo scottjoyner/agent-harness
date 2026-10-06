@@ -50,7 +50,21 @@ class FleetEndpoint:
     model: str
     label: str = ""
     node: str = ""
-    timeout_s: float = 10.0
+    #: How long to wait when asking what the backend has. Kept short on purpose:
+    #: a sweep that waits on a dead backend wastes the whole run.
+    probe_timeout_s: float = 10.0
+    #: How long a *generation* may take. Deliberately not the probe timeout: a
+    #: reasoning model legitimately spends over a minute thinking, and conflating
+    #: the two made every attempt die at ten seconds with zero model calls, which
+    #: read as "these backends cannot do the task".
+    timeout_s: float = 180.0
+    #: Name of an environment variable holding the credential. The value is read
+    #: from the environment and never from the file, so an inventory is safe to
+    #: keep next to evidence.
+    api_key_env: str = ""
+    max_tokens: int = 0
+    temperature: float = 0.0
+    seed: int = 13
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -59,6 +73,10 @@ class FleetEndpoint:
             "model": self.model,
             "label": self.label,
             "node": self.node,
+            "api_key_env": self.api_key_env,
+            "max_tokens": self.max_tokens,
+            "timeout_s": self.timeout_s,
+            "probe_timeout_s": self.probe_timeout_s,
         }
 
 
@@ -167,7 +185,12 @@ def load_fleet(path: Path) -> List[FleetEndpoint]:
                 model=str(entry.get("model", "")),
                 label=str(entry.get("label", name)),
                 node=str(entry.get("node", "")),
-                timeout_s=float(entry.get("probe_timeout_s", 10.0)),
+                probe_timeout_s=float(entry.get("probe_timeout_s", 10.0)),
+                timeout_s=float(entry.get("timeout_s", 180.0)),
+                api_key_env=str(entry.get("api_key_env", "")),
+                max_tokens=int(entry.get("max_tokens", 0) or 0),
+                temperature=float(entry.get("temperature", 0.0)),
+                seed=int(entry.get("seed", 13)),
             )
         )
     return fleet
@@ -197,7 +220,9 @@ def probe_endpoint(
     )
     started = time.monotonic()
     try:
-        with opener(_normalise(endpoint.base_url), timeout=endpoint.timeout_s) as response:
+        with opener(
+            _normalise(endpoint.base_url), timeout=endpoint.probe_timeout_s
+        ) as response:
             body = json.loads(response.read().decode("utf-8", errors="replace"))
         probe.reachable = True
         probe.models = tuple(
@@ -232,7 +257,7 @@ def _check_loadable(
         method="POST",
     )
     try:
-        with opener(request, timeout=max(endpoint.timeout_s, 60.0)) as response:
+        with opener(request, timeout=max(endpoint.probe_timeout_s, 60.0)) as response:
             json.loads(response.read().decode("utf-8", errors="replace"))
         return True, ""
     except urllib.error.HTTPError as exc:
@@ -287,3 +312,250 @@ def probe_fleet(
         )
     report.scope_limits = limits
     return report
+
+# --------------------------------------------------------------------------
+# Driving tasks across the fleet
+# --------------------------------------------------------------------------
+
+#: The harness-wide default is 1600 tokens, which every reasoning model observed on
+#: this fleet blew through while thinking, producing TRUNCATED results that say
+#: nothing about the backend. A fleet sweep exists to compare backends, and a sweep
+#: run at the default would compare them on their patience rather than their
+#: capability. The value used is recorded in the artifact either way.
+FLEET_DEFAULT_MAX_TOKENS = 8192
+
+
+def eligible_endpoints(
+    fleet: Sequence[FleetEndpoint], probes: Sequence[Probe], skip_unloadable: bool = True
+) -> Tuple[List[FleetEndpoint], List[str]]:
+    """Which backends are worth spending attempts on, and which are not.
+
+    Skipping a backend that cannot load a model is the whole point of having probed
+    first. Without it, a sweep spends the majority of its wall clock discovering, one
+    backend at a time, what a single ``GET /v1/models`` already said.
+    """
+    by_name = {p.name: p for p in probes}
+    eligible: List[FleetEndpoint] = []
+    skipped: List[str] = []
+    for endpoint in fleet:
+        probe = by_name.get(endpoint.name)
+        if probe is None or not probe.reachable:
+            skipped.append("{}: did not answer".format(endpoint.name))
+            continue
+        if skip_unloadable and probe.loadable is False:
+            skipped.append(
+                "{}: advertises models and cannot load one".format(endpoint.name)
+            )
+            continue
+        if not endpoint.model:
+            skipped.append("{}: no model named in the inventory".format(endpoint.name))
+            continue
+        eligible.append(endpoint)
+    return eligible, skipped
+
+
+def attempt_row(
+    endpoint: FleetEndpoint,
+    task_id: str,
+    outcome: str,
+    *,
+    calls: int = 0,
+    wall_s: float = 0.0,
+    tokens: Optional[int] = None,
+    budget_bound: Optional[bool] = None,
+    targeted_passed: Optional[bool] = None,
+    evidence: str = "",
+    error: str = "",
+) -> Dict[str, Any]:
+    """One (backend, task) cell.
+
+    Carries the same honesty fields a normal attempt records -- ``budget_bound``
+    above all, so a backend that ran out of room is not counted as a backend that
+    could not do the task.
+    """
+    return {
+        "backend": endpoint.name,
+        "node": endpoint.node,
+        "base_url": endpoint.base_url,
+        "model": endpoint.model,
+        "task_id": task_id,
+        "outcome": outcome,
+        "model_calls": calls,
+        "total_wall_s": round(wall_s, 3),
+        "total_tokens": tokens,
+        "budget_bound": budget_bound,
+        "targeted_passed": targeted_passed,
+        "evidence": evidence,
+        "error": error,
+    }
+
+
+def attempt_fleet(
+    fleet: Sequence[FleetEndpoint],
+    task_ids: Sequence[str],
+    executor,
+    *,
+    stages: Sequence[str] = ("single",),
+    skip_unloadable: bool = True,
+) -> FleetReport:
+    """Drive every eligible backend against every task and record the outcome.
+
+    ``executor`` is ``(endpoint, task_id) -> dict`` returning any of the keys
+    :func:`attempt_row` documents. Injecting it keeps this orchestration free of
+    model calls and therefore testable without an endpoint, and it guarantees the
+    fleet path cannot quietly grow its own idea of how a run works: the caller
+    supplies one that delegates to the ordinary runner.
+    """
+    report = FleetReport()
+
+    for endpoint in fleet:
+        for task_id in task_ids:
+            try:
+                result = executor(endpoint, task_id) or {}
+            except Exception as exc:  # noqa: BLE001 -- one backend must not end the sweep
+                result = {"outcome": "HARNESS_ERROR", "error": "{}: {}".format(
+                    type(exc).__name__, exc)}
+            row = attempt_row(
+                endpoint,
+                task_id,
+                str(result.get("outcome") or "UNKNOWN"),
+                calls=int(result.get("model_calls") or 0),
+                wall_s=float(result.get("total_wall_s") or 0.0),
+                tokens=result.get("total_tokens"),
+                budget_bound=result.get("budget_bound"),
+                targeted_passed=result.get("targeted_passed"),
+                evidence=str(result.get("evidence") or ""),
+                error=str(result.get("error") or ""),
+            )
+            report.attempts.append(row)
+
+    return _attempt_limits(report, tuple(stages))
+
+
+def _attempt_limits(report: FleetReport, stages: Tuple[str, ...]) -> FleetReport:
+    limits = [
+        "a fleet sweep compares backends only where the same task ran on both. a "
+        "cell that was never attempted is absent from the comparison, not "
+        "counted as a failure.",
+        "budget_bound distinguishes a backend that ran out of completion room "
+        "from one that could not do the task. only {} stage(s) were driven ({}), "
+        "so nothing here says anything about the other strategies.".format(
+            len(stages), ", ".join(stages)
+        ),
+        "one attempt per (backend, task) is a sample, not a measurement. these "
+        "rows carry no replication, and a backend that succeeded once here may "
+        "succeed unreliably.",
+    ]
+    if any(r.get("budget_bound") for r in report.attempts):
+        limits.append(
+            "{} cell(s) were budget-bound. those are results about the completion "
+            "budget, not about the backend's capability.".format(
+                sum(1 for r in report.attempts if r.get("budget_bound"))
+            )
+        )
+    report.scope_limits = limits
+    return report
+
+
+#: Notes every attempt carries regardless of what happened. Not diagnostics.
+_BOILERPLATE_NOTE_PREFIXES = (
+    "evaluation work root moved out of",
+)
+
+
+def _first_real_note(notes: Sequence[str]) -> str:
+    for note in notes or ():
+        text = str(note).strip()
+        if not text:
+            continue
+        if any(text.startswith(prefix) for prefix in _BOILERPLATE_NOTE_PREFIXES):
+            continue
+        return text[:400]
+    return ""
+
+
+def make_runner_executor(
+    tasks_root: Path,
+    out_dir: Path,
+    harness_root: Path,
+    options,
+    *,
+    stages: Sequence[str] = ("single",),
+    single_attempts: int = 1,
+    swarm_attempts: int = 1,
+    max_tokens_default: int = FLEET_DEFAULT_MAX_TOKENS,
+):
+    """Build the executor ``attempt_fleet`` calls, backed by the ordinary runner.
+
+    Every cell goes through ``BenchmarkRunner.run_task`` exactly as a single-backend
+    run does, so per-task evidence, the grounding gate, the honesty fields and the
+    acceptance commands are produced by the same code path. The fleet layer decides
+    only *what to run and where to put it*; it never decides what a result means.
+
+    Each backend gets its own evidence subdirectory, because a fleet that overwrites
+    one backend's evidence with another's is worse than no fleet.
+    """
+    import os
+    import sys
+
+    from realtask.adapter import EndpointConfig, OpenAIChatAdapter
+    from realtask.evidence import RunDirectory
+    from realtask.fixtures import load_task_by_id
+    from realtask.runner import BenchmarkRunner
+
+    max_tokens_default = int(max_tokens_default)
+
+    def executor(endpoint: FleetEndpoint, task_id: str) -> Dict[str, Any]:
+        task = load_task_by_id(task_id, Path(tasks_root))
+        config = EndpointConfig(
+            label=endpoint.label or endpoint.name,
+            base_url=endpoint.base_url,
+            model=endpoint.model,
+            api_key=os.environ.get(endpoint.api_key_env) if endpoint.api_key_env else None,
+            timeout_s=endpoint.timeout_s,
+            temperature=endpoint.temperature,
+            seed=endpoint.seed,
+            max_tokens=endpoint.max_tokens or max_tokens_default,
+            stream=True,
+            node=endpoint.node,
+        )
+        adapter = OpenAIChatAdapter(config)
+        run_dir = RunDirectory(
+            out_dir, "fleet", prefix="backends/{}/".format(endpoint.name)
+        )
+        run_dir.copy_fixture(task.task_path, task.source_manifest_path)
+        work_root = Path(out_dir) / ("fleet-{}.work".format(endpoint.name))
+        runner = BenchmarkRunner(
+            adapter, run_dir, options, work_root=work_root, harness_root=harness_root
+        )
+        try:
+            result = runner.run_task(
+                task, list(stages),
+                single_attempts=single_attempts,
+                swarm_attempts=swarm_attempts,
+            )
+        finally:
+            runner.close()
+        if not result.attempts:
+            return {"outcome": "NO_ATTEMPT", "error": "runner produced no attempt"}
+        best = result.attempts[-1]
+        metrics = best.metrics
+        targeted = metrics.tests.targeted
+        return {
+            "outcome": metrics.outcome.value,
+            "model_calls": metrics.model_calls,
+            "total_wall_s": metrics.total_wall_s,
+            "total_tokens": metrics.total_tokens,
+            "budget_bound": metrics.budget_bound,
+            "targeted_passed": (
+                bool(targeted) and all(c.passed for c in targeted)
+            ) if targeted else None,
+            "evidence": str(Path(out_dir) / "fleet" / "backends" / endpoint.name),
+            # The first note on every attempt is the work-root relocation notice,
+            # so notes were surfacing as boilerplate. Blanking them entirely was
+            # worse: it threw away the only diagnostic that matters, which is why
+            # the *first non-boilerplate* note is kept instead.
+            "error": _first_real_note(metrics.notes),
+        }
+
+    return executor
