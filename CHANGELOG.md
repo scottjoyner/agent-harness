@@ -70,6 +70,20 @@
   "one passed unretried, one passed once and truncated once". This is what
   `--single-attempts` and the sample-size scope limits exist for.
 
+- **The roll-up no longer reports a lucky pass as a reliable one.** `successful_tasks`
+  counted a task on any passing attempt, so 1-of-1 and 1-of-5 were the same number.
+  That is harmless for a deterministic model and flattering for one whose
+  reasoning length decides pass versus truncation -- which is the model this
+  harness had just measured doing both at identical settings.
+
+  The roll-up now reports per task: attempts, successes, and one of `reliable`,
+  `flaky`, `none` or `untested`. `successful_tasks` keeps its original meaning so
+  nothing downstream changes silently; `by_task_family` gains
+  `tasks_passing_every_attempt` and `tasks_flaky`, and any flaky task produces a
+  scope limit naming it and its ratio. The key is `replication` rather than
+  `verdict` because that name is reserved in this artifact and `HonestyTests` bans
+  it. Verified by reinstating the conflation: six of seven assertions fail.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four

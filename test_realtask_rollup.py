@@ -506,3 +506,106 @@ class ReplicationRollupTests(RollupTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReplicationReportingTests(RollupTestCase):
+    """A task that passed once out of five is not a task that passed.
+
+    Found by running the corpus against a reasoning model on a GPU: one fixture
+    passed at identical settings and then truncated at them. Pass-at-least-once
+    is therefore a real category, not a hypothetical, and the roll-up was
+    reporting it identically to a clean sweep.
+
+    Previously a task counted in ``successful_tasks`` on a single passing
+    attempt, so 1/1 and 1/5 were the same number. For a deterministic model that
+    is harmless. For one whose reasoning length decides pass versus truncation,
+    it flatters the model by accident.
+    """
+
+    def _flaky_run(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single", "single", Outcome.TRUNCATED.value),
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single", "single", Outcome.TRUNCATED.value),
+            ]),
+        )
+        return summarize_runs(self.runs).to_dict()
+
+    def test_a_flaky_task_is_classified_flaky(self):
+        record = self._flaky_run()["task_replication"]["t1"]
+        self.assertEqual(record["attempts"], 5)
+        self.assertEqual(record["successes"], 3)
+        self.assertEqual(record["replication"], "flaky")
+
+    def test_flaky_and_reliable_are_counted_separately(self):
+        agg = self._flaky_run()["aggregate"]
+        family = agg["by_task_family"]["bug_fix"]
+        # The original key keeps its meaning: at least one attempt passed.
+        self.assertEqual(family["successful_tasks"], 1)
+        # And the conflation it invited is now visible rather than implied.
+        self.assertEqual(family["tasks_passing_every_attempt"], 0)
+        self.assertEqual(family["tasks_flaky"], 1)
+
+    def test_a_flaky_task_is_named_in_a_scope_limit(self):
+        joined = " ".join(self._flaky_run()["scope_limits"])
+        self.assertIn("passed at least once but not on every attempt", joined)
+        self.assertIn("t1 3/5", joined)
+        self.assertIn("upper bound", joined)
+
+    def test_a_cleanly_replicated_task_is_reliable_and_quiet(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+                attempt("t1::single", "single", Outcome.SUCCESS.value),
+            ]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertEqual(payload["task_replication"]["t1"]["replication"], "reliable")
+        family = payload["aggregate"]["by_task_family"]["bug_fix"]
+        self.assertEqual(family["tasks_passing_every_attempt"], 1)
+        self.assertEqual(family["tasks_flaky"], 0)
+        joined = " ".join(payload["scope_limits"])
+        self.assertNotIn("not on every attempt", joined)
+
+    def test_a_task_that_never_passed_is_neither(self):
+        self.write_run(
+            "r1",
+            manifest("r1"),
+            metrics("t1", "bug_fix", [
+                attempt("t1::single", "single", Outcome.TARGETED_TEST_FAILURE.value),
+                attempt("t1::single", "single", Outcome.TARGETED_TEST_FAILURE.value),
+            ]),
+        )
+        payload = summarize_runs(self.runs).to_dict()
+        self.assertEqual(payload["task_replication"]["t1"]["replication"], "none")
+        family = payload["aggregate"]["by_task_family"]["bug_fix"]
+        self.assertEqual(family["successful_tasks"], 0)
+        self.assertEqual(family["tasks_flaky"], 0)
+        joined = " ".join(payload["scope_limits"])
+        self.assertNotIn("not on every attempt", joined)
+
+    def test_it_cannot_be_mistaken_for_a_qualification_verdict(self):
+        """The key stays clear of the name ``HonestyTests`` reserves."""
+        blob = json.dumps(self._flaky_run())
+        for banned in ("pass_rate", "overall_score", "\"verdict\":", "swarm_better"):
+            self.assertNotIn(banned, blob, banned)
+
+    def test_a_flaky_task_does_not_inflate_a_replication_claim(self):
+        """The point of the whole change, asserted directly.
+
+        A reader computing a success figure from ``successful_tasks`` alone still
+        gets 1. What they must not be able to do is mistake that for 1 task that
+        reliably works.
+        """
+        payload = self._flaky_run()
+        family = payload["aggregate"]["by_task_family"]["bug_fix"]
+        self.assertGreater(family["successful_tasks"], family["tasks_passing_every_attempt"])
+        self.assertEqual(payload["task_replication"]["t1"]["successes"], 3)
