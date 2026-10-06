@@ -1122,6 +1122,48 @@ bare key precisely so a qualification verdict cannot hide inside it.
 Verified by reinstating the conflation: six of the seven new assertions fail
 without it.
 
+#### A flaky task now says *why* it flapped, and no metric vanishes in silence
+
+Two refinements, both following from the finding above.
+
+**Budget-bound truncation is distinguishable from every other truncation.** A model
+that consumed its completion ceiling has not been shown to be incapable of the
+task, and the remedy is a larger `--max-tokens`. A model that stopped on its own is
+a different finding. Until now the artifact recorded token *usage* but never the
+*limit*, so the two could not be told apart at all.
+
+`CallMetric` now carries `max_tokens`, read off the adapter's own config rather than
+a runner option so the two cannot drift from what was actually sent.
+`AttemptMetrics.budget_bound` is set when any call reached its ceiling, with a note
+naming the numbers. The roll-up then classifies each flaky task's failures as
+`budget`, `mixed`, or `capability_or_other`, and the scope limit says so:
+
+> 1 of 1 task(s) passed at least once but not on every attempt (t1 3/5 (budget)).
+> … Where the cause reads "budget", every failure consumed the completion ceiling
+> and the remedy is a larger --max-tokens, not a different model.
+
+**A hand-maintained whitelist was dropping a metric, silently.** `_ATTEMPT_FIELDS`
+in `summarize.py` copies attempt fields into the roll-up. `budget_bound` was added to
+the metrics dataclass, and because nobody added it to that tuple, it read `None`
+everywhere — indistinguishable from an attempt that genuinely was not budget-bound.
+Nothing failed. This is the *third* such list in this harness after the best-single
+ranking table and `_merge_review`, and each has now dropped something while looking
+perfectly fine.
+
+So the tuple is no longer trusted. Every key in `AttemptMetrics.to_dict()` must now
+be one of three declared things: carried verbatim by `_ATTEMPT_FIELDS`, derived into
+one of `_DERIVED_ROW_KEYS`, or explicitly listed in `_NOT_CARRIED_PER_ATTEMPT`
+along with why. `AttemptFieldWhitelistTests` enforces that, and fails naming the
+field:
+
+```
+these metrics fields are neither carried, derived, nor declared not-carried, so
+they read as None in every roll-up: ['budget_bound']
+```
+
+That converts a class of silent data loss into a failing test, which is the only
+durable fix available for a hand-maintained list.
+
 #### The patch half is still unmeasured — and now known to be out of reach
 
 Eight of the twelve fixtures need a unified diff. None has been attempted by a real

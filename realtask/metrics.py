@@ -39,6 +39,10 @@ class CallMetric:
     raw_request_sha256: str = ""
     request_profile: Dict[str, Any] = field(default_factory=dict)
     retries: int = 0
+    #: The completion ceiling this call was issued with. The artifact recorded
+    #: token *usage* but never the *limit*, so a truncated attempt could not be
+    #: told apart from one that stopped on its own.
+    max_tokens: Optional[int] = None
 
     @classmethod
     def from_response(cls, response: ChatResponse, role: Role) -> "CallMetric":
@@ -75,6 +79,7 @@ class CallMetric:
             "total_tokens": self.total_tokens,
             "usage_reported": self.usage_reported,
             "finish_reason": self.finish_reason,
+            "max_tokens": self.max_tokens,
             "started_at": self.started_at,
             "stream_used": self.stream_used,
             "server_timings": self.server_timings,
@@ -253,6 +258,10 @@ class AttemptMetrics:
     review: ReviewMetric = field(default_factory=ReviewMetric)
     refinements_used: int = 0
     refinement_budget: int = 1
+    #: True when at least one call consumed its entire completion budget. Lets a
+    #: reader separate "the model was stopped" from "the model stopped", which
+    #: have opposite remedies: a larger --max-tokens, or a different model.
+    budget_bound: Optional[bool] = None
     harness_overhead_s: float = 0.0
     outcomes_seen: Tuple[Outcome, ...] = ()
     notes: List[str] = field(default_factory=list)
@@ -333,6 +342,7 @@ class AttemptMetrics:
             "candidate_source": self.candidate_source,
             "outcomes_seen": [o.value for o in self.outcomes_seen],
             "notes": list(self.notes),
+            "budget_bound": self.budget_bound,
             "calls": [c.to_dict() for c in self.calls],
             "grounding": self.grounding.to_dict(),
             "patch": self.patch.to_dict(),
