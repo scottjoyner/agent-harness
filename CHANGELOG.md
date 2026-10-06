@@ -102,6 +102,27 @@
   not-carried, and `AttemptFieldWhitelistTests` fails naming any field that is
   none of the three.
 
+- **`realtime_bench.py fleet`: sweep every configured backend.** The harness could
+  hold a whole `endpoints` map for a long time but always selected one per
+  invocation. A new subcommand sweeps an inventory in the same file format `run`
+  accepts -- a second format would have been an inventory nobody else could read --
+  and writes `fleet.json`. `default_endpoint` is ignored, because a sweep picks no
+  single backend.
+
+  Reachability is reported **separately** from loadability, and `--check-loadable`
+  earned its place on first use: swept across the eight registry backends, **three of
+  six reachable ones advertise models and then fail to load one**, including the
+  machine this was written on. A reachability-only check would have called all three
+  working.
+
+  Two refusals: a backend that did not answer is recorded as absent and excluded from
+  comparison rather than counted as failing, and there is no composite score, since
+  patch application and review quality are not commensurable and a node listing 24
+  models would otherwise rank by advertisement size.
+
+  Not yet built: driving tasks across the fleet in one sweep. `fleet.json` carries an
+  empty `attempts` list so the absence is visible.
+
 - **`auto_router_idempotency_connection_lifetime`** — a `small_refactor` fixture, and
   the last family that was still measured on a single codebase.
   `auto_router/request_idempotency.py` owns a SQLite connection's lifetime in four
