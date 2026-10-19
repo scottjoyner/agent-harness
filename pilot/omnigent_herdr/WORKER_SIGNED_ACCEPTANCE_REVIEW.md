@@ -102,3 +102,17 @@ Do not unfreeze the observer solely on a worker-generated statement.
 **All physical research receipts explicitly set**
 `agent_dispatch_authorized=false`,
 `provider_requests_forwarded=0`. Draft PR stays **HOLD**.
+
+
+## Follow-on: local restart-durable signed receipt journal
+
+`durable_worker_receipts.py` now persists the disposable worker's
+signed commit and ACK-delivery statements in a separate SQLite
+journal with exact-head, hash-chain and key continuity checks.
+Physical subprocess/restart tests pass on x1-370, Lenovo and
+Destroyer. The journal is *not* atomically coupled to the lease DB:
+an accepted debit can exist before its signed commit is written.
+An older DB paired with an old anchor remains a rollback attack.
+These are explicit HOLD conditions, not grounds for automatic
+reconciliation. See
+[DURABLE_WORKER_RECEIPT_REVIEW.md](DURABLE_WORKER_RECEIPT_REVIEW.md).

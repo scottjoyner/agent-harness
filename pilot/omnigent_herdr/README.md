@@ -452,3 +452,27 @@ and permanent key custody remain NOT verified**. Every result remains
 deny-only; the separate cross-host synthetic proof is not added to
 Lenovo's same-host admission receipt, and real agent/model dispatch
 remains HOLD.
+
+
+## Restart-durable synthetic worker-signed receipts (2026-10-19)
+
+See [DURABLE_WORKER_RECEIPT_REVIEW.md](DURABLE_WORKER_RECEIPT_REVIEW.md).
+`durable_worker_receipts.py` stores exact Ed25519-signed synthetic
+worker-commit and ACK-delivery records in a separate private SQLite
+journal. All cooperative reads and writes require a caller-supplied
+exact trusted head. A pending commit blocks another operation until
+a matching signed delivery is recorded; missing/wrong-key/corrupted
+DBs and stale or forked heads are rejected.
+
+`durable_worker_receipts_probe.py` runs short-lived worker fixture
+processes with fresh in-RAM signing keys and separate throwaway
+lease/receipt SQLite files. All three physical fleet nodes passed
+the synthetic restart and rollback tests. **Crucially**, the probe
+also reproduces a lease debit committed WITHOUT a signed receipt,
+and a valid older receipt DB restored alongside an old head.
+Neither atomicity nor external high-water custody is established.
+
+Lenovo's Fleet Commander receipt now requires **13** same-host
+evidence files, including the research-only worker receipt fixture,
+and continues to return `decision=HOLD`. No model traffic or
+agent execution is enabled.

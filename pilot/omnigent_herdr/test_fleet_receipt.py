@@ -99,6 +99,27 @@ def complete_evidence():
             "used_real_repository": False,
             "errors": [],
         },
+        "worker_receipt_fixture": {
+            "mode": "synthetic_restart_worker_signed_receipt_journal",
+            "unlogged_lease_debit_detected": True,
+            "signed_commit_survives_worker_process_restart": True,
+            "commit_pending_delivery_fences_second_commit": True,
+            "matching_signed_delivery_survives_restart": True,
+            "stale_anchor_replay_denied": True,
+            "rolled_back_worker_state_mismatch_detected": True,
+            "older_receipt_journal_denied_with_newer_anchor": True,
+            "older_receipt_journal_with_older_anchor_still_valid": True,
+            "wrong_worker_key_denied_on_restart": True,
+            "independent_worker_key_custody_verified": False,
+            "externally_durable_anchor_verified": False,
+            "atomic_lease_receipt_commit_verified": False,
+            "source_authority_verified": False,
+            "agent_dispatch_authorized": False,
+            "model_egress_authorized": False,
+            "provider_requests_forwarded": 0,
+            "used_real_repository": False,
+            "errors": [],
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -217,6 +238,38 @@ class ReceiptTests(unittest.TestCase):
         e["observer_journal_fixture"]["observed_host"] = "destroyer"
         self.assertFalse(create_receipt(e, timestamp="test")[
             "gate_outcomes"]["observer_journal_fixture"])
+
+    def test_worker_receipt_missing_denied(self):
+        e = complete_evidence()
+        del e["worker_receipt_fixture"]
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["worker_receipt_fixture"])
+
+    def test_worker_receipt_vulnerability_must_be_visible(self):
+        e = complete_evidence()
+        e["worker_receipt_fixture"]["unlogged_lease_debit_detected"] = False
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["worker_receipt_fixture"])
+
+    def test_worker_receipt_cannot_claim_durable_atomicity_or_authority(self):
+        for field in (
+            "independent_worker_key_custody_verified",
+            "externally_durable_anchor_verified",
+            "atomic_lease_receipt_commit_verified",
+            "source_authority_verified",
+            "agent_dispatch_authorized",
+        ):
+            with self.subTest(field=field):
+                e = complete_evidence()
+                e["worker_receipt_fixture"][field] = True
+                self.assertFalse(create_receipt(e, timestamp="test")[
+                    "gate_outcomes"]["worker_receipt_fixture"])
+
+    def test_worker_receipt_mixed_host_denied(self):
+        e = complete_evidence()
+        e["worker_receipt_fixture"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["worker_receipt_fixture"])
 
     def test_lease_missing_denied(self):
         e = complete_evidence()

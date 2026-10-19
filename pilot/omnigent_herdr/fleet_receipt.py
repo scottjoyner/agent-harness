@@ -17,7 +17,7 @@ from pathlib import Path
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
           "egress", "git", "integrated", "lease",
           "durability_fixture", "observer_fixture",
-          "observer_journal_fixture")
+          "observer_journal_fixture", "worker_receipt_fixture")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -67,6 +67,17 @@ GATES = {
         "correct_ack_can_confirm_after_restart",
         "postconfirm_allows_next_prepare",
         "restored_old_observer_db_vulnerability_reproduced",
+    ),
+    "worker_receipt_fixture": (
+        "unlogged_lease_debit_detected",
+        "signed_commit_survives_worker_process_restart",
+        "commit_pending_delivery_fences_second_commit",
+        "matching_signed_delivery_survives_restart",
+        "stale_anchor_replay_denied",
+        "rolled_back_worker_state_mismatch_detected",
+        "older_receipt_journal_denied_with_newer_anchor",
+        "older_receipt_journal_with_older_anchor_still_valid",
+        "wrong_worker_key_denied_on_restart",
     ),
 }
 
@@ -156,6 +167,23 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and not journal.get("errors")
     ):
         gates["observer_journal_fixture"] = False
+    # Green denotes successful verification of SYNTHETIC crash and
+    # rollback failure controls. It is NOT independent worker authority.
+    worker = evidence.get("worker_receipt_fixture", {})
+    if not isinstance(worker, dict) or not (
+        worker.get("mode") == "synthetic_restart_worker_signed_receipt_journal"
+        and worker.get("independent_worker_key_custody_verified") is False
+        and worker.get("externally_durable_anchor_verified") is False
+        and worker.get("atomic_lease_receipt_commit_verified") is False
+        and worker.get("source_authority_verified") is False
+        and worker.get("agent_dispatch_authorized") is False
+        and worker.get("model_egress_authorized") is False
+        and worker.get("used_real_repository") is False
+        and type(worker.get("provider_requests_forwarded")) is int
+        and worker["provider_requests_forwarded"] == 0
+        and not worker.get("errors")
+    ):
+        gates["worker_receipt_fixture"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():
