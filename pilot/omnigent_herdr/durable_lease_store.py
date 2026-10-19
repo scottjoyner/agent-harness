@@ -27,6 +27,7 @@ from capability_gate import (
 
 APP_ID = 0x4F474C53  # "OGLS" - research-only SQLite schema
 SCHEMA_VERSION = 1
+ATOMIC_OUTBOX_SCHEMA_VERSION = 2
 KEY_DOMAIN = b"herdr-durable-synthetic-key-continuity-v1\0"
 DENIED = {"status": "denied", "dispatch_authorized": False,
           "provider_requests_forwarded": 0}
@@ -47,8 +48,11 @@ class DurableSyntheticLeaseGate:
     """
 
     def __init__(self, path: Path, secret: bytes, *, now=time.time,
-                 create: bool = False):
+                 create: bool = False, _atomic_outbox: bool = False):
         self.path = Path(path)
+        self._atomic_outbox = _atomic_outbox
+        self._schema_version = (
+            ATOMIC_OUTBOX_SCHEMA_VERSION if _atomic_outbox else SCHEMA_VERSION)
         if not isinstance(secret, bytes) or len(secret) < 32:
             raise ValueError("signing key too short")
         if not callable(now):
@@ -105,7 +109,7 @@ class DurableSyntheticLeaseGate:
                 raise UnsafeLeaseState("SQLite integrity check failed")
             app = db.execute("PRAGMA application_id").fetchone()[0]
             ver = db.execute("PRAGMA user_version").fetchone()[0]
-            if app != APP_ID or ver != SCHEMA_VERSION:
+            if app != APP_ID or ver != self._schema_version:
                 raise UnsafeLeaseState("unexpected DB application or schema version")
             key = db.execute("SELECT key_commitment FROM metadata WHERE id=1").fetchone()
             if not key or not hmac.compare_digest(key[0], self._key_commitment):
@@ -131,7 +135,7 @@ class DurableSyntheticLeaseGate:
                     conn.execute("PRAGMA journal_mode=DELETE")
                     conn.execute("PRAGMA synchronous=FULL")
                     conn.execute(f"PRAGMA application_id={APP_ID}")
-                    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                    conn.execute(f"PRAGMA user_version={self._schema_version}")
                     conn.execute("BEGIN IMMEDIATE")
                     conn.execute("""CREATE TABLE metadata (
                         id INTEGER PRIMARY KEY CHECK(id=1),
@@ -150,6 +154,23 @@ class DurableSyntheticLeaseGate:
                     )""")
                     conn.execute("INSERT INTO metadata VALUES (1,1,NULL,?)",
                                  (self._key_commitment,))
+                    if self._atomic_outbox:
+                        # Same SQLite database and same BEGIN IMMEDIATE as
+                        # the synthetic lease debit; never ATTACH another DB.
+                        conn.execute("""CREATE TABLE atomic_outbox (
+                            record_no INTEGER PRIMARY KEY,
+                            operation_id TEXT NOT NULL UNIQUE,
+                            lease_jti TEXT NOT NULL,
+                            request_sha256 TEXT NOT NULL,
+                            before_state_sha256 TEXT NOT NULL,
+                            after_state_sha256 TEXT NOT NULL,
+                            epoch INTEGER NOT NULL,
+                            sequence INTEGER NOT NULL,
+                            receipt_number INTEGER NOT NULL,
+                            previous_record_sha256 TEXT NOT NULL,
+                            record_sha256 TEXT NOT NULL,
+                            hmac_sha256 TEXT NOT NULL
+                        )""")
                     conn.execute("COMMIT")
                 finally:
                     conn.close()
@@ -228,9 +249,37 @@ class DurableSyntheticLeaseGate:
             )
             return token
 
+    @staticmethod
+    def _state_digest_db(db, meta) -> str:
+        rows = db.execute(
+            "SELECT jti,token_sha256,epoch,last_seq,used,max_receipts,revoked "
+            "FROM leases ORDER BY jti"
+        ).fetchall()
+        image = json.dumps(
+            {"epoch": meta[0], "last_clock": meta[1], "leases": rows},
+            sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(image.encode()).hexdigest()
+
+    def _validate_outbox(self, db, meta) -> None:
+        if self._atomic_outbox:
+            raise UnsafeLeaseState("atomic outbox validator not configured")
+
+    def _commit_outbox(self, db, *, operation_id, request, claims,
+                       before_state_sha256, after_state_sha256,
+                       epoch, sequence, receipt_number) -> dict:
+        raise UnsafeLeaseState("atomic outbox committer not configured")
+
     def check(self, request: object, *, peer_uid: int, expected_owner: str,
               expected_session: str, expected_worktree_sha256: str,
-              expected_model_pin: str) -> dict:
+              expected_model_pin: str, operation_id: str | None = None) -> dict:
+        # Version 2 requires an exact synthetic idempotency key. Legacy
+        # version 1 must never accept one as a workaround.
+        if self._atomic_outbox:
+            if (not isinstance(operation_id, str)
+                    or not __import__("re").fullmatch(r"[a-f0-9]{32}", operation_id)):
+                return DENIED.copy()
+        elif operation_id is not None:
+            return DENIED.copy()
         if not isinstance(request, dict) or set(request) != {
             "schema", "op", "token", "seq",
         }:
@@ -250,8 +299,15 @@ class DurableSyntheticLeaseGate:
             return DENIED.copy()
         try:
             with self._transaction() as (db, meta):
+                self._validate_outbox(db, meta)
                 now = int(self._now())
-                if not self._clock(db, meta[1], now):
+                if self._atomic_outbox:
+                    # A denied request MUST NOT silently modify the lease
+                    # clock without producing an outbox intent.
+                    if meta[1] is not None and now < meta[1]:
+                        return DENIED.copy()
+                    before_state_sha256 = self._state_digest_db(db, meta)
+                elif not self._clock(db, meta[1], now):
                     return DENIED.copy()
                 if (
                     type(claims["schema"]) is not int or claims["schema"] != 1
@@ -286,6 +342,14 @@ class DurableSyntheticLeaseGate:
                     or previous[3] >= previous[4]
                 ):
                     return DENIED.copy()
+                if self._atomic_outbox:
+                    if db.execute(
+                        "SELECT 1 FROM atomic_outbox WHERE operation_id=?",
+                        (operation_id,),
+                    ).fetchone():
+                        return DENIED.copy()
+                    if not self._clock(db, meta[1], now):
+                        raise UnsafeLeaseState("unexpected outbox clock regression")
                 used = previous[3] + 1
                 updated = db.execute(
                     """UPDATE leases SET last_seq=?,used=?
@@ -295,12 +359,26 @@ class DurableSyntheticLeaseGate:
                 ).rowcount
                 if updated != 1:
                     raise UnsafeLeaseState("non-atomic lease update")
-                return {
+                output = {
                     "status": "synthetic_receipt_only",
                     "dispatch_authorized": False,
                     "provider_requests_forwarded": 0,
                     "receipt_number": used,
                 }
+                if self._atomic_outbox:
+                    new_meta = (meta[0], now)
+                    after_state_sha256 = self._state_digest_db(db, new_meta)
+                    event = self._commit_outbox(
+                        db, operation_id=operation_id, request=request,
+                        claims=claims, before_state_sha256=before_state_sha256,
+                        after_state_sha256=after_state_sha256,
+                        epoch=meta[0], sequence=request["seq"],
+                        receipt_number=used)
+                    output.update({
+                        "atomic_outbox_record": event["record_no"],
+                        "atomic_outbox_sha256": event["record_sha256"],
+                    })
+                return output
         except (sqlite3.Error, UnsafeLeaseState):
             return DENIED.copy()
 
@@ -333,14 +411,8 @@ class DurableSyntheticLeaseGate:
     def state_digest(self) -> str:
         """Local checkpoint hash, not independently signed/custodied."""
         with self._transaction(write=False) as (db, meta):
-            rows = db.execute(
-                "SELECT jti,token_sha256,epoch,last_seq,used,max_receipts,revoked "
-                "FROM leases ORDER BY jti"
-            ).fetchall()
-            image = json.dumps(
-                {"epoch": meta[0], "last_clock": meta[1], "leases": rows},
-                sort_keys=True, separators=(",", ":"))
-            return hashlib.sha256(image.encode()).hexdigest()
+            self._validate_outbox(db, meta)
+            return self._state_digest_db(db, meta)
 
 
 if __name__ == "__main__":

@@ -17,7 +17,8 @@ from pathlib import Path
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
           "egress", "git", "integrated", "lease",
           "durability_fixture", "observer_fixture",
-          "observer_journal_fixture", "worker_receipt_fixture")
+          "observer_journal_fixture", "worker_receipt_fixture",
+          "atomic_outbox_fixture")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -78,6 +79,17 @@ GATES = {
         "older_receipt_journal_denied_with_newer_anchor",
         "older_receipt_journal_with_older_anchor_still_valid",
         "wrong_worker_key_denied_on_restart",
+    ),
+    "atomic_outbox_fixture": (
+        "v2_legacy_schema_separation_verified",
+        "pre_insert_failure_left_no_debit",
+        "post_insert_failure_rolled_back_both",
+        "committed_debit_and_authenticated_intent",
+        "restart_outbox_intent_persisted",
+        "duplicate_operation_rejected",
+        "second_receipt_chained_in_one_db",
+        "old_lease_image_rejected_with_newer_head",
+        "old_image_with_old_head_still_valid",
     ),
 }
 
@@ -184,6 +196,21 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and not worker.get("errors")
     ):
         gates["worker_receipt_fixture"] = False
+    atomic = evidence.get("atomic_outbox_fixture", {})
+    if not isinstance(atomic, dict) or not (
+        atomic.get("mode") == "synthetic_single_sqlite_atomic_lease_outbox"
+        and atomic.get("signing_key_saved_to_disk") is False
+        and atomic.get("independent_external_highwater_verified") is False
+        and atomic.get("observer_publication_atomic_verified") is False
+        and atomic.get("real_resource_authority_verified") is False
+        and atomic.get("agent_dispatch_authorized") is False
+        and atomic.get("model_egress_authorized") is False
+        and atomic.get("used_real_repository") is False
+        and type(atomic.get("provider_requests_forwarded")) is int
+        and atomic["provider_requests_forwarded"] == 0
+        and not atomic.get("errors")
+    ):
+        gates["atomic_outbox_fixture"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

@@ -476,3 +476,26 @@ Lenovo's Fleet Commander receipt now requires **13** same-host
 evidence files, including the research-only worker receipt fixture,
 and continues to return `decision=HOLD`. No model traffic or
 agent execution is enabled.
+
+
+## V2 atomic synthetic debit and outbox intent (2026-10-19)
+
+See [ATOMIC_SYNTHETIC_OUTBOX_REVIEW.md](ATOMIC_SYNTHETIC_OUTBOX_REVIEW.md).
+`atomic_synthetic_lease_outbox.py` is an explicitly opt-in **V2**
+version of the research-only SQLite lease broker. A lease debit and its
+HMAC-authenticated outbox intent are inserted into **one SQLite
+transaction**. The old V1 and new V2 adapters refuse each other's
+database schema; no migration or production activation occurred.
+
+Focused unit and disposable subprocess tests passed on x1-370,
+Lenovo and Destroyer. Injected failures both before and after
+outbox insertion rolled back the debit. Restarted processes retained
+the outbox and rejected duplicate operations. An old valid database
+paired with an old trusted head remains a rollback vulnerability.
+External observer publication and worker ACK are NOT part of this
+atomic transaction, and `agent_dispatch_authorized=false`.
+
+The same-host Fleet Commander receipt now checks **14** evidence
+categories. Lenovo's physical report remains `decision=HOLD`;
+all live provider, model, sandbox and runtime admission paths are
+disabled.

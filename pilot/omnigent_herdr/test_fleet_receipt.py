@@ -120,6 +120,27 @@ def complete_evidence():
             "used_real_repository": False,
             "errors": [],
         },
+        "atomic_outbox_fixture": {
+            "mode": "synthetic_single_sqlite_atomic_lease_outbox",
+            "v2_legacy_schema_separation_verified": True,
+            "pre_insert_failure_left_no_debit": True,
+            "post_insert_failure_rolled_back_both": True,
+            "committed_debit_and_authenticated_intent": True,
+            "restart_outbox_intent_persisted": True,
+            "duplicate_operation_rejected": True,
+            "second_receipt_chained_in_one_db": True,
+            "old_lease_image_rejected_with_newer_head": True,
+            "old_image_with_old_head_still_valid": True,
+            "signing_key_saved_to_disk": False,
+            "independent_external_highwater_verified": False,
+            "observer_publication_atomic_verified": False,
+            "real_resource_authority_verified": False,
+            "agent_dispatch_authorized": False,
+            "model_egress_authorized": False,
+            "provider_requests_forwarded": 0,
+            "used_real_repository": False,
+            "errors": [],
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -270,6 +291,37 @@ class ReceiptTests(unittest.TestCase):
         e["worker_receipt_fixture"]["observed_host"] = "destroyer"
         self.assertFalse(create_receipt(e, timestamp="test")[
             "gate_outcomes"]["worker_receipt_fixture"])
+
+    def test_atomic_outbox_missing_denied(self):
+        e = complete_evidence()
+        del e["atomic_outbox_fixture"]
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["atomic_outbox_fixture"])
+
+    def test_atomic_outbox_fault_injection_required(self):
+        e = complete_evidence()
+        e["atomic_outbox_fixture"]["post_insert_failure_rolled_back_both"] = False
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["atomic_outbox_fixture"])
+
+    def test_atomic_outbox_must_not_claim_external_authority(self):
+        for name in (
+            "independent_external_highwater_verified",
+            "observer_publication_atomic_verified",
+            "real_resource_authority_verified",
+            "agent_dispatch_authorized",
+        ):
+            with self.subTest(name=name):
+                e = complete_evidence()
+                e["atomic_outbox_fixture"][name] = True
+                self.assertFalse(create_receipt(e, timestamp="test")[
+                    "gate_outcomes"]["atomic_outbox_fixture"])
+
+    def test_atomic_outbox_mixed_host_rejected(self):
+        e = complete_evidence()
+        e["atomic_outbox_fixture"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["atomic_outbox_fixture"])
 
     def test_lease_missing_denied(self):
         e = complete_evidence()

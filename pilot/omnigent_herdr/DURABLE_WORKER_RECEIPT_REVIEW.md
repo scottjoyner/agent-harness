@@ -137,3 +137,17 @@ are established, this stays a draft research artifact.
 **No security policies changed, no model/provider calls made, no real
 agent task dispatched, no production branch merged, and no existing
 fleet workloads stopped.**
+
+
+## Follow-on: single-database V2 outbox research
+
+The separate V1 lease DB / signed receipt DB crash gap remains
+open for V1. New `atomic_synthetic_lease_outbox.py` defines an
+isolated V2 research alternative: a lease debit and a **keyed unsigned
+outbox intent** are committed in the same SQLite transaction, proven
+with before- and after-insert fault injection. This closes the *local
+V2 intent* gap only; signing, publishing and independently attesting
+the outbox event across workers and observers are still separate
+operations with unresolved crash/fencing windows. There is no
+in-place schema migration or production enablement. See
+[ATOMIC_SYNTHETIC_OUTBOX_REVIEW.md](ATOMIC_SYNTHETIC_OUTBOX_REVIEW.md).
