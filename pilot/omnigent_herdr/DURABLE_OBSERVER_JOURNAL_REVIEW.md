@@ -129,3 +129,15 @@ administrator custody or change Lenovo's sandbox policy.
 **No live agents, hosted model requests, policy changes, production
 deploys, protected branch merges or existing-workload terminations
 were performed in this research slice.**
+
+
+## Later separation experiment: cooperative witness log
+
+The separate `checkpoint_witness_log.py` prototype publishes signed,
+sequential state checkpoints to a different append-only-by-convention
+file. It can identify an old worker or witness image **only when**
+the caller retains a trusted newer anchor outside the rolled-back file.
+Physical x1-370/Lenovo tests pass the synthetic negative controls;
+independent administrative custody, durable anchor publication, and
+resource-side ACK authenticity remain unproven. See
+[CHECKPOINT_WITNESS_REVIEW.md](CHECKPOINT_WITNESS_REVIEW.md).

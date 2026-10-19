@@ -412,3 +412,22 @@ The latest Lenovo 12-source result stays HOLD: only preflight and the
 three synthetic durability/observer fixtures passed. Resource memory
 headroom was ~7.78 GiB, below the 8-GiB floor, and strict AppArmor
 namespace activation remains unapproved. No AI agent has been launched.
+
+
+## Separate signed cooperative witness log (2026-10-19)
+
+See [CHECKPOINT_WITNESS_REVIEW.md](CHECKPOINT_WITNESS_REVIEW.md).
+`checkpoint_witness_log.py` supplies a bounded, private, hash-linked
+Ed25519 checkpoint log that requires a caller-provided trusted
+generation/head hash. A reader is read-only; the publisher refuses
+stale writer anchors and interrupted/altered records. An external
+anchor is **not automatically trusted**—this pilot uses an ephemeral
+in-memory value and does not have independent storage/custody.
+
+The `two_node_witness_probe.py` cross-node synthetic run succeeded:
+x1-370 held the observer signer and witness log, Lenovo supplied
+disposable synthetic SQLite snapshots. An old worker DB and an old
+log were rejected when the newer witness head was retained. An old log
+paired with an old anchor was still accepted (mandatory negative
+control). The witness remains research-only and is intentionally
+**not** added to Lenovo's same-host 12-source admission receipt.
