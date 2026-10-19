@@ -333,3 +333,38 @@ deny-only socket, isolated Git, same-session integrated canary, and
 synthetic lease. A synthetic success is **never** a signed grant and the
 receipt always returns HOLD. On Lenovo only preflight and the resource
 prefilter passed at last sampling; no agent is authorized.
+
+
+## Restart durability and independent observer research — Oct 19, 2026
+
+See [DURABLE_BROKER_CHECKPOINT_REVIEW.md](DURABLE_BROKER_CHECKPOINT_REVIEW.md).
+
+`durable_lease_store.py` persists **synthetic** lease IDs, quotas,
+high-water counters, revocations and epoch in owner-private SQLite.
+`durable_restart_probe.py` demonstrates process restart and multiple
+concurrent cooperators on Lenovo and Destroyer. Both PASS. Crucially,
+both also prove restoring an old valid DB can resurrect a receipt:
+`file_rollback_protection_verified=false`.
+
+`observer_checkpoint.py` verifies domain-separated Ed25519 checkpoints
+without the worker signing key and checks against a supplied trusted
+generation floor and pinned observer public key.
+`observer_replay_probe.py` passes the signed-state and old-snapshot
+negative controls on both machines, but is **only an ephemeral signer
+fixture**; no independent custody or continuous publication is proven.
+
+`two_node_checkpoint_probe.py` runs a disposable cross-node test with
+the observer Ed25519 private key only in `x1-370` RAM and a distinct
+HMAC worker secret only on Lenovo. This physical experiment PASSed:
+the x1 observer rejected Lenovo's rolled-back synthetic SQLite image
+against the newer signed checkpoint. It is not trusted, permanently
+published anti-rollback state; an old checkpoint plus an old generation
+floor still passes, and the observer cannot attest to the remote
+fixture's execution source.
+
+`fleet_receipt.py` now requires **11** host-specific evidence sources
+and continues to return HOLD. The two-node cross-host evidence is
+kept separately, not falsely combined with Lenovo's same-host gates.
+
+These results do not authorize an AI agent, real model egress, host
+policy edits, deployment, or a PR merge.

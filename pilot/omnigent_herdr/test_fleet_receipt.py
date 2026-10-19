@@ -54,6 +54,33 @@ def complete_evidence():
             "provider_requests_forwarded": 0, "model_egress_authorized": False,
             "agent_dispatch_authorized": False, "used_real_repository": False,
         },
+        "durability_fixture": {
+            "mode": "synthetic_sqlite_restart_and_rollback_fixture",
+            "restart_replay_denied": True, "restart_quota_enforced": True,
+            "restart_revocation_denied": True, "restart_epoch_denied": True,
+            "cross_process_concurrency_serialized": True,
+            "db_missing_fail_closed": True, "key_not_persisted": True,
+            "file_rollback_vulnerability_reproduced": True,
+            "file_rollback_protection_verified": False,
+            "independent_checkpoint_verified": False,
+            "agent_dispatch_authorized": False,
+            "provider_requests_forwarded": 0, "used_real_repository": False,
+        },
+        "observer_fixture": {
+            "mode": "ephemeral_ed25519_observer_fixture",
+            "signed_latest_state_matches": True,
+            "restored_old_db_rejected_with_latest_checkpoint": True,
+            "stale_checkpoint_rejected_with_trusted_floor": True,
+            "old_checkpoint_with_old_floor_still_matches": True,
+            "altered_signature_rejected": True,
+            "observer_public_key_pin_enforced": True,
+            "observer_private_key_persisted": False,
+            "physical_observer_custody_verified": False,
+            "continuous_publication_verified": False,
+            "rollback_resistance_verified": False,
+            "provider_requests_forwarded": 0,
+            "agent_dispatch_authorized": False,
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -114,6 +141,35 @@ class ReceiptTests(unittest.TestCase):
         e = complete_evidence()
         e["integrated"]["remote_push_attempted"] = True
         self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["integrated"])
+
+    def test_durable_restart_evidence_missing_denied(self):
+        e = complete_evidence()
+        del e["durability_fixture"]
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["durability_fixture"])
+
+    def test_durable_vulnerability_cannot_be_falsified_as_fixed(self):
+        e = complete_evidence()
+        e["durability_fixture"]["file_rollback_protection_verified"] = True
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["durability_fixture"])
+
+    def test_observer_custody_claim_denied_without_real_attestation(self):
+        for k in ("physical_observer_custody_verified",
+                  "continuous_publication_verified",
+                  "rollback_resistance_verified",
+                  "agent_dispatch_authorized"):
+            with self.subTest(key=k):
+                e = complete_evidence()
+                e["observer_fixture"][k] = True
+                self.assertFalse(create_receipt(e, timestamp="test")[
+                    "gate_outcomes"]["observer_fixture"])
+
+    def test_observer_fixture_cross_host_denied(self):
+        e = complete_evidence()
+        e["observer_fixture"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["observer_fixture"])
 
     def test_lease_missing_denied(self):
         e = complete_evidence()

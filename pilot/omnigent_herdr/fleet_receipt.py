@@ -15,7 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
-          "egress", "git", "integrated", "lease")
+          "egress", "git", "integrated", "lease",
+          "durability_fixture", "observer_fixture")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -43,6 +44,19 @@ GATES = {
         "forbidden_operations_denied", "broker_peer_uid_matched",
         "sandbox_direct_network_denied", "host_signing_key_unreadable",
         "host_key_unchanged",
+    ),
+    "durability_fixture": (
+        "restart_replay_denied", "restart_quota_enforced",
+        "restart_revocation_denied", "restart_epoch_denied",
+        "cross_process_concurrency_serialized", "db_missing_fail_closed",
+        "key_not_persisted", "file_rollback_vulnerability_reproduced",
+    ),
+    "observer_fixture": (
+        "signed_latest_state_matches",
+        "restored_old_db_rejected_with_latest_checkpoint",
+        "stale_checkpoint_rejected_with_trusted_floor",
+        "old_checkpoint_with_old_floor_still_matches",
+        "altered_signature_rejected", "observer_public_key_pin_enforced",
     ),
 }
 
@@ -93,6 +107,31 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and lease.get("used_real_repository") is False
     ):
         gates["lease"] = False
+    # Green here means a synthetic *limitation was reproduced*, NOT a
+    # proof that physical observer custody or DB anti-rollback exists.
+    durable = evidence.get("durability_fixture", {})
+    if not isinstance(durable, dict) or not (
+        durable.get("mode") == "synthetic_sqlite_restart_and_rollback_fixture"
+        and durable.get("file_rollback_protection_verified") is False
+        and durable.get("independent_checkpoint_verified") is False
+        and durable.get("agent_dispatch_authorized") is False
+        and durable.get("used_real_repository") is False
+        and type(durable.get("provider_requests_forwarded")) is int
+        and durable["provider_requests_forwarded"] == 0
+    ):
+        gates["durability_fixture"] = False
+    observer = evidence.get("observer_fixture", {})
+    if not isinstance(observer, dict) or not (
+        observer.get("mode") == "ephemeral_ed25519_observer_fixture"
+        and observer.get("observer_private_key_persisted") is False
+        and observer.get("physical_observer_custody_verified") is False
+        and observer.get("continuous_publication_verified") is False
+        and observer.get("rollback_resistance_verified") is False
+        and observer.get("agent_dispatch_authorized") is False
+        and type(observer.get("provider_requests_forwarded")) is int
+        and observer["provider_requests_forwarded"] == 0
+    ):
+        gates["observer_fixture"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

@@ -92,3 +92,18 @@ profile and rollback procedure in
 [APPARMOR_LENOVO_REVIEW.md](APPARMOR_LENOVO_REVIEW.md), obtain explicit
 administrative change authorization, and re-run all physical negative
 tests on Lenovo before even considering further runtime testing.
+
+
+## Optional SQLite durability prototype — later research slice
+
+The original `capability_gate.py` remains ephemeral; a new, separate
+`durable_lease_store.py` implements restart-safe SQLite transactions
+for **synthetic receipt** state only. This adapter retains receipt
+high-water, quota, epoch and revocations across cooperating process
+restarts. Its old-database snapshot rollback vulnerability is
+**reproduced and unresolved**, not waived by the test suite.
+An Ed25519 checkpoint verifier can reject such rollback against a
+**newer externally trusted checkpoint**, but permanent independent
+signer custody, reliable publication and high-water authority are
+not yet available. See
+[DURABLE_BROKER_CHECKPOINT_REVIEW.md](DURABLE_BROKER_CHECKPOINT_REVIEW.md).
