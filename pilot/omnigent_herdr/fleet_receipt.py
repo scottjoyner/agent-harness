@@ -16,7 +16,8 @@ from pathlib import Path
 
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
           "egress", "git", "integrated", "lease",
-          "durability_fixture", "observer_fixture")
+          "durability_fixture", "observer_fixture",
+          "observer_journal_fixture")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -57,6 +58,15 @@ GATES = {
         "stale_checkpoint_rejected_with_trusted_floor",
         "old_checkpoint_with_old_floor_still_matches",
         "altered_signature_rejected", "observer_public_key_pin_enforced",
+    ),
+    "observer_journal_fixture": (
+        "prepare_fence_survived_restart",
+        "unmodified_prepare_can_abort",
+        "signed_unconfirmed_ack_survived_restart",
+        "tampered_ack_cannot_release_fence",
+        "correct_ack_can_confirm_after_restart",
+        "postconfirm_allows_next_prepare",
+        "restored_old_observer_db_vulnerability_reproduced",
     ),
 }
 
@@ -132,6 +142,20 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and observer["provider_requests_forwarded"] == 0
     ):
         gates["observer_fixture"] = False
+    journal = evidence.get("observer_journal_fixture", {})
+    if not isinstance(journal, dict) or not (
+        journal.get("mode") == "synthetic_restart_durable_observer_journal"
+        and journal.get("signing_key_on_disk") is False
+        and journal.get("independent_signer_custody_verified") is False
+        and journal.get("external_highwater_verified") is False
+        and journal.get("agent_dispatch_authorized") is False
+        and journal.get("model_egress_authorized") is False
+        and journal.get("used_real_repository") is False
+        and type(journal.get("provider_requests_forwarded")) is int
+        and journal["provider_requests_forwarded"] == 0
+        and not journal.get("errors")
+    ):
+        gates["observer_journal_fixture"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

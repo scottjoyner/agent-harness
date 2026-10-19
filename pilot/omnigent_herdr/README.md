@@ -389,3 +389,26 @@ the observer public key was introduced over the same SSH test channel.
 The worker and observer are **not authorized to perform any real
 model request or agent execution**. These cross-host witnesses are
 not inserted into the 11-source same-host Lenovo admission receipt.
+
+
+## Restart-durable synthetic observer fence (2026-10-19)
+
+See [DURABLE_OBSERVER_JOURNAL_REVIEW.md](DURABLE_OBSERVER_JOURNAL_REVIEW.md).
+`durable_observer_journal.py` stores signed prepare, pending ACK,
+monotonic local checkpoint and cooperative confirmation state in
+an owner-private SQLite file. Every reload re-verifies signatures and
+journal/checkpoint consistency; uncertain prepare or ACK delivery remains
+fenced across a cooperating observer-process restart.
+
+`durable_observer_journal_probe.py` passed on x1-370, Lenovo and
+Destroyer, including tampered ACK rejection, post-restart fence checks,
+and the mandatory old-valid-DB rollback vulnerability reproduction.
+This is **not** an independently controlled observer or a
+source-authoritative worker delivery receipt. Cooperative fixture
+confirmation must never be interpreted as production approval.
+
+`fleet_receipt.py` now requires **12 same-host evidence inputs**.
+The latest Lenovo 12-source result stays HOLD: only preflight and the
+three synthetic durability/observer fixtures passed. Resource memory
+headroom was ~7.78 GiB, below the 8-GiB floor, and strict AppArmor
+namespace activation remains unapproved. No AI agent has been launched.

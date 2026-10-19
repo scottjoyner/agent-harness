@@ -115,3 +115,20 @@ Do not interpret the successful research ACK as runtime authorization.
 
 **Release decision: HOLD. No system security policy changed, no real AI
 requests issued, no physical production agent launched.**
+
+
+## Follow-on: persistent local observer fence fixture
+
+`durable_observer_journal.py` now persists the signed preparation,
+observer generation, checkpoint and signed-but-unconfirmed ACK to
+separate owner-private research SQLite storage. Physical restart tests
+pass on x1-370, Lenovo and Destroyer. An uncertain transaction remains
+fenced after restart, and altered ACKs cannot release it.
+
+A cooperative local `confirm_delivery` test can advance the fixture
+state when handed the exact signed ACK and a caller-supplied matching
+worker digest. It does **not** prove that a real worker received the ACK,
+that a second authority approved the delivery, or that the journal
+cannot be rolled back. The older valid journal DB restore attack
+remains reproducible. See
+[DURABLE_OBSERVER_JOURNAL_REVIEW.md](DURABLE_OBSERVER_JOURNAL_REVIEW.md).

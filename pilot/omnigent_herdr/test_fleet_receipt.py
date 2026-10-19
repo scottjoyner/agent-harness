@@ -81,6 +81,24 @@ def complete_evidence():
             "provider_requests_forwarded": 0,
             "agent_dispatch_authorized": False,
         },
+        "observer_journal_fixture": {
+            "mode": "synthetic_restart_durable_observer_journal",
+            "prepare_fence_survived_restart": True,
+            "unmodified_prepare_can_abort": True,
+            "signed_unconfirmed_ack_survived_restart": True,
+            "tampered_ack_cannot_release_fence": True,
+            "correct_ack_can_confirm_after_restart": True,
+            "postconfirm_allows_next_prepare": True,
+            "restored_old_observer_db_vulnerability_reproduced": True,
+            "signing_key_on_disk": False,
+            "independent_signer_custody_verified": False,
+            "external_highwater_verified": False,
+            "agent_dispatch_authorized": False,
+            "model_egress_authorized": False,
+            "provider_requests_forwarded": 0,
+            "used_real_repository": False,
+            "errors": [],
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -170,6 +188,35 @@ class ReceiptTests(unittest.TestCase):
         e["observer_fixture"]["observed_host"] = "destroyer"
         self.assertFalse(create_receipt(e, timestamp="test")[
             "gate_outcomes"]["observer_fixture"])
+
+    def test_observer_journal_missing_denied(self):
+        e = complete_evidence()
+        del e["observer_journal_fixture"]
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["observer_journal_fixture"])
+
+    def test_observer_journal_cannot_claim_rollback_resistance(self):
+        for field in ("external_highwater_verified",
+                      "independent_signer_custody_verified",
+                      "agent_dispatch_authorized"):
+            with self.subTest(field=field):
+                e = complete_evidence()
+                e["observer_journal_fixture"][field] = True
+                self.assertFalse(create_receipt(e, timestamp="test")[
+                    "gate_outcomes"]["observer_journal_fixture"])
+
+    def test_observer_journal_must_prove_rollback_attack(self):
+        e = complete_evidence()
+        e["observer_journal_fixture"][
+            "restored_old_observer_db_vulnerability_reproduced"] = False
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["observer_journal_fixture"])
+
+    def test_observer_journal_cross_host_denied(self):
+        e = complete_evidence()
+        e["observer_journal_fixture"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["observer_journal_fixture"])
 
     def test_lease_missing_denied(self):
         e = complete_evidence()
