@@ -14,7 +14,7 @@ BINARIES = {
     "kilo": ("kilo",),
     "opencode": ("opencode",),
     "freebuff": ("blink",),
-    "cmdcode": ("cmd-acp", "cmd"),
+    "cmdcode": ("cmd-acp",)
 }
 CORE = ("git", "python3", "tmux", "omnigent", "herdr")
 
@@ -72,7 +72,7 @@ def inspect(config: dict, which=shutil.which, hostname: str | None = None) -> di
     binary_status = {name: {binary: bool(which(binary)) for binary in choices}
                      for name, choices in required.items()}
     missing = [f"{name}: {', '.join(b for b, found in states.items() if not found)}"
-               for name, states in binary_status.items() if not all(states.values())]
+               for name, states in binary_status.items() if not any(states.values())]
     return {
         "target": config.get("pilot_host"),
         "observed_host": observed_host,
