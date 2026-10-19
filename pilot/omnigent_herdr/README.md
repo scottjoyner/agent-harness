@@ -60,3 +60,28 @@ The pilot requires this ACP entrypoint; `cmd` is only used by the optional
 upstream model-catalog listing and is not a second mandatory runtime executable.
 The preflight has been aligned with that registry contract. Model discovery,
 authentication, and a real ACP dispatch remain outstanding.
+
+
+## Physical sandbox qualification
+
+Run `python3 sandbox_probe.py` on each proposed Linux agent host.
+The probe builds a disposable bubblewrap namespace, verifies a writable
+workspace, attempts a denied write to a readable out-of-scope sentinel,
+and attempts a network connection that must be unreachable. It never
+launches an AI model or agent. Exit 0 means sandbox test passed, **not**
+that the host is admitted to run agents.
+
+Physical Fleet Commander evidence on 2026-10-18:
+
+- Lenovo (Ubuntu 24.04): **DENIED**; bubblewrap cannot create the network
+  namespace (or user mapping). No agent dispatch.
+- Destroyer (Ubuntu 24.04): **SANDBOX PASS** (filesystem + network
+  denials); **ADMISSION HOLD** because the node has only about 3.2 GiB
+  memory available and nearly full swap while already serving workloads.
+- Xwing and x1-370: unprivileged user namespaces are blocked in
+  read-only preflight; full sandbox admission unverified.
+
+Do not disable AppArmor globally or run workers outside the sandbox.
+Re-qualify after any host-security changes and verify credentials, model
+pins, quotas, branch protections, resource isolation, and human review
+independently before any real dispatch.
