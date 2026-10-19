@@ -27,7 +27,10 @@ class CatalogTests(unittest.TestCase):
 
     def test_listed_catalogs_not_dispatch_authority(self):
         r = probe(ROSTER, which=lambda n: "/bin/" + n, runner=fake_output)
-        self.assertTrue(r["requested_catalogs_listed"])
+        self.assertFalse(r["requested_catalogs_listed"])
+        self.assertTrue(all(r["catalogs"][x]["catalog_listed"] for x in
+                            ("kilo", "opencode", "cmdcode")))
+        self.assertEqual(r["catalogs"]["freebuff"]["status"], "requires_sandbox")
         self.assertFalse(r["model_pins_verified"])
         self.assertFalse(r["authentication_verified"])
         self.assertFalse(r["agent_dispatch_authorized"])
@@ -43,11 +46,32 @@ class CatalogTests(unittest.TestCase):
             "MY_UNKNOWN_SECRET": "do-not-pass",
         }):
             probe(ROSTER, which=lambda n: "/bin/" + n, runner=witness)
-        self.assertEqual(len(captured), 4)
+        self.assertEqual(len(captured), 3)
         for env in captured:
             self.assertNotIn("OPENAI_API_KEY", env)
             self.assertNotIn("ANTHROPIC_API_KEY", env)
             self.assertNotIn("MY_UNKNOWN_SECRET", env)
+
+    def test_blink_not_invoked_as_false_catalog(self):
+        seen = []
+        def witness(command, **kw):
+            seen.append(command[0])
+            return fake_output(command, **kw)
+        r = probe(ROSTER, which=lambda n: "/bin/" + n, runner=witness)
+        self.assertEqual(r["catalogs"]["freebuff"]["status"], "requires_sandbox")
+        self.assertEqual(len(seen), 3)
+        self.assertFalse(any(x.endswith("/blink") for x in seen))
+
+    def test_missing_native_freebuff_not_qualified(self):
+        seen = []
+        def witness(command, **kw):
+            seen.append(command[0])
+            return fake_output(command, **kw)
+        r = probe(ROSTER, which=lambda n: None if n == "freebuff" else "/bin/" + n,
+                  runner=witness)
+        self.assertFalse(r["requested_catalogs_listed"])
+        self.assertEqual(r["catalogs"]["freebuff"]["status"], "unverified")
+        self.assertFalse(any(x.endswith("/blink") for x in seen))
 
     def test_missing_catalog_denied(self):
         r = probe(ROSTER, which=lambda n: None if n == "blink" else "/bin/" + n,

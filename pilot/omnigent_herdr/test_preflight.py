@@ -54,6 +54,24 @@ class PilotChecks(unittest.TestCase):
         config["reviewer"]["id"] = "claude"
         self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
 
+    def test_blink_alone_does_not_qualify_freebuff(self):
+        result = inspect(ROSTER, which=lambda b: None if b == "freebuff" else "/fake/bin",
+                         )
+        self.assertFalse(result["bootstrap_ready"])
+        self.assertTrue(any(x.startswith("freebuff:") for x in result["missing_cli"]))
+
+    def test_native_freebuff_alone_does_not_qualify_bridge(self):
+        result = inspect(ROSTER, which=lambda b: None if b == "blink" else "/fake/bin",
+                         )
+        self.assertFalse(result["bootstrap_ready"])
+        self.assertTrue(any(x.startswith("freebuff:") for x in result["missing_cli"]))
+
+    def test_missing_node_runtime_denied(self):
+        result = inspect(ROSTER, which=lambda b: None if b == "node" else "/fake/bin",
+                         )
+        self.assertFalse(result["bootstrap_ready"])
+        self.assertTrue(any(x.startswith("node:") for x in result["missing_cli"]))
+
     def test_command_code_requires_acp(self):
         result = inspect(ROSTER, which=lambda b: None if b == "cmd-acp" else "/fake/bin")
         self.assertTrue(any("cmdcode" in x for x in result["missing_cli"]))

@@ -14,7 +14,6 @@ CATALOGS = {
     "kilo": ("kilo", "models"),
     "opencode": ("opencode", "models"),
     "cmdcode": ("cmd", "--list-models"),
-    "freebuff": ("blink", "--list-models"),
 }
 
 
@@ -44,7 +43,20 @@ def probe(roster: dict, *, which=shutil.which, runner=subprocess.run,
             expected = coder.get("model_pin")
             status = {"requested": expected, "status": "unverified",
                       "catalog_listed": False}
-            if role not in CATALOGS or not isinstance(expected, str) or not expected:
+            if role == "freebuff" and isinstance(expected, str) and expected:
+                # BuffLINK v0.4.0 implements --list-models, but launches the
+                # native Freebuff TUI and navigates its picker in a PTY.
+                # Running it on an unqualified host bypasses our OS sandbox
+                # gate, so never invoke it from this credential-free probe.
+                if which("blink") and which("freebuff"):
+                    status.update(
+                        status="requires_sandbox",
+                        reason="BuffLINK --list-models launches Freebuff TUI; "
+                               "live model discovery requires physical sandbox admission",
+                    )
+                else:
+                    status["reason"] = "BuffLINK bridge or native Freebuff executable missing"
+            elif role not in CATALOGS or not isinstance(expected, str) or not expected:
                 status["reason"] = "unsupported role or missing pin"
             else:
                 executable, *args = CATALOGS[role]

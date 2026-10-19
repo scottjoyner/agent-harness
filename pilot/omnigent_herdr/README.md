@@ -112,13 +112,13 @@ Lenovo physical observations (user-scoped pilot directory):
   standard input; do not invoke it with untrusted shell-script stdin.
 - `opencode` 1.18.35: requested
   `opencode/deepseek-v4.1-flash-free` **not listed**.
-- Freebuff npm wrapper 0.2.30: downloaded but the actual native TUI
-  has **not** been fetched, started, or authenticated. The separate
-  BuffLINK `blink` ACP bridge has **not** been installed. Upstream
-  `jmvbambico/bufflink` v0.1.2 documents a no-approval-gate
-  bridge and Linux runtime testing remains outstanding. The wrapper
-  may download and auto-update its native runtime on first launch:
-  do not invoke it without a reviewed deployment and OS sandbox.
+- Freebuff wrapper 0.2.30: official release archive SHA-256
+  `f3f3776bee033ccda17dab54c6d42cb24438b24b4f3139abddd6e5ecc45d6029`;
+  native Linux binary and Tree-sitter file were extracted into a user-only
+  prefix, with **no TUI startup, login, or agent/model session**. We did
+  not invoke the wrapper (it can auto-update); the binary must not be
+  launched before verified sandbox admission. BuffLINK `blink` v0.4.0
+  is now built and verified separately below.
 - Claude 2.1.303 and Codex 0.163.0 executables report versions;
   their subscriptions and requested Opus 5.5 / `gpt-6-luna` pins
   remain unverified.
@@ -136,3 +136,84 @@ essentially no free swap); do not disturb its workloads.
 `freebuff`, or any actual agent dispatch on Lenovo or Destroyer until
 both physical isolation and capacity pass and all credentials/pins/quotas
 are separately verified.
+
+## October 19, 2026: vendor AppArmor and BuffLINK research
+
+See [APPARMOR_LENOVO_REVIEW.md](APPARMOR_LENOVO_REVIEW.md) for the pinned
+Ubuntu-vendor `bwrap-userns-restrict` policy, its offline parse evidence,
+and the approval-only/rollback procedure. **The profile has not been loaded
+into the kernel.** Do not relax Ubuntu's system-wide namespace restriction.
+
+### Bridge version remediation and runtime boundary
+
+Initial BuffLINK `v0.1.2` at commit
+`ebe91c2374195ddd83e022f275e3b246285683e5` passed **100/100
+offline Rust tests**, but its ACP-only binary did **not** implement
+`BLINK_MODEL` or `--list-models`. This makes it unsafe for the pinned
+Freebuff assignment even though Omnigent generates a model field.
+
+BuffLINK **v0.4.0** at commit
+`8f1154048f47e2b5069ebf98b2b1ec3b6f494b3d` was compiled
+with Rust/Cargo `1.90.0`, passed **251/251 offline Rust tests**,
+and installed in the isolated Lenovo prefix.
+Binary SHA-256: `8a6eb287ed656ae31795bdc7699d36c40044eae23dc5090ce220bf6e00d34b32`.
+Its `--version` reports 0.4.0 and an ACP-only `initialize` request
+returns protocol version 1. No `session/new` or inference was issued.
+Source inspection confirms `BLINK_MODEL` matching and rejection logic
+exists; it has **not** been verified against a live Freebuff picker.
+
+**Do not run `blink --list-models` as a harmless inventory command.**
+On v0.4.0 it spawns the native Freebuff TUI in a PTY and navigates
+the model picker. The catalog probe intentionally marks Freebuff
+`requires_sandbox` instead of invoking that command on an unqualified
+host. A live model-catalog check needs a physical sandbox and a reviewed
+non-sensitive test session.
+
+The native Freebuff v0.2.30 executable is staged, SHA-256
+`05673bb64a561d50cd2b770dc7bd13dd7925388d8b817b2da856dfdb500465f0`,
+but has **not** been executed or authenticated.
+`preflight.py` requires both `blink` and `freebuff`, plus Node.js
+for the Node-based CLIs. Physical Lenovo now reports
+`configuration_valid=true`, `bootstrap_ready=true`, and
+**`dispatch_ready=false`**. The native binary, CLI catalogs, or
+structural readiness alone cannot authorize an actual agent session.
+
+### Isolated `og` configuration-only installation
+
+Using `og` source `f3ed9ddd57d78e024724f4df741940f0e41e6585`,
+a config-only install was performed with a separate disposable HOME and
+`OMNIGENT_HOME` under Lenovo's pilot work directory. No `og start`,
+public tunnel, or background server was invoked. Its plan had
+`auto_update=false`, `ngrok_domain=""`, and
+`max_dispatches=2`. Omnigent `0.18.0` loaded the generated bundle and
+resolved exactly the five requested coder/reviewer `executor.model`
+pins. **That proves structural YAML model-pin placement only**, not
+vendor catalog acceptance, authentication, quota, model availability,
+tool permission boundaries, or an independent Codex review.
+
+## Final October 19 physical gate (read-only)
+
+After installing the verified Freebuff native executable and upgrading
+BuffLINK to v0.4.0, Lenovo's `preflight.py` reports
+`configuration_valid=true`, `bootstrap_ready=true`,
+`dispatch_ready=false`, and no missing CLI names.
+
+The updated `catalog_probe.py` checks only Kilo, OpenCode and Command
+Code. Kilo's requested `kilo/kilo-auto/free` and Command Code's
+`deepseek/deepseek-v4.1-flash` are listed, but OpenCode's requested
+`opencode/deepseek-v4.1-flash-free` is **not listed**. Freebuff's
+requested `deepseek/deepseek-v4-flash` remains `requires_sandbox`:
+BuffLINK v0.4.0's catalog command drives the Freebuff TUI and cannot
+be invoked under the current Lenovo AppArmor restriction.
+
+The vendor AppArmor candidate has passed digest + offline-parser
+verification, **but it is not loaded**. The physical `sandbox_probe.py`
+still fails with `RTM_NEWADDR: Operation not permitted`.
+
+A new resource check reports **7.924 GiB MemAvailable**, below the
+8 GiB pilot threshold; the other resource subchecks pass. Two resident
+`llama-server` processes were observed (approximately 3.0 GB and
+1.8 GB RSS). They were not stopped or reconfigured. The prefilter
+therefore reports **NO-GO** even if the AppArmor exception is later
+approved. No services, credentials, background servers or model
+sessions were changed.
