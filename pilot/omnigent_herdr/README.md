@@ -85,3 +85,54 @@ Do not disable AppArmor globally or run workers outside the sandbox.
 Re-qualify after any host-security changes and verify credentials, model
 pins, quotas, branch protections, resource isolation, and human review
 independently before any real dispatch.
+
+## Fleet Commander catalog and capacity checks (2026-10-19)
+
+The standalone checks below are read-only and **never authorize dispatch**.
+They do not contact an LLM inference endpoint or use operator credentials.
+
+```bash
+python3 pilot/omnigent_herdr/catalog_probe.py --json
+python3 pilot/omnigent_herdr/resource_probe.py
+```
+
+`catalog_probe.py` runs upstream model-listing CLI commands with a
+**disposable HOME/XDG directory and an allowlisted environment**. Provider
+API keys and credentials are not inherited. Success means *only* that the
+requested identifier was in the first column of a successful catalog
+response; it is not proof of auth, quota, free pricing, pin application, or
+a successful coding turn. Failure/timeout/missing CLI blocks catalog
+qualification. This avoids silent paid-model fallback.
+
+Lenovo physical observations (user-scoped pilot directory):
+
+- `kilo` 7.8.12: `kilo/kilo-auto/free` **listed**.
+- `cmd` 1.84.0 with `cmd-acp` 0.2.0:
+  `deepseek/deepseek-v4.1-flash` **listed**. ACP consumes JSON from
+  standard input; do not invoke it with untrusted shell-script stdin.
+- `opencode` 1.18.35: requested
+  `opencode/deepseek-v4.1-flash-free` **not listed**.
+- Freebuff npm wrapper 0.2.30: downloaded but the actual native TUI
+  has **not** been fetched, started, or authenticated. The separate
+  BuffLINK `blink` ACP bridge has **not** been installed. Upstream
+  `jmvbambico/bufflink` v0.1.2 documents a no-approval-gate
+  bridge and Linux runtime testing remains outstanding. The wrapper
+  may download and auto-update its native runtime on first launch:
+  do not invoke it without a reviewed deployment and OS sandbox.
+- Claude 2.1.303 and Codex 0.163.0 executables report versions;
+  their subscriptions and requested Opus 5.5 / `gpt-6-luna` pins
+  remain unverified.
+
+`resource_probe.py` is a **prefilter**, not an admission authority.
+For a two-coder pilot it requires 8 GiB MemAvailable, 15 GiB free disk,
+1 GiB free swap when swap exists, and a one-minute load per CPU <= 0.8.
+The thresholds are conservative initial engineering values, not measured
+multi-agent capacity requirements. Lenovo passed the resource prefilter
+but **failed the physical sandbox**. Destroyer passed the sandbox but
+**failed the resource prefilter** (about 3.45 GiB available RAM and
+essentially no free swap); do not disturb its workloads.
+
+**Final decision: HOLD.** Do not run `og start`, `blink`,
+`freebuff`, or any actual agent dispatch on Lenovo or Destroyer until
+both physical isolation and capacity pass and all credentials/pins/quotas
+are separately verified.
