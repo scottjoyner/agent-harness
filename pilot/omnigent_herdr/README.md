@@ -52,3 +52,11 @@ tokens, user files, and full source diffs.
 
 No process-killing, node deployment, GitHub publication, or merge is
 authorized by this pilot.
+
+## Registry correction (2026-10-18)
+
+Upstream `og` identifies Command Code's actual executable as `cmd-acp`.
+The pilot requires this ACP entrypoint; `cmd` is only used by the optional
+upstream model-catalog listing and is not a second mandatory runtime executable.
+The preflight has been aligned with that registry contract. Model discovery,
+authentication, and a real ACP dispatch remain outstanding.
