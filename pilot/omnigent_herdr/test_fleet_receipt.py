@@ -3,11 +3,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from fleet_receipt import INPUTS, create_receipt, load_file
+from fleet_receipt import INPUTS, create_receipt, load_file, load_snapshot
 
 
 def complete_evidence():
-    return {
+    values = {
         "preflight": {"configuration_valid": True, "bootstrap_ready": True,
                       "observed_host": "scott-Lenovo-ideapad-330S-15IKB"},
         "resource": {"resource_prefilter_passed": True},
@@ -28,7 +28,22 @@ def complete_evidence():
             "direct_network_denied": True, "remote_push_attempted": False,
             "used_real_repository": False, "agent_dispatch_authorized": False,
         },
+        "integrated": {
+            "integrated_synthetic_passed": True,
+            "broker_denial_verified": True, "isolated_git_verified": True,
+            "host_state_unchanged": True, "direct_network_denied": True,
+            "sandbox_capabilities_dropped": True,
+            "sandbox_privilege_escalation_denied": True,
+            "mode": "deny_only_integrated_synthetic_canary",
+            "provider_requests_forwarded": 0,
+            "remote_push_attempted": False,
+            "used_real_repository": False,
+            "agent_dispatch_authorized": False,
+        },
     }
+    for item in values.values():
+        item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
+    return values
 
 
 class ReceiptTests(unittest.TestCase):
@@ -56,6 +71,35 @@ class ReceiptTests(unittest.TestCase):
         e = complete_evidence()
         e["egress"]["mode"] = "provider_forwarding"
         self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["egress"])
+
+    def test_destroyer_evidence_cannot_complete_lenovo_gate(self):
+        e = complete_evidence()
+        e["integrated"]["observed_host"] = "destroyer"
+        r = create_receipt(e, timestamp="test")
+        self.assertFalse(r["gate_outcomes"]["integrated"])
+        self.assertFalse(r["machine_checks_pass"])
+        self.assertFalse(r["agent_dispatch_authorized"])
+
+    def test_no_host_label_is_denied(self):
+        e = complete_evidence()
+        e["sandbox"].pop("observed_host")
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["sandbox"])
+
+    def test_integrated_canary_missing_rejected(self):
+        e = complete_evidence()
+        del e["integrated"]
+        r = create_receipt(e, timestamp="test")
+        self.assertFalse(r["gate_outcomes"]["integrated"])
+
+    def test_integrated_canary_with_real_model_forwarding_denied(self):
+        e = complete_evidence()
+        e["integrated"]["provider_requests_forwarded"] = 1
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["integrated"])
+
+    def test_integrated_canary_cannot_claim_push(self):
+        e = complete_evidence()
+        e["integrated"]["remote_push_attempted"] = True
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["integrated"])
 
     def test_vendor_profile_not_loaded_fails(self):
         e = complete_evidence()
@@ -101,6 +145,26 @@ class ReceiptTests(unittest.TestCase):
                 load_file(link)
             with self.assertRaises(ValueError):
                 load_file(root)
+
+    def test_digest_belongs_to_exact_parsed_bytes(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "evidence.json"
+            raw = b'{"sandbox_verified":false,"agent_dispatch_authorized":false}'
+            path.write_bytes(raw)
+            data, digest = load_snapshot(path)
+            self.assertIs(data["sandbox_verified"], False)
+            self.assertEqual(digest, hashlib.sha256(raw).hexdigest())
+
+    def test_symlink_snapshot_is_rejected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            p = root / "evidence.json"
+            p.write_text('{"schema":1}')
+            q = root / "alias.json"
+            q.symlink_to(p)
+            with self.assertRaises(ValueError):
+                load_snapshot(q)
 
     def test_oversized_input_rejected(self):
         with tempfile.TemporaryDirectory() as td:

@@ -102,7 +102,8 @@ def sandbox_args(bwrap: str, work: Path, transport_dir: Path,
 
 def physical(*, which=shutil.which, runner=subprocess.run) -> dict:
     result = {
-        "schema": 1, "synthetic_socket_verified": False,
+        "schema": 1, "observed_host": socket.gethostname(),
+        "synthetic_socket_verified": False,
         "sandbox_direct_network_denied": False,
         "sandbox_host_secret_unreadable": False,
         "broker_peer_uid_verified": False,
@@ -196,5 +197,12 @@ def physical(*, which=shutil.which, runner=subprocess.run) -> dict:
     return result
 
 
+def exit_status(result: dict) -> int:
+    """A failed physical safety check is a failing CLI status."""
+    return 0 if result.get("synthetic_socket_verified") is True else 2
+
+
 if __name__ == "__main__":
-    print(json.dumps(physical(), indent=2, sort_keys=True))
+    report = physical()
+    print(json.dumps(report, indent=2, sort_keys=True))
+    raise SystemExit(exit_status(report))

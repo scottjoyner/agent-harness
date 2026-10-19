@@ -2,10 +2,14 @@ import json
 import unittest
 from pathlib import Path
 
-from egress_broker_probe import decide, sandbox_args, physical
+from egress_broker_probe import decide, sandbox_args, physical, exit_status
 
 
 class EgressContractTests(unittest.TestCase):
+    def test_failed_cli_exit_code(self):
+        self.assertEqual(exit_status({}), 2)
+        self.assertEqual(exit_status({"synthetic_socket_verified": True}), 0)
+
     def test_canonical_probe_is_never_dispatch(self):
         r = decide({"schema": 1, "op": "probe", "challenge": "n"},
                    challenge="n", peer_uid=1000, expected_uid=1000)

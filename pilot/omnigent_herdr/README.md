@@ -284,3 +284,28 @@ signature/custody or immutable logging.
 On the latest Lenovo physical pass the only green checks were preflight
 and resource. No model turns, merge, auto-update, public tunnels or
 production process changes were performed.
+
+
+## Fleet Commander same-session canary and host-bound evidence (2026-10-19)
+
+`offline_integrated_canary.py` performs a **single-sandbox**, offline
+fixture run combining Git commit + deny-only Unix socket transport.
+On Destroyer it passed, while Lenovo was blocked by its unchanged
+AppArmor policy. No real agent was invoked, no external API accessed,
+and no real repository was used. Destroyer remains resource-ineligible.
+
+`fleet_receipt.py` now requires eight JSON inputs:
+`preflight`, `resource`, `sandbox`, `catalog`, `apparmor`,
+`egress`, `git`, and `integrated`. All probe outputs carry an
+`observed_host` string, and the receipt rejects mismatched host labels
+to prevent mixing Destroyer's sandbox test with Lenovo's resource test.
+Hostnames themselves are **not cryptographic identity evidence**. The
+receipt reads each file once with `O_NOFOLLOW`, size bounds and
+descriptor-stability checks, and hashes those exact bytes. The result
+always keeps `agent_dispatch_authorized=false`.
+
+The synthetic socket, Git and integrated probes now exit with status 2
+if the physical checks fail, making CI/shell gates fail-closed. The
+Lenovo decision is still **HOLD** until the AppArmor, complete model
+catalog, controlled egress, independent review, and runtime custody
+gates are actually satisfied.

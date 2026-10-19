@@ -9,11 +9,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
-          "egress", "git")
+          "egress", "git", "integrated")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -27,6 +29,12 @@ GATES = {
     "git": (
         "isolated_commit_verified", "seed_unchanged",
         "clone_clean", "outside_guard_unchanged", "direct_network_denied",
+    ),
+    "integrated": (
+        "integrated_synthetic_passed", "broker_denial_verified",
+        "isolated_git_verified", "host_state_unchanged",
+        "direct_network_denied", "sandbox_capabilities_dropped",
+        "sandbox_privilege_escalation_denied",
     ),
 }
 
@@ -57,10 +65,30 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and git.get("agent_dispatch_authorized") is False
     ):
         gates["git"] = False
+    integrated = evidence.get("integrated", {})
+    if not isinstance(integrated, dict) or not (
+        integrated.get("mode") == "deny_only_integrated_synthetic_canary"
+        and type(integrated.get("provider_requests_forwarded")) is int
+        and integrated["provider_requests_forwarded"] == 0
+        and integrated.get("remote_push_attempted") is False
+        and integrated.get("used_real_repository") is False
+        and integrated.get("agent_dispatch_authorized") is False
+    ):
+        gates["integrated"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():
         gates["preflight"] = False
+    # Reject mixed-host evidence (e.g. Destroyer passing isolation while
+    # Lenovo passes memory). Hostnames are observational labels, NOT secure
+    # attestations; independently signed per-host custody is still required.
+    expected_host = origin.get("observed_host") if isinstance(origin, dict) else None
+    for category in INPUTS:
+        source = evidence.get(category)
+        if (not isinstance(source, dict) or
+                not isinstance(expected_host, str) or
+                source.get("observed_host") != expected_host):
+            gates[category] = False
     # Even all-green machine predicates are NOT sufficient for runtime
     # authentication, quota, branch custody, vendor independence, and egress.
     return {
@@ -81,15 +109,47 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
     }
 
 
-def load_file(path: Path) -> dict:
-    if not path.is_file() or path.is_symlink():
-        raise ValueError("Evidence file must be a regular, non-symlinked file")
-    if path.stat().st_size > 64 * 1024:
-        raise ValueError("Evidence file unexpectedly large")
-    data = json.loads(path.read_text(encoding="utf-8"))
+def load_snapshot(path: Path) -> tuple[dict, str]:
+    """Use one no-follow descriptor for both JSON and evidence digest.
+
+    This is a local filesystem-consistency check, not a signature or a
+    tamper-proof external witness.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NONBLOCK", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError as exc:
+        raise ValueError("Evidence path cannot be opened safely") from exc
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_size > 64 * 1024:
+            raise ValueError("Evidence must be a bounded regular file")
+    except BaseException:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "rb") as stream:
+        raw = stream.read(64 * 1024 + 1)
+        after = os.fstat(stream.fileno())
+        if len(raw) > 64 * 1024 or (
+            before.st_dev, before.st_ino, before.st_size,
+            before.st_mtime_ns, before.st_ctime_ns
+        ) != (
+            after.st_dev, after.st_ino, after.st_size,
+            after.st_mtime_ns, after.st_ctime_ns
+        ) or len(raw) != after.st_size:
+            raise ValueError("Evidence changed during read or exceeded size limit")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError("Evidence must be UTF-8 JSON") from exc
     if not isinstance(data, dict):
         raise ValueError("Evidence must be a JSON object")
-    return data
+    return data, hashlib.sha256(raw).hexdigest()
+
+
+def load_file(path: Path) -> dict:
+    return load_snapshot(path)[0]
 
 
 def main() -> int:
@@ -101,8 +161,7 @@ def main() -> int:
     hashes = {}
     for kind in INPUTS:
         path = getattr(args, kind)
-        evidence[kind] = load_file(path)
-        hashes[kind] = hashlib.sha256(path.read_bytes()).hexdigest()
+        evidence[kind], hashes[kind] = load_snapshot(path)
     receipt = create_receipt(
         evidence, timestamp=datetime.now(timezone.utc).isoformat())
     receipt["evidence_sha256"] = hashes

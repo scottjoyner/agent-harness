@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import json
 import shutil
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
@@ -65,6 +66,7 @@ REQUIRED = {
 def inspect(*, which=shutil.which, runner=subprocess.run) -> dict:
     report = {
         'schema': 1,
+        'observed_host': socket.gethostname(),
         'strict_isolation_passed': False,
         'agent_dispatch_authorized': False,
         'network_available_to_agent': False,

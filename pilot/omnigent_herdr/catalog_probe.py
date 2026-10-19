@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import shutil
+import socket
 import subprocess
 import tempfile
 from pathlib import Path
@@ -81,7 +82,7 @@ def probe(roster: dict, *, which=shutil.which, runner=subprocess.run,
                     except (OSError, subprocess.TimeoutExpired):
                         status["reason"] = "catalog command failed or timed out"
             results[role or "invalid"] = status
-    return {"schema": 1, "catalogs": results,
+    return {"schema": 1, "observed_host": socket.gethostname(), "catalogs": results,
             "requested_catalogs_listed": bool(results) and
             all(r["catalog_listed"] for r in results.values()),
             "model_pins_verified": False,

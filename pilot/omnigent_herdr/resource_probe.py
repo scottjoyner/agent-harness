@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 from pathlib import Path
 
 GIB = 1024 ** 3
@@ -33,6 +34,7 @@ def assess(*, meminfo: str, free_disk: int, load1: float, cpus: int) -> dict:
     }
     return {
         "schema": 1,
+        "observed_host": socket.gethostname(),
         "checks": checks,
         "resource_prefilter_passed": all(checks.values()),
         "available_ram_bytes": available,

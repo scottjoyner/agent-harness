@@ -50,7 +50,8 @@ print(json.dumps({
 
 def inspect(*, which=shutil.which, runner=subprocess.run) -> dict:
     result = {
-        "schema": 1, "isolated_commit_verified": False,
+        "schema": 1, "observed_host": socket.gethostname(),
+        "isolated_commit_verified": False,
         "seed_unchanged": False, "clone_clean": False,
         "outside_guard_unchanged": False, "direct_network_denied": False,
         "remote_push_attempted": False, "used_real_repository": False,
@@ -145,5 +146,12 @@ def inspect(*, which=shutil.which, runner=subprocess.run) -> dict:
     return result
 
 
+def exit_status(report: dict) -> int:
+    """Refuse successful CLI status unless physical proof passed."""
+    return 0 if report.get('isolated_commit_verified') is True else 2
+
+
 if __name__ == '__main__':
-    print(json.dumps(inspect(), indent=2, sort_keys=True))
+    report = inspect()
+    print(json.dumps(report, indent=2, sort_keys=True))
+    raise SystemExit(exit_status(report))

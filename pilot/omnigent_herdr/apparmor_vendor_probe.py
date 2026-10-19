@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,7 @@ def inspect(profile: Path, *, expected_digest: str = PROFILE_SHA256,
             which=shutil.which, runner=subprocess.run) -> dict:
     report = {
         "schema": 1,
+        "observed_host": socket.gethostname(),
         "profile_digest_matches": False,
         "parser_valid": False,
         "global_userns_restriction_preserved": False,

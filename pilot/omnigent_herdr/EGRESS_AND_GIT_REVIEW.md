@@ -97,3 +97,42 @@ signed or rollback-resistant.
 
 **No production installs, real agent launches, merges, or host policy
 changes are authorized by these research probes.**
+
+
+## One-namespace integrated synthetic canary (2026-10-19)
+
+`offline_integrated_canary.py` extends the prior independent studies: a
+**single network-unshared, minimal-root Bubblewrap session** commits a
+fixture file in a disposable independent Git clone and exchanges four
+JSON-RPC-like messages with a host-side deny-only Unix-domain socket.
+It runs no LLM or real application source. Its host-side postcheck
+requires a clean isolated clone, unchanged seed, unchanged private host
+sentinel and secret, exactly one synthetic committed filename,
+zero-capability and no-new-privileges witnesses, PID isolation and
+a denied IPv4 connection. All temporary files and the socket are
+discarded. Physical results:
+
+- Destroyer **PASS** all integrated negative/positive checks. This is
+  research evidence only; its ongoing services and memory/swap pressure
+  still make multi-agent dispatch **NO-GO**.
+- Lenovo **FAIL**, as AppArmor still blocks namespace creation; no
+  host policy was modified, and its seed/guard remained unchanged.
+
+The integrated result is now the **eighth** required Fleet receipt source.
+The receipt requires exact Boolean fields, denies claims of forwarded
+provider calls or real Git pushes, and checks that each evidence
+document's observed host label matches the Lenovo preflight host label.
+This prevents accidental combination of a Destroyer sandbox PASS with
+Lenovo memory PASS. Hostnames are **self-reported, not signed
+attestations**, so a compromised host can still forge labels; independent
+witness custody is a separate release gate. Each JSON digest is computed
+over the same bounded, no-symlink file descriptor used for parsing,
+not a second filesystem read. All three physical synthetic probes
+return nonzero exit status when their checks fail.
+
+The network boundary is still **deny-only**. For a future connected
+worker, do not grant general IP egress: a separate broker with
+operator-verified identity, provider/domain routing, bounded quotas,
+data-use approval, credential isolation, anti-replay and revocation,
+audited timeouts and signed receipts would be required. The current
+synthetic socket offers no such authority.
