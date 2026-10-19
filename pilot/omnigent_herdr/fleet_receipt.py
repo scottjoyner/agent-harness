@@ -12,13 +12,22 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor")
+INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
+          "egress", "git")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
     "sandbox": ("strict_isolation_passed",),
     "catalog": ("requested_catalogs_listed",),
     "apparmor": ("candidate_qualified", "profile_loaded"),
+    "egress": (
+        "synthetic_socket_verified", "broker_peer_uid_verified",
+        "sandbox_direct_network_denied", "sandbox_host_secret_unreadable",
+    ),
+    "git": (
+        "isolated_commit_verified", "seed_unchanged",
+        "clone_clean", "outside_guard_unchanged", "direct_network_denied",
+    ),
 }
 
 
@@ -30,6 +39,24 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
             isinstance(source, dict)
             and all(source.get(field) is True for field in GATES[category])
         )
+    # A green egress-transport gate is deliberately a deny-only
+    # transport witness. No real provider routes or model credentials.
+    egress = evidence.get("egress", {})
+    if not isinstance(egress, dict) or not (
+        egress.get("mode") == "deny_only_unix_socket_fixture"
+        and type(egress.get("provider_requests_forwarded")) is int
+        and egress["provider_requests_forwarded"] == 0
+        and egress.get("model_egress_authorized") is False
+        and egress.get("agent_dispatch_authorized") is False
+    ):
+        gates["egress"] = False
+    git = evidence.get("git", {})
+    if not isinstance(git, dict) or not (
+        git.get("remote_push_attempted") is False
+        and git.get("used_real_repository") is False
+        and git.get("agent_dispatch_authorized") is False
+    ):
+        gates["git"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

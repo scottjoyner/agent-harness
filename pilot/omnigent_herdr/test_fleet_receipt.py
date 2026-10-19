@@ -14,6 +14,20 @@ def complete_evidence():
         "sandbox": {"strict_isolation_passed": True},
         "catalog": {"requested_catalogs_listed": True},
         "apparmor": {"candidate_qualified": True, "profile_loaded": True},
+        "egress": {
+            "synthetic_socket_verified": True, "broker_peer_uid_verified": True,
+            "sandbox_direct_network_denied": True,
+            "sandbox_host_secret_unreadable": True,
+            "mode": "deny_only_unix_socket_fixture",
+            "provider_requests_forwarded": 0, "model_egress_authorized": False,
+            "agent_dispatch_authorized": False,
+        },
+        "git": {
+            "isolated_commit_verified": True, "seed_unchanged": True,
+            "clone_clean": True, "outside_guard_unchanged": True,
+            "direct_network_denied": True, "remote_push_attempted": False,
+            "used_real_repository": False, "agent_dispatch_authorized": False,
+        },
     }
 
 
@@ -24,6 +38,24 @@ class ReceiptTests(unittest.TestCase):
         self.assertFalse(r["agent_dispatch_authorized"])
         self.assertFalse(r["agent_egress_approved"])
         self.assertEqual(r["decision"], "HOLD")
+
+    def test_model_egress_authorization_cannot_be_forged(self):
+        e = complete_evidence()
+        e["egress"]["model_egress_authorized"] = True
+        r = create_receipt(e, timestamp="test")
+        self.assertFalse(r["gate_outcomes"]["egress"])
+        self.assertFalse(r["agent_dispatch_authorized"])
+
+    def test_attempted_remote_push_is_rejected(self):
+        e = complete_evidence()
+        e["git"]["remote_push_attempted"] = True
+        r = create_receipt(e, timestamp="test")
+        self.assertFalse(r["gate_outcomes"]["git"])
+
+    def test_wrong_egress_mode_rejected(self):
+        e = complete_evidence()
+        e["egress"]["mode"] = "provider_forwarding"
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["egress"])
 
     def test_vendor_profile_not_loaded_fails(self):
         e = complete_evidence()

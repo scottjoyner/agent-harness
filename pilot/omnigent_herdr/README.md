@@ -255,3 +255,32 @@ until the change is reviewed explicitly.
 Passing strict isolation would still leave hosted-model connectivity,
 real agent launch wrapping, authentication, quota/price verification,
 and independent Codex review unproven. Do not bypass those gates.
+
+
+## Synthetic model-egress and disposable Git checks (2026-10-19)
+
+See [EGRESS_AND_GIT_REVIEW.md](EGRESS_AND_GIT_REVIEW.md) for threat model and
+the handoff for future owner-bound model access. `egress_broker_probe.py`
+physically verifies that a network-disconnected Linux sandbox can reach an
+ephemeral **deny-only** host-side Unix socket. No model endpoint, secret,
+real request payload, or production process is involved. The accepted
+probe command is synthetic and never authorizes dispatch.
+
+`git_clone_probe.py` exercises an offline Git commit inside an isolated
+disposable clone, proves the original fixture remains unchanged, and
+removes its temporary files on exit. It intentionally does not mount a
+linked worktree's host `.git` administrative metadata or use a real
+repository. Both probes pass on Destroyer and fail on Lenovo before
+the sandbox can start. Destroyer remains resource-ineligible.
+
+`fleet_receipt.py` now includes **seven** fail-closed evidence checks:
+preflight, resource, strict sandbox, catalog, AppArmor, deny-only
+socket transport, and isolated Git. It does not accept a broker that
+has forwarded provider requests or a Git fixture with an attempted
+remote push. It returns HOLD regardless of synthetic check results.
+Its SHA-256 evidence references are not equivalent to independent
+signature/custody or immutable logging.
+
+On the latest Lenovo physical pass the only green checks were preflight
+and resource. No model turns, merge, auto-update, public tunnels or
+production process changes were performed.
