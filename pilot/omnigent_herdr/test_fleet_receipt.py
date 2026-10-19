@@ -40,6 +40,20 @@ def complete_evidence():
             "used_real_repository": False,
             "agent_dispatch_authorized": False,
         },
+        "lease": {
+            "mode": "synthetic_hmac_lease_deny_only",
+            "physical_lease_checks_passed": True, "replay_denied": True,
+            "cross_owner_denied": True, "quota_denied": True,
+            "revocation_denied": True, "epoch_denied": True,
+            "hmac_forgery_denied": True, "scope_model_mismatch_denied": True,
+            "forbidden_operations_denied": True,
+            "broker_peer_uid_matched": True,
+            "sandbox_direct_network_denied": True,
+            "host_signing_key_unreadable": True,
+            "host_key_unchanged": True,
+            "provider_requests_forwarded": 0, "model_egress_authorized": False,
+            "agent_dispatch_authorized": False, "used_real_repository": False,
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -100,6 +114,30 @@ class ReceiptTests(unittest.TestCase):
         e = complete_evidence()
         e["integrated"]["remote_push_attempted"] = True
         self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["integrated"])
+
+    def test_lease_missing_denied(self):
+        e = complete_evidence()
+        del e["lease"]
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["lease"])
+
+    def test_lease_forwarding_denied(self):
+        e = complete_evidence()
+        e["lease"]["provider_requests_forwarded"] = 1
+        r = create_receipt(e, timestamp="test")
+        self.assertFalse(r["gate_outcomes"]["lease"])
+        self.assertFalse(r["agent_dispatch_authorized"])
+
+    def test_lease_cross_host_denied(self):
+        e = complete_evidence()
+        e["lease"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["lease"])
+
+    def test_lease_revocation_or_replay_failure_denied(self):
+        for key in ("revocation_denied", "replay_denied", "epoch_denied"):
+            with self.subTest(key=key):
+                e = complete_evidence()
+                e["lease"][key] = False
+                self.assertFalse(create_receipt(e, timestamp="test")["gate_outcomes"]["lease"])
 
     def test_vendor_profile_not_loaded_fails(self):
         e = complete_evidence()

@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
-          "egress", "git", "integrated")
+          "egress", "git", "integrated", "lease")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -35,6 +35,14 @@ GATES = {
         "isolated_git_verified", "host_state_unchanged",
         "direct_network_denied", "sandbox_capabilities_dropped",
         "sandbox_privilege_escalation_denied",
+    ),
+    "lease": (
+        "physical_lease_checks_passed", "replay_denied",
+        "cross_owner_denied", "quota_denied", "revocation_denied",
+        "epoch_denied", "hmac_forgery_denied", "scope_model_mismatch_denied",
+        "forbidden_operations_denied", "broker_peer_uid_matched",
+        "sandbox_direct_network_denied", "host_signing_key_unreadable",
+        "host_key_unchanged",
     ),
 }
 
@@ -75,6 +83,16 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and integrated.get("agent_dispatch_authorized") is False
     ):
         gates["integrated"] = False
+    lease = evidence.get("lease", {})
+    if not isinstance(lease, dict) or not (
+        lease.get("mode") == "synthetic_hmac_lease_deny_only"
+        and type(lease.get("provider_requests_forwarded")) is int
+        and lease["provider_requests_forwarded"] == 0
+        and lease.get("model_egress_authorized") is False
+        and lease.get("agent_dispatch_authorized") is False
+        and lease.get("used_real_repository") is False
+    ):
+        gates["lease"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

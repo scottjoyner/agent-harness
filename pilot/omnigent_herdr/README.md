@@ -309,3 +309,27 @@ if the physical checks fail, making CI/shell gates fail-closed. The
 Lenovo decision is still **HOLD** until the AppArmor, complete model
 catalog, controlled egress, independent review, and runtime custody
 gates are actually satisfied.
+
+
+## Scoped synthetic lease checks (October 19, 2026)
+
+See [CAPABILITY_BROKER_REVIEW.md](CAPABILITY_BROKER_REVIEW.md).
+`capability_gate.py` provides **research-only**, ephemeral,
+domain-separated HMAC-SHA256 lease validation for synthetic receipts.
+It checks owner/session/worktree/model labels, Unix UID, short expiry,
+monotonic sequence, count limits, revocation, epoch changes and
+signature tampering. Nothing in this broker can forward an API call,
+execute a shell command or authorize dispatch. Real provider quotas,
+identity attestations and cross-restart replay protection are absent.
+
+`capability_broker_probe.py` tests that gate over a real AF_UNIX socket
+from inside a network-disconnected Bubblewrap sandbox. Destroyer passes
+the physical negative and positive checks, but remains resource-ineligible.
+Lenovo fails before sandbox setup owing to unchanged AppArmor policy.
+
+The Fleet Commander decision now consumes **nine** host-labeled JSON
+inputs: preflight, resource, strict sandbox, catalog, AppArmor,
+deny-only socket, isolated Git, same-session integrated canary, and
+synthetic lease. A synthetic success is **never** a signed grant and the
+receipt always returns HOLD. On Lenovo only preflight and the resource
+prefilter passed at last sampling; no agent is authorized.
