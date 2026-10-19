@@ -54,8 +54,8 @@ class PilotChecks(unittest.TestCase):
         config["reviewer"]["id"] = "claude"
         self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
 
-    def test_command_code_requires_both_commands(self):
-        result = inspect(ROSTER, which=lambda b: None if b == "cmd" else "/fake/bin")
+    def test_command_code_requires_acp(self):
+        result = inspect(ROSTER, which=lambda b: None if b == "cmd-acp" else "/fake/bin")
         self.assertTrue(any("cmdcode" in x for x in result["missing_cli"]))
 
     def test_order_change_is_visible(self):
