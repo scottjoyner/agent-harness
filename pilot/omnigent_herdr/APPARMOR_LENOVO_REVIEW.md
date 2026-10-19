@@ -65,11 +65,14 @@ Only after a security review and change authorization:
    then `apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict` to load
    only this profile. Do not reload unrelated services or change sysctls.
 4. Verify the kernel restriction still reads `1`. Run
-   `python3 sandbox_probe.py` on Lenovo. Required evidence: sandbox can
-   write only in the designated worktree, cannot alter the out-of-scope
-   sentinel, and cannot connect to an external network. Also re-check
-   launcher argument construction; the sandbox may be bypassed if a worker
-   executes outside the wrapped process.
+   `python3 strict_sandbox_probe.py` on Lenovo (not just the earlier
+   `sandbox_probe.py`). Required evidence: permitted worktree writes,
+   host-private files **unreadable**, outside writes denied, outbound
+   networking denied, isolated PIDs, zero effective Linux capabilities,
+   and `NoNewPrivs=1`. The old read-only `/` mount may expose host
+   credentials and is **not an adequate agent runtime layout**. Also
+   independently verify actual launcher argument construction; a passing
+   disposable probe does not prove agents will be launched through it.
 5. If any check fails, stop any new Bubblewrap pilot processes, remove the
    profile from the kernel using `apparmor_parser -R`, remove only the
    change-created policy file, and verify that the original namespace denial
@@ -85,3 +88,34 @@ credential/model-pin/quota/independent-review gates are separate.
 checksum. The administrator has not approved a system security policy change.
 The current `sandbox_probe.py` rejects Lenovo and `preflight.py` must keep
 `dispatch_ready=false`.
+
+
+## Additional strict-isolation evidence — October 19, 2026
+
+`strict_sandbox_probe.py` uses a minimal `/usr` runtime mount, a
+fresh `/proc`, a minimal `/dev`, a single writable `/workspace`,
+unshared user/PID/network/IPC/UTS namespaces, a cleared environment,
+`--cap-drop ALL`, and a new session. The probe checks *read* isolation,
+not merely read-only filesystem mounts; it also checks `NoNewPrivs`
+and process visibility.
+
+Physical Fleet Commander results:
+
+- **Destroyer: PASS** strict read, write, PID, privilege, and network
+  denial tests. But it still fails the independent resource prefilter,
+  and no agent is admitted.
+- **Lenovo: DENIED** before the namespace starts; vendor profile is
+  not kernel-loaded. No weakening or system service changes were made.
+
+A strict sandbox with no network access **cannot yet run hosted models**.
+Any later egress facility must be separately scoped, authenticated, and
+quota-controlled; simply enabling network access would invalidate these
+negative tests. Both the host policy and the eventual actual agent
+launcher need separate security review.
+
+`fleet_receipt.py` composes the read-only preflight, resource, strict
+sandbox, catalog, and vendor-profile results. It hashes the input evidence,
+returns `decision=HOLD`, and never grants agent dispatch even when all
+synthetic machine gates report true. Missing inputs, a changed host, or an
+unloaded AppArmor profile fail the machine checks. A receipt is *not*
+cryptographically signed, a grant, or proof of independent custody.

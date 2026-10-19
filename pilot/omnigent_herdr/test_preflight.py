@@ -54,6 +54,28 @@ class PilotChecks(unittest.TestCase):
         config["reviewer"]["id"] = "claude"
         self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
 
+    def test_free_tier_pin_cannot_be_silently_replaced(self):
+        config = copy.deepcopy(ROSTER)
+        config["coders"][0]["model_pin"] = "kilo/kilo-auto/frontier"
+        result = inspect(config, which=lambda _: "/fake/bin")
+        self.assertFalse(result["configuration_valid"])
+        self.assertTrue(any("Unreviewed model pin for kilo" in x for x in result["blockers"]))
+
+    def test_reviewer_pin_must_remain_requested(self):
+        config = copy.deepcopy(ROSTER)
+        config["reviewer"]["model_pin"] = "gpt-5.5-codex"
+        self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
+
+    def test_source_commit_change_requires_review(self):
+        config = copy.deepcopy(ROSTER)
+        config["source"]["evaluated_commit"] = "0" * 40
+        self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
+
+    def test_orchestrator_requested_model_change_requires_review(self):
+        config = copy.deepcopy(ROSTER)
+        config["orchestrator"]["requested_model"] = "Opus 5"
+        self.assertFalse(inspect(config, which=lambda _: "/fake/bin")["configuration_valid"])
+
     def test_blink_alone_does_not_qualify_freebuff(self):
         result = inspect(ROSTER, which=lambda b: None if b == "freebuff" else "/fake/bin",
                          )

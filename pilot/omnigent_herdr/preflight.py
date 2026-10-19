@@ -17,6 +17,14 @@ BINARIES = {
     "cmdcode": ("cmd-acp",),
 }
 CORE = ("git", "python3", "node", "tmux", "omnigent", "herdr")
+PINNED_OG_COMMIT = "f3ed9ddd57d78e024724f4df741940f0e41e6585"
+REQUESTED_PINS = {
+    "kilo": "kilo/kilo-auto/free",
+    "opencode": "opencode/deepseek-v4.1-flash-free",
+    "freebuff": "deepseek/deepseek-v4-flash",
+    "cmdcode": "deepseek/deepseek-v4.1-flash",
+    "codex": "gpt-6-luna",
+}
 
 
 def inspect(config: dict, which=shutil.which, hostname: str | None = None) -> dict:
@@ -28,6 +36,9 @@ def inspect(config: dict, which=shutil.which, hostname: str | None = None) -> di
         failures.append("Unsupported roster schema")
     if config.get("pilot_host") != "lenovo":
         failures.append("Pilot host must remain lenovo")
+    source = config.get("source")
+    if not isinstance(source, dict) or source.get("evaluated_commit") != PINNED_OG_COMMIT:
+        failures.append("Unreviewed og scaffold commit")
     if "lenovo" not in observed_host.lower():
         failures.append(f"Wrong execution host: {observed_host} is not Lenovo")
     for flag in ("public_tunnel", "auto_update", "production_writes", "deployment"):
@@ -43,6 +54,8 @@ def inspect(config: dict, which=shutil.which, hostname: str | None = None) -> di
     coders = config.get("coders", [])
     if orchestrator.get("id") != "claude" or orchestrator.get("model_pin") is not None:
         failures.append("Claude orchestrator must use CLI subscription selection, not an explicit model pin")
+    if orchestrator.get("requested_model") != "Opus 5.5":
+        failures.append("Unreviewed requested orchestrator model")
     if reviewer.get("id") != "codex":
         failures.append("Reviewer must be Codex")
     if not isinstance(coders, list) or not coders:
@@ -63,6 +76,8 @@ def inspect(config: dict, which=shutil.which, hostname: str | None = None) -> di
         pin = role.get("model_pin")
         if agent not in BINARIES or not isinstance(pin, str) or not pin.strip():
             failures.append(f"Missing/invalid model pin for {agent}")
+        elif pin != REQUESTED_PINS.get(agent):
+            failures.append(f"Unreviewed model pin for {agent}")
         else:
             model_pins[agent] = pin
     required = dict((name, (name,)) for name in CORE)

@@ -217,3 +217,41 @@ A new resource check reports **7.924 GiB MemAvailable**, below the
 therefore reports **NO-GO** even if the AppArmor exception is later
 approved. No services, credentials, background servers or model
 sessions were changed.
+
+
+## Strict isolation and Fleet Commander receipt (2026-10-19)
+
+The earlier `sandbox_probe.py` mounts the host root read-only. This
+blocks writes but **does not deny reading host secrets**, so a pass must
+never admit a model worker. The new `strict_sandbox_probe.py` tests a
+minimal-root namespace: writable isolated workspace; host secrets
+unreadable; out-of-workspace writes rejected; outbound network blocked;
+host PIDs isolated; Linux capabilities cleared and no new privileges.
+Destroyer passes this stricter physical probe but fails memory/swap
+qualification. Lenovo remains blocked on the vendor-profile activation.
+
+Run the following in the research pilot (no inference and no deployment):
+
+```bash
+python3 pilot/omnigent_herdr/strict_sandbox_probe.py
+python3 -m unittest discover -s pilot/omnigent_herdr -p 'test_*.py'
+```
+
+`fleet_receipt.py` accepts five already-generated JSON evidence files,
+checks their schema and typed gate values, and produces a sanitized,
+hash-referenced Fleet Commander decision. It always sets
+`agent_dispatch_authorized=false`. The latest Lenovo physical receipt
+reports preflight PASS, resource prefilter PASS, strict sandbox FAIL,
+catalog FAIL, AppArmor activation FAIL, and **HOLD**.
+Source files and credentials are not included in its output.
+The receipt is not signed or an authoritative replay-resistant witness.
+
+The requested model IDs are also locked down in `preflight.py`.
+Changing a free model to a paid Kilo tier, substituting the Codex
+reviewer model, changing the Claude requested model, or changing the
+evaluated `og` commit now makes `configuration_valid=false`
+until the change is reviewed explicitly.
+
+Passing strict isolation would still leave hosted-model connectivity,
+real agent launch wrapping, authentication, quota/price verification,
+and independent Codex review unproven. Do not bypass those gates.
