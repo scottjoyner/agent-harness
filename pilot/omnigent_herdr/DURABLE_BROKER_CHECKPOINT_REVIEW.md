@@ -146,3 +146,16 @@ For production readiness, the next **separate, explicit** work is:
 
 **No live AI agent, network forwarding, production deployment, PR merge
 or host security-policy change was performed in this slice.**
+
+
+## Later research — two-stage synthetic observer ACK
+
+A follow-on cross-node test now requires an Ed25519-signed prepare
+record before committing a disposable SQLite receipt and a second,
+state-linked signed checkpoint/ACK before reporting **synthetic**
+acceptance. Physical x1-370→Lenovo results pass success, missing ACK
+and tampered ACK scenarios. A lost ACK returns DENIED, but the SQLite
+effect may already be committed; observer state is fenced until a
+separately trusted reconciliation. These are not persistent or
+independent signing roots or a crash-atomic distributed protocol.
+See [OBSERVER_ACK_HANDOFF.md](OBSERVER_ACK_HANDOFF.md).

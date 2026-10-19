@@ -368,3 +368,24 @@ kept separately, not falsely combined with Lenovo's same-host gates.
 
 These results do not authorize an AI agent, real model egress, host
 policy edits, deployment, or a PR merge.
+
+
+## Signed prepare/commit-ACK synthetic handshake (2026-10-19)
+
+See [OBSERVER_ACK_HANDOFF.md](OBSERVER_ACK_HANDOFF.md). The research-only
+`observer_ack_protocol.py`, `ack_remote_worker_fixture.py` and
+`two_node_ack_probe.py` test a **two-stage signed preparation and
+post-commit observer ACK** between the x1-370 observer and Lenovo
+synthetic SQLite worker. The worker verifies both an Ed25519 checkpoint
+for the actual synthetic DB state and the operation-linked signature
+on the ACK before returning any synthetic success.
+
+Physical tests PASS for valid ACK, missing ACK, and tampered ACK.
+Missing or invalid ACK returns DENIED and leaves the observer fenced,
+even if the local SQLite debit already committed. This is not
+distributed crash-atomicity or source-attested observer custody;
+the signing key and high-water are still ephemeral fixtures, and
+the observer public key was introduced over the same SSH test channel.
+The worker and observer are **not authorized to perform any real
+model request or agent execution**. These cross-host witnesses are
+not inserted into the 11-source same-host Lenovo admission receipt.
