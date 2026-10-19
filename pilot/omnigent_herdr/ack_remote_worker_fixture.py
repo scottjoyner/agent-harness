@@ -17,15 +17,20 @@ import sys
 import tempfile
 from pathlib import Path
 
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PublicKey, Ed25519PrivateKey,
+)
 
 from durable_lease_store import DurableSyntheticLeaseGate
 from observer_ack_protocol import (
     request_digest, verify_prepare, verify_ack,
 )
 from observer_checkpoint import (
-    checkpoint_sha256, read_local_state_digest, verify as verify_checkpoint,
+    _json_bytes, checkpoint_sha256, public_fingerprint,
+    read_local_state_digest, verify as verify_checkpoint,
 )
+from worker_acceptance_receipt import sign_fixture as sign_worker_fixture
 
 WORKTREE = hashlib.sha256(b"synthetic-cross-node-ACK-no-real-repo").hexdigest()
 
@@ -62,6 +67,13 @@ def run(source=sys.stdin, sink=sys.stdout) -> None:
         db = directory / "synthetic.sqlite3"
         worker = DurableSyntheticLeaseGate(
             db, secrets.token_bytes(32), now=lambda: 1000, create=True)
+        # Ephemeral synthetic worker signer; private key stays on Lenovo.
+        worker_signer = Ed25519PrivateKey.generate()
+        worker_pub = worker_signer.public_key()
+        worker_public_b64 = base64.b64encode(worker_pub.public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw
+        )).decode("ascii")
+        worker_public_fingerprint = public_fingerprint(worker_pub)
         scope = {
             "uid": os.getuid(), "owner": "synthetic-owner",
             "session": "synthetic-session",
@@ -83,6 +95,7 @@ def run(source=sys.stdin, sink=sys.stdout) -> None:
         prepare = None
         after = None
         before = worker.state_digest()
+        commit_receipt_fields = None
         key = None
         fingerprint = None
         stage = 0
@@ -101,6 +114,8 @@ def run(source=sys.stdin, sink=sys.stdout) -> None:
                         "operation_id": operation_id,
                         "request_sha256": request_sha256,
                         "worker_id": "lenovo-ack-worker",
+                        "worker_public_key": worker_public_b64,
+                        "worker_public_fingerprint": worker_public_fingerprint,
                         **_snapshot(db),
                     }, sink)
                 elif op == "prepare" and set(packet) == {
@@ -128,8 +143,31 @@ def run(source=sys.stdin, sink=sys.stdout) -> None:
                     if accepted.get("status") != "synthetic_receipt_only":
                         raise RuntimeError("no synthetic receipt was committed")
                     after = worker.state_digest()
+                    commit_receipt_fields = {
+                        "worker_id": "lenovo-ack-worker",
+                        "observer_id": "x1-ack-observer",
+                        "operation_id": operation_id,
+                        "request_sha256": request_sha256,
+                        "prepare_sha256": hashlib.sha256(
+                            _json_bytes(prepare)).hexdigest(),
+                        "before_state_sha256": before,
+                        "after_state_sha256": after,
+                        "generation": 2,
+                        "sequence": 1,
+                        "receipt_number": accepted["receipt_number"],
+                        "agent_dispatch_authorized": False,
+                        "provider_requests_forwarded": 0,
+                    }
+                    signed_commit = sign_worker_fixture(
+                        signer=worker_signer,
+                        kind="synthetic_worker_commit",
+                        fields=commit_receipt_fields)
                     stage = 2
-                    _reply({"status": "pending_observer_ACK", **_snapshot(db)}, sink)
+                    _reply({
+                        "status": "pending_observer_ACK",
+                        "worker_commit_receipt": signed_commit,
+                        **_snapshot(db),
+                    }, sink)
                 elif op == "ack" and set(packet) == {
                     "op", "record", "checkpoint"
                 } and stage == 2:
@@ -168,9 +206,20 @@ def run(source=sys.stdin, sink=sys.stdout) -> None:
                     # trusted freshness remain unverified.
                     if not was_confirmed:
                         raise ValueError("missing or invalid signed ACK")
+                    signed_delivery = sign_worker_fixture(
+                        signer=worker_signer,
+                        kind="synthetic_worker_delivery",
+                        fields={
+                            **commit_receipt_fields,
+                            "observer_ack_sha256": hashlib.sha256(
+                                _json_bytes(ack)).hexdigest(),
+                            "observer_checkpoint_sha256": checkpoint_sha256(
+                                checkpoint),
+                        })
                     stage = 3
                     _reply({
                         "status": "synthetic_receipt_only",
+                        "worker_delivery_receipt": signed_delivery,
                         "observer_acknowledged": True,
                         "agent_dispatch_authorized": False,
                         "model_egress_authorized": False,

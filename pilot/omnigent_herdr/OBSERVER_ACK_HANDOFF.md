@@ -132,3 +132,22 @@ that a second authority approved the delivery, or that the journal
 cannot be rolled back. The older valid journal DB restore attack
 remains reproducible. See
 [DURABLE_OBSERVER_JOURNAL_REVIEW.md](DURABLE_OBSERVER_JOURNAL_REVIEW.md).
+
+
+## Follow-on: independently verifiable receipt *format* (not authority)
+
+The Lenovo disposable worker now generates its own ephemeral
+Ed25519 signer (not the x1 observer signer) and signs both the
+post-commit synthetic SQLite state and the later acceptance of the
+observer's ACK/checkpoint. The observer rejects a forged commit
+**before** signing a checkpoint, and it cannot mark ACK delivery
+confirmed without a matching signed worker-delivery receipt.
+Five cross-node scenarios passed, including forged worker commit and
+delivery receipts. This eliminates reliance on a bare success status
+string within the cooperative test.
+
+**Remaining:** the worker's key is self-advertised over the same SSH
+session, worker state remains self-reported, and there is no durable,
+independently administered signer, identity or monotonic journal.
+Signature validation does not prove resource-side authority. Details:
+[WORKER_SIGNED_ACCEPTANCE_REVIEW.md](WORKER_SIGNED_ACCEPTANCE_REVIEW.md).

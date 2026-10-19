@@ -23,13 +23,22 @@ def fixture_claims(scenario="success"):
         "signed_prepare_verified": True,
         "worker_committed_synthetic_receipt": True,
         "observer_validated_postcommit_snapshot": True,
-        "signed_checkpoint_verified": True,
+        "worker_key_distinct_from_observer": True,
+        "worker_commit_receipt_verified": scenario != "tampered_worker_commit",
+        "worker_delivery_receipt_verified": scenario == "success",
+        "tampered_worker_receipt_denied": scenario in (
+            "tampered_worker_commit", "tampered_worker_delivery"),
+        "signed_checkpoint_verified": scenario != "tampered_worker_commit",
         "signed_ack_accepted": scenario == "success",
-        "missing_or_tampered_ack_denied": scenario != "success",
+        "missing_or_tampered_ack_denied": scenario in (
+            "missing_ack", "tampered_ack"),
         "observer_fenced_after_failed_delivery": scenario != "success",
         "clean_worker_exit": True,
         "observer_private_key_sent_to_worker": False,
         "worker_hmac_key_sent_to_observer": False,
+        "worker_signing_key_sent_to_observer": False,
+        "worker_trust_root_independently_pinned": False,
+        "worker_receipt_durability_verified": False,
         "independent_key_custody_verified": False,
         "durable_publication_verified": False,
         "rollback_resistance_verified": False,
@@ -41,8 +50,9 @@ def fixture_claims(scenario="success"):
 
 
 class AckProtocolSafetyTests(unittest.TestCase):
-    def test_three_scenarios_are_all_deny_only(self):
-        for scenario in ("success", "missing_ack", "tampered_ack"):
+    def test_five_scenarios_are_all_deny_only(self):
+        for scenario in ("success", "missing_ack", "tampered_ack",
+                         "tampered_worker_commit", "tampered_worker_delivery"):
             with self.subTest(scenario=scenario):
                 sample = fixture_claims(scenario)
                 self.assertEqual(exit_status(sample), 0)
@@ -56,15 +66,31 @@ class AckProtocolSafetyTests(unittest.TestCase):
             "missing_or_tampered_ack_denied",
             "worker_committed_synthetic_receipt",
             "signed_checkpoint_verified", "clean_worker_exit",
+            "worker_commit_receipt_verified",
+            "worker_key_distinct_from_observer",
         ):
             with self.subTest(key=key):
                 self.assertEqual(exit_status({**good, key: False}), 2)
+
+    def test_missing_worker_delivery_signature_cannot_report_success(self):
+        good = fixture_claims("success")
+        self.assertEqual(exit_status({
+            **good, "worker_delivery_receipt_verified": False}), 2)
+
+    def test_tampered_commit_leaves_observer_unresolved(self):
+        good = fixture_claims("tampered_worker_commit")
+        self.assertEqual(exit_status(good), 0)
+        self.assertEqual(exit_status({
+            **good, "observer_fenced_after_failed_delivery": False}), 2)
 
     def test_forged_production_authorization_rejected(self):
         good = fixture_claims()
         for key in (
             "observer_private_key_sent_to_worker",
             "worker_hmac_key_sent_to_observer",
+            "worker_signing_key_sent_to_observer",
+            "worker_trust_root_independently_pinned",
+            "worker_receipt_durability_verified",
             "independent_key_custody_verified",
             "durable_publication_verified",
             "rollback_resistance_verified",

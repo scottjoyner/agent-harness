@@ -431,3 +431,24 @@ log were rejected when the newer witness head was retained. An old log
 paired with an old anchor was still accepted (mandatory negative
 control). The witness remains research-only and is intentionally
 **not** added to Lenovo's same-host 12-source admission receipt.
+
+
+## Worker-signed synthetic commit and ACK-delivery receipts (2026-10-19)
+
+See [WORKER_SIGNED_ACCEPTANCE_REVIEW.md](WORKER_SIGNED_ACCEPTANCE_REVIEW.md).
+`worker_acceptance_receipt.py` defines exact, domain-separated Ed25519
+commit and delivery receipt shapes. `ack_remote_worker_fixture.py`
+generates a distinct ephemeral Lenovo signer and signs the actual
+synthetic SQLite post-commit digest and, after validating an observer
+checkpoint/ACK, a second receipt bound to both observer signatures.
+The `two_node_ack_probe.py` observer verifies these worker signatures
+**before** checkpoint publication or ACK-delivery confirmation.
+Physical x1-370↔Lenovo success and four negative scenarios passed.
+
+Lenovo's worker signing public key is bootstrapped through the same
+research SSH channel; **independent resource identity, source
+attestation, durable worker receipt storage, continuous publication,
+and permanent key custody remain NOT verified**. Every result remains
+deny-only; the separate cross-host synthetic proof is not added to
+Lenovo's same-host admission receipt, and real agent/model dispatch
+remains HOLD.
