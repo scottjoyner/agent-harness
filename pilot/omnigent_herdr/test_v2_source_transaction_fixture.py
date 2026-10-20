@@ -1,0 +1,325 @@
+"""Synthetic source-side SQLite commit, signature and cross-signed intent."""
+from __future__ import annotations
+
+import hashlib
+import os
+import shutil
+import sqlite3
+import tempfile
+import threading
+import unittest
+from copy import deepcopy
+from pathlib import Path
+from unittest.mock import patch
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+from observer_checkpoint import ZERO, public_fingerprint
+from atomic_synthetic_lease_outbox import AtomicSyntheticLeaseOutbox
+from v2_outbox_publication import worker_publish
+from v2_source_transaction_fixture import (
+    SyntheticResourceSource, UnsafeSourceState, _state_digest,
+    _unique_fields, verify_source_receipt,
+    verify_source_corresponds_to_signed_worker_intent,
+)
+
+OP1 = "1"*32
+OP2 = "2"*32
+INTENT1 = hashlib.sha256(b"synthetic-source-intent-1").hexdigest()
+INTENT2 = hashlib.sha256(b"synthetic-source-intent-2").hexdigest()
+
+
+class SourceTransactionTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="og-v2-source-tst-")
+        self.addCleanup(temp.cleanup)
+        self.home = Path(temp.name)
+        self.cache = self.home / ".cache"
+        self.cache.mkdir(mode=0o700)
+        self.root = self.cache / "og-v2-source-Ab91zQ"
+        self.root.mkdir(mode=0o700)
+        home_patch = patch.object(Path, "home", return_value=self.home)
+        home_patch.start()
+        self.addCleanup(home_patch.stop)
+        self.source = SyntheticResourceSource(self.root, create=True)
+        self.pin = public_fingerprint(self.source.signer.public_key())
+        self.genesis = (0, ZERO)
+
+    def reopen(self):
+        return SyntheticResourceSource(self.root)
+
+    def committed(self, *, operation_id=OP1, intent=INTENT1, head=None):
+        return self.reopen().commit(
+            operation_id=operation_id, intent_sha256=intent,
+            trusted_head=self.genesis if head is None else head)
+
+    def verify(self, response, *, operation=OP1, intent=INTENT1,
+               key=None, pin=None, head=None, before=None, after=None):
+        return verify_source_receipt(
+            response["receipt"],
+            source_public_key=key or self.source.signer.public_key(),
+            expected_source_pin=pin or self.pin,
+            expected_operation=operation,
+            expected_intent_sha256=intent,
+            expected_head=tuple(response["head"]) if head is None else head,
+            expected_before_sha256=(
+                _state_digest(2, 0, ZERO) if before is None else before),
+            expected_after_sha256=(
+                _state_digest(1, 1, ZERO) if after is None else after),
+        )
+
+    def test_bootstrap_is_private_and_empty(self):
+        self.assertEqual(self.root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((self.root / "source-ephemeral.key").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.root / "source-debits.sqlite3").stat().st_mode & 0o777, 0o600)
+        snap = self.reopen().inspect(trusted_head=self.genesis)
+        self.assertEqual(snap["balance"], 2)
+        self.assertEqual(snap["head"], [0, ZERO])
+        self.assertIsNone(snap["receipt"])
+        self.assertFalse(snap["independently_administered_source_verified"])
+        self.assertFalse(snap["agent_dispatch_authorized"])
+
+    def test_local_committed_debit_is_signed_and_restart_readable(self):
+        result = self.committed()
+        self.assertEqual(result["balance"], 1)
+        self.assertTrue(self.verify(result))
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=tuple(result["head"]))["receipt"], result["receipt"])
+        with sqlite3.connect(self.root / "source-debits.sqlite3") as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM debits").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT balance FROM resource").fetchone()[0], 1)
+
+    def test_duplicate_source_operation_refuses_second_local_debit(self):
+        result = self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP1, head=tuple(result["head"]))
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=tuple(result["head"]))["balance"], 1)
+
+    def test_stale_source_head_never_commits(self):
+        result = self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2, intent=INTENT2)
+        self.assertTrue(self.verify(result))
+
+    def test_valid_second_commit_and_capacity_two(self):
+        first = self.committed()
+        second = self.committed(operation_id=OP2, intent=INTENT2,
+                                head=tuple(first["head"]))
+        self.assertEqual(second["balance"], 0)
+        self.assertEqual(second["receipt"]["payload"]["previous_record_sha256"],
+                         first["head"][1])
+        self.assertTrue(self.verify(
+            second, operation=OP2, intent=INTENT2,
+            before=_state_digest(1, 1, first["head"][1]),
+            after=_state_digest(0, 2, first["head"][1])))
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id="3"*32, intent=INTENT2,
+                           head=tuple(second["head"]))
+
+    def test_one_parallel_source_commit_per_genesis_head(self):
+        barrier = threading.Barrier(5)
+        outcomes = []
+        lock = threading.Lock()
+        def run(i):
+            barrier.wait(timeout=6)
+            try:
+                self.committed(operation_id=f"{i:032x}")
+                x = "committed"
+            except (UnsafeSourceState, sqlite3.Error):
+                x = "denied"
+            with lock:
+                outcomes.append(x)
+        ths = [threading.Thread(target=run, args=(i,)) for i in range(5)]
+        for t in ths: t.start()
+        for t in ths: t.join(timeout=8)
+        self.assertEqual(outcomes.count("committed"), 1)
+        self.assertEqual(outcomes.count("denied"), 4)
+
+    def test_forged_source_receipt_signature_fails(self):
+        result = self.committed()
+        forged = deepcopy(result)
+        forged["receipt"]["payload"]["operation_id"] = OP2
+        self.assertFalse(self.verify(forged))
+        forged = deepcopy(result)
+        forged["receipt"]["signature"] = "AAAA"+forged["receipt"]["signature"][4:]
+        self.assertFalse(self.verify(forged))
+
+    def test_wrong_source_public_key_fails(self):
+        result = self.committed()
+        self.assertFalse(self.verify(
+            result, key=Ed25519PrivateKey.generate().public_key()))
+        self.assertFalse(self.verify(result, pin="f"*64))
+
+    def test_wrong_operation_and_intent_fails(self):
+        result = self.committed()
+        self.assertFalse(self.verify(result, operation=OP2))
+        self.assertFalse(self.verify(result, intent=INTENT2))
+
+    def test_stale_expected_head_and_state_fails(self):
+        result = self.committed()
+        self.assertFalse(self.verify(result, head=(0, ZERO)))
+        self.assertFalse(self.verify(result, after="f"*64))
+
+    def test_corrupt_source_balance_denied_after_reopen(self):
+        self.committed()
+        with sqlite3.connect(self.source.dbpath) as db:
+            db.execute("UPDATE resource SET balance=0 WHERE id=1")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=(0, ZERO))
+
+    def test_deleted_receipt_fails_source_replay_check(self):
+        self.committed()
+        with sqlite3.connect(self.source.dbpath) as db:
+            db.execute("DELETE FROM debits")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=(0, ZERO))
+
+    def test_changed_saved_signature_denied(self):
+        self.committed()
+        with sqlite3.connect(self.source.dbpath) as db:
+            db.execute("UPDATE debits SET receipt_json='{}' WHERE record_no=1")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=(0, ZERO))
+
+    def test_duplicate_json_fields_rejected(self):
+        with self.assertRaises(UnsafeSourceState):
+            _unique_fields([("op", 1), ("op", 2)])
+
+    def test_missing_signing_key_fails_closed(self):
+        result = self.committed()
+        (self.root / "source-ephemeral.key").unlink()
+        with self.assertRaises((UnsafeSourceState, OSError)):
+            self.reopen()
+        self.assertEqual(result["balance"], 1)
+
+    def test_signer_key_symlink_denied(self):
+        key = self.root / "source-ephemeral.key"
+        key.rename(self.root / "original.key")
+        key.symlink_to(self.root / "original.key")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen()
+
+    def test_unsafe_db_hardlink_denied(self):
+        os.link(self.source.dbpath, self.root / "otherdb")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=self.genesis)
+
+    def test_missing_db_does_not_recreate(self):
+        self.source.dbpath.unlink()
+        with self.assertRaises((UnsafeSourceState, OSError)):
+            self.reopen().inspect(trusted_head=self.genesis)
+
+    def test_duplicate_bootstrap_refused(self):
+        with self.assertRaises(FileExistsError):
+            SyntheticResourceSource(self.root, create=True)
+
+    def test_old_valid_source_db_plus_old_head_still_accepted(self):
+        result = self.committed()
+        snapshot = self.root / "valid-old.sqlite3"
+        shutil.copy2(self.source.dbpath, snapshot)
+        second = self.committed(operation_id=OP2, intent=INTENT2,
+                                head=tuple(result["head"]))
+        shutil.copy2(snapshot, self.source.dbpath)
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=tuple(second["head"]))
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=tuple(result["head"]))["balance"], 1)
+
+    def test_failed_balance_write_rolls_back_receipt_insert(self):
+        # Inject an SQLite transactional fault AFTER INSERT debits but
+        # BEFORE resource count/balance update. SQLite must roll back
+        # both writes rather than leaving a source-signed phantom debit.
+        with sqlite3.connect(self.source.dbpath) as db:
+            db.execute("""CREATE TRIGGER abort_balance_change
+                BEFORE UPDATE ON resource
+                BEGIN
+                    SELECT RAISE(ABORT, 'injected source balance fault');
+                END""")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.committed()
+        with sqlite3.connect(self.source.dbpath) as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM debits").fetchone()[0], 0)
+            self.assertEqual(db.execute(
+                "SELECT balance,count,last_sha256 FROM resource").fetchone(),
+                (2, 0, ZERO))
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=self.genesis)["balance"], 2)
+
+    def test_replaced_source_private_key_rejects_valid_old_db(self):
+        first = self.committed()
+        oldkey = self.root / "source-ephemeral.key"
+        replacement = Ed25519PrivateKey.generate().private_bytes(
+            serialization.Encoding.Raw,
+            serialization.PrivateFormat.Raw,
+            serialization.NoEncryption())
+        oldkey.write_bytes(replacement)
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=tuple(first["head"]))
+
+    def test_cross_signed_worker_intent_matches_resource_operation(self):
+        worker = Ed25519PrivateKey.generate()
+        observer = Ed25519PrivateKey.generate()
+        with tempfile.TemporaryDirectory(dir=self.root) as d:
+            path = Path(d) / "worker.sqlite3"
+            secret = hashlib.sha256(b"worker synthetic secret").digest()
+            gate = AtomicSyntheticLeaseOutbox(path, secret, now=lambda: 1000,
+                                               create=True)
+            token = gate.mint(
+                uid=os.getuid(), owner="owner", session="session",
+                worktree_sha256=hashlib.sha256(b"test worktree").hexdigest(),
+                model_pin="kilo/kilo-auto/free")
+            before = gate.state_digest()
+            result = gate.check(
+                {"schema": 1, "op": "synthetic_receipt",
+                 "token": token, "seq": 1}, peer_uid=os.getuid(),
+                operation_id=OP1, expected_owner="owner",
+                expected_session="session",
+                expected_worktree_sha256=hashlib.sha256(b"test worktree").hexdigest(),
+                expected_model_pin="kilo/kilo-auto/free")
+            self.assertEqual(result["status"], "synthetic_receipt_only")
+            after = gate.state_digest()
+            head = (result["atomic_outbox_record"],
+                    result["atomic_outbox_sha256"])
+            pub = worker_publish(
+                signer=worker, worker_id="worker", observer_id="observer",
+                observer_fingerprint=public_fingerprint(observer.public_key()),
+                exported_head=gate.export_head_event(trusted_anchor=head))
+            event = pub["payload"]["outbox_event"]
+            source = self.committed(
+                operation_id=OP1, intent=event["request_sha256"])
+            args = dict(
+                worker_publication=pub, worker_public_key=worker.public_key(),
+                trusted_worker_pin=public_fingerprint(worker.public_key()),
+                trusted_observer_pin=public_fingerprint(observer.public_key()),
+                expected_worker_id="worker", expected_observer_id="observer",
+                expected_operation_id=OP1,
+                expected_worker_outbox_head=head,
+                expected_worker_before_state=before,
+                expected_worker_after_state=after,
+                source_receipt=source["receipt"],
+                source_public_key=self.source.signer.public_key(),
+                trusted_source_pin=self.pin,
+                expected_source_head=tuple(source["head"]),
+                expected_source_before_state=_state_digest(2, 0, ZERO),
+                expected_source_after_state=_state_digest(1, 1, ZERO),
+            )
+            self.assertTrue(verify_source_corresponds_to_signed_worker_intent(**args))
+            tampered = deepcopy(pub)
+            tampered["payload"]["outbox_event"]["operation_id"] = OP2
+            self.assertFalse(verify_source_corresponds_to_signed_worker_intent(
+                **{**args, "worker_publication": tampered}))
+            self.assertFalse(verify_source_corresponds_to_signed_worker_intent(
+                **{**args, "expected_operation_id": OP2}))
+            self.assertFalse(verify_source_corresponds_to_signed_worker_intent(
+                **{**args, "trusted_source_pin": "f"*64}))
+            # Different operation ID/digest is never a match.
+            self.assertFalse(verify_source_corresponds_to_signed_worker_intent(
+                **{**args, "source_receipt": {
+                    **source["receipt"], "signature": "forged"}}))
+
+
+if __name__ == "__main__":
+    unittest.main()

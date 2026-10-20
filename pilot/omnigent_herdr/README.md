@@ -661,3 +661,26 @@ Rolling back BOTH the authority state and its claimed expected head
 re-enables acceptance of the old signed checkpoint, as the mandatory
 negative test confirms. This is *conditional* revocation verification,
 not independent immutable custody or a production admission gate.
+
+
+## Signed synthetic resource-side commit (2026-10-20)
+
+See [V2_SOURCE_TRANSACTION_BOUNDARY_HANDOFF.md](V2_SOURCE_TRANSACTION_BOUNDARY_HANDOFF.md).
+Destroyer now has an opt-in, **disposable two-unit synthetic resource**
+fixture. Within ONE source-local SQLite transaction it commits a
+balance decrement and an Ed25519-signed receipt. The separate x1
+synthetic worker intent and Destroyer receipt are both signature-
+verified and must agree on operation ID and request SHA-256.
+
+Fleet Commander physically exercised fresh-process source readback,
+duplicate/replay/forgery refusal, two-unit exhaustion, and restoration
+of an actual old Destroyer SQLite image. The older image is rejected
+against a retained newer head, but **old image + old claimed head**
+still succeeds. SQL-fault injection also proved local rollback of
+both receipt and balance when a commit fails.
+
+The source resource is **synthetic only**, under the same operator's
+SSH administration. Source and worker SQLite transactions are
+not distributed-atomic; no real model, provider, repository effect,
+independent resource custody or agent dispatch is proven. The Lenovo
+15-source admission receipt remains HOLD.

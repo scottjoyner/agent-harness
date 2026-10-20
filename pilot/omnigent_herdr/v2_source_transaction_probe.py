@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Physical x1 signed worker intent ↔ Destroyer LOCAL synthetic source debit.
+
+Destroyer actually commits a synthetic SQLite balance decrement AND source
+Ed25519-signed receipt in one local transaction, then a new SSH process
+opens the local resource state to verify it. The two nodes remain under
+shared operator custody, and worker/source transactions are not atomic
+together. No user files, agents, provider calls, services or keys persist.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import hashlib
+import json
+import os
+import re
+import socket
+import subprocess
+import tempfile
+from copy import deepcopy
+from pathlib import Path
+
+from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+    Ed25519PrivateKey, Ed25519PublicKey,
+)
+
+from atomic_synthetic_lease_outbox import AtomicSyntheticLeaseOutbox
+from observer_checkpoint import ZERO, public_fingerprint
+from v2_outbox_publication import worker_publish
+from v2_source_transaction_fixture import (
+    _state_digest, verify_source_receipt,
+    verify_source_corresponds_to_signed_worker_intent,
+)
+
+SOURCE_HOST = "destroyer"
+ROOT_RE = re.compile(
+    r"^/home/[^/]+/\.cache/og-v2-source-[A-Za-z0-9]{6}$")
+WORKTREE = hashlib.sha256(b"source-physical-disposable-synthetic").hexdigest()
+OP1 = "1"*32
+OP2 = "2"*32
+TRUE = (
+    "source_private_key_on_remote_only",
+    "source_sqlite_debit_committed",
+    "source_receipt_signed_and_pinned",
+    "worker_intent_and_source_receipt_match",
+    "source_readback_after_process_restart",
+    "duplicate_operation_denied",
+    "duplicate_intent_denied_by_stale_source_head",
+    "worker_publication_forgery_denied",
+    "wrong_source_key_denied",
+    "source_receipt_mutation_denied",
+    "second_synthetic_debit_committed",
+    "old_source_sqlite_rejected_by_newer_head",
+    "old_source_sqlite_with_old_head_still_valid",
+    "restored_new_source_head_verified",
+    "source_budget_exhaustion_denied",
+)
+FALSE = (
+    "independently_custodied_source_verified",
+    "production_resource_transaction_attested",
+    "distributed_transaction_atomicity_verified",
+    "production_rollback_resistance_verified",
+    "agent_dispatch_authorized", "model_egress_authorized",
+    "used_real_repository",
+)
+
+
+def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
+    record = {
+        "schema": 1, "mode": "synthetic_v2_resource_side_commit_probe",
+        "worker_host": socket.gethostname(), "resource_host": SOURCE_HOST,
+        **{name: False for name in TRUE},
+        **{name: False for name in FALSE},
+        "provider_requests_forwarded": 0, "errors": [],
+    }
+    if (remote != SOURCE_HOST or not isinstance(remote_root, str)
+            or ROOT_RE.fullmatch(remote_root) is None):
+        record["errors"].append("unapproved physical resource fixture")
+        return record
+    stage = "start"
+    try:
+        cache = Path.home() / ".cache"
+        cache.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(
+                prefix="og-v2-source-x1-", dir=cache) as dirname:
+            here = Path(dirname)
+            here.chmod(0o700)
+            worker = Ed25519PrivateKey.generate()
+            observer = Ed25519PrivateKey.generate()
+            worker_pin = public_fingerprint(worker.public_key())
+            observer_pin = public_fingerprint(observer.public_key())
+
+            def remote_source(command: str, message: dict):
+                if command not in ("bootstrap", "commit", "inspect"):
+                    raise RuntimeError("forbidden source operation")
+                args = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=yes",
+                    "-o", "ConnectTimeout=6", remote,
+                    "python3", "-B",
+                    remote_root + "/v2_source_transaction_fixture.py",
+                    "--root", remote_root, "--command", command]
+                p = subprocess.run(
+                    args, input=json.dumps(message, sort_keys=True) + "\n",
+                    text=True, capture_output=True, timeout=16,
+                    check=False)
+                if p.returncode not in (0, 2) or len(p.stdout) > 8192:
+                    raise RuntimeError("remote synthetic source unavailable")
+                try:
+                    reply = json.loads(p.stdout)
+                except (ValueError, TypeError) as exc:
+                    raise RuntimeError("untrusted source response") from exc
+                if (not isinstance(reply, dict)
+                        or reply.get("decision") != "HOLD"
+                        or reply.get("agent_dispatch_authorized") is not False
+                        or type(reply.get("provider_requests_forwarded")) is not int
+                        or reply["provider_requests_forwarded"] != 0):
+                    raise RuntimeError("source response granted unauthorized action")
+                return p.returncode, reply
+
+            def copy_image(source_name: str, target_name: str):
+                allowed = {
+                    "source-debits.sqlite3", "old-source.sqlite3",
+                    "new-source.sqlite3",
+                }
+                if source_name not in allowed or target_name not in allowed:
+                    raise RuntimeError("forbidden resource snapshot path")
+                args = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=yes",
+                    "-o", "ConnectTimeout=6", remote,
+                    "cp", "-f", "--",
+                    remote_root + "/" + source_name,
+                    remote_root + "/" + target_name,
+                ]
+                p = subprocess.run(
+                    args, text=True, capture_output=True, timeout=12)
+                if p.returncode:
+                    raise RuntimeError("source fixture snapshot copy failed")
+
+            stage = "bootstrap"
+            rc, genesis = remote_source("bootstrap", {})
+            if rc or genesis.get("schema") != 1:
+                raise RuntimeError("physical source bootstrap denied")
+            source_public_raw = base64.b64decode(
+                genesis["source_public_base64"], validate=True)
+            if len(source_public_raw) != 32:
+                raise RuntimeError("source role key not Ed25519")
+            source_pub = Ed25519PublicKey.from_public_bytes(source_public_raw)
+            source_pin = public_fingerprint(source_pub)
+            record["source_private_key_on_remote_only"] = (
+                genesis["source_fingerprint"] == source_pin
+                and source_pin not in (worker_pin, observer_pin)
+                and genesis["balance"] == 2
+                and genesis["head"] == [0, ZERO])
+
+            gate = AtomicSyntheticLeaseOutbox(
+                here / "worker.sqlite3", os.urandom(32),
+                now=lambda: 1000, create=True)
+            token = gate.mint(
+                uid=os.getuid(), owner="test-owner",
+                session="test-session", worktree_sha256=WORKTREE,
+                model_pin="kilo/kilo-auto/free")
+            before = gate.state_digest()
+            accepted = gate.check(
+                {"schema": 1, "op": "synthetic_receipt", "token": token,
+                 "seq": 1},
+                peer_uid=os.getuid(), operation_id=OP1,
+                expected_owner="test-owner", expected_session="test-session",
+                expected_worktree_sha256=WORKTREE,
+                expected_model_pin="kilo/kilo-auto/free")
+            if accepted.get("status") != "synthetic_receipt_only":
+                raise RuntimeError("worker source intent not synthetically accepted")
+            after = gate.state_digest()
+            worker_head = (accepted["atomic_outbox_record"],
+                           accepted["atomic_outbox_sha256"])
+            publication = worker_publish(
+                signer=worker, worker_id="worker",
+                observer_id="observer",
+                observer_fingerprint=observer_pin,
+                exported_head=gate.export_head_event(
+                    trusted_anchor=worker_head))
+            source_intent = publication["payload"]["outbox_event"]["request_sha256"]
+
+            stage = "source_first_atomic_debit"
+            rc, one = remote_source("commit", {
+                "operation_id": OP1, "intent_sha256": source_intent,
+                "trusted_head": [0, ZERO]})
+            if rc or one.get("balance") != 1:
+                raise RuntimeError("source debit not committed")
+            head1 = tuple(one["head"])
+            record["source_sqlite_debit_committed"] = (
+                one.get("local_debit_and_signed_receipt_atomic") is True
+                and one["receipt"]["payload"]["operation_id"] == OP1)
+            before_source = _state_digest(2, 0, ZERO)
+            after_source = _state_digest(1, 1, ZERO)
+            args = {
+                "source_public_key": source_pub,
+                "expected_source_pin": source_pin,
+                "expected_operation": OP1,
+                "expected_intent_sha256": source_intent,
+                "expected_head": head1,
+                "expected_before_sha256": before_source,
+                "expected_after_sha256": after_source,
+            }
+            record["source_receipt_signed_and_pinned"] = (
+                verify_source_receipt(one["receipt"], **args))
+            cross = {
+                "worker_publication": publication,
+                "worker_public_key": worker.public_key(),
+                "trusted_worker_pin": worker_pin,
+                "trusted_observer_pin": observer_pin,
+                "expected_worker_id": "worker", "expected_observer_id": "observer",
+                "expected_operation_id": OP1,
+                "expected_worker_outbox_head": worker_head,
+                "expected_worker_before_state": before,
+                "expected_worker_after_state": after,
+                "source_receipt": one["receipt"],
+                "source_public_key": source_pub,
+                "trusted_source_pin": source_pin,
+                "expected_source_head": head1,
+                "expected_source_before_state": before_source,
+                "expected_source_after_state": after_source,
+            }
+            record["worker_intent_and_source_receipt_match"] = (
+                verify_source_corresponds_to_signed_worker_intent(**cross))
+
+            stage = "source_restart_readback"
+            rc, reopened = remote_source("inspect", {"trusted_head": list(head1)})
+            record["source_readback_after_process_restart"] = (
+                rc == 0 and reopened.get("receipt") == one["receipt"]
+                and reopened.get("balance") == 1)
+            duplicate_rc, _ = remote_source("commit", {
+                "operation_id": OP1, "intent_sha256": source_intent,
+                "trusted_head": list(head1)})
+            record["duplicate_operation_denied"] = duplicate_rc == 2
+            stale_rc, _ = remote_source("commit", {
+                "operation_id": OP2,
+                "intent_sha256": hashlib.sha256(b"second-test").hexdigest(),
+                "trusted_head": [0, ZERO]})
+            record["duplicate_intent_denied_by_stale_source_head"] = stale_rc == 2
+            mutated_worker = deepcopy(publication)
+            mutated_worker["payload"]["outbox_event"]["operation_id"] = OP2
+            record["worker_publication_forgery_denied"] = (
+                not verify_source_corresponds_to_signed_worker_intent(
+                    **{**cross, "worker_publication": mutated_worker}))
+            record["wrong_source_key_denied"] = (
+                not verify_source_receipt(
+                    one["receipt"], **{
+                        **args, "source_public_key":
+                        Ed25519PrivateKey.generate().public_key()}))
+            changed = deepcopy(one["receipt"])
+            changed["payload"]["intent_sha256"] = "f"*64
+            record["source_receipt_mutation_denied"] = (
+                not verify_source_receipt(changed, **args))
+
+            stage = "actual_source_db_rollback"
+            copy_image("source-debits.sqlite3", "old-source.sqlite3")
+            rc, two = remote_source("commit", {
+                "operation_id": OP2,
+                "intent_sha256": hashlib.sha256(b"second-test").hexdigest(),
+                "trusted_head": list(head1)})
+            if rc:
+                raise RuntimeError("valid second fake resource debit refused")
+            head2 = tuple(two["head"])
+            record["second_synthetic_debit_committed"] = (
+                two.get("balance") == 0 and head2[0] == 2)
+            copy_image("source-debits.sqlite3", "new-source.sqlite3")
+            copy_image("old-source.sqlite3", "source-debits.sqlite3")
+            rejected_rc, _ = remote_source(
+                "inspect", {"trusted_head": list(head2)})
+            old_rc, old_recovered = remote_source(
+                "inspect", {"trusted_head": list(head1)})
+            record["old_source_sqlite_rejected_by_newer_head"] = (
+                rejected_rc == 2)
+            record["old_source_sqlite_with_old_head_still_valid"] = (
+                old_rc == 0 and old_recovered.get("balance") == 1
+                and old_recovered.get("receipt") == one["receipt"])
+            copy_image("new-source.sqlite3", "source-debits.sqlite3")
+            resumed_rc, resumed = remote_source(
+                "inspect", {"trusted_head": list(head2)})
+            record["restored_new_source_head_verified"] = (
+                resumed_rc == 0 and resumed.get("balance") == 0)
+            exhaust_rc, _ = remote_source("commit", {
+                "operation_id": "3"*32,
+                "intent_sha256": hashlib.sha256(b"third-test").hexdigest(),
+                "trusted_head": list(head2)})
+            record["source_budget_exhaustion_denied"] = exhaust_rc == 2
+            if not all(record[k] is True for k in TRUE):
+                record["errors"].append("source-side physical canary incomplete")
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError,
+            subprocess.TimeoutExpired):
+        record["errors"].append("physical source fixture denied at " + stage)
+    return record
+
+
+def exit_status(result: dict) -> int:
+    return 0 if (
+        all(result.get(k) is True for k in TRUE)
+        and all(result.get(k) is False for k in FALSE)
+        and type(result.get("provider_requests_forwarded")) is int
+        and result["provider_requests_forwarded"] == 0
+        and not result.get("errors")
+    ) else 2
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--remote-root", required=True)
+    parser.add_argument("--remote", default=SOURCE_HOST)
+    args = parser.parse_args()
+    document = physical(remote_root=args.remote_root, remote=args.remote)
+    print(json.dumps(document, sort_keys=True, indent=2))
+    raise SystemExit(exit_status(document))

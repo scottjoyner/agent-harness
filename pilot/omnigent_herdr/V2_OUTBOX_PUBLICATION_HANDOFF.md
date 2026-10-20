@@ -135,3 +135,16 @@ transit is not silently regenerated. Separate subprocess and
 cross-host disposable probes pass. This is cooperative local restart
 durability, **not** independent rollback or signer custody. Full
 handoff: [V2_DURABLE_OBSERVER_INBOX_HANDOFF.md](V2_DURABLE_OBSERVER_INBOX_HANDOFF.md).
+
+
+## Follow-on: independently stored synthetic source-side debit
+
+A distinct research resource fixture on Destroyer can commit an
+actual **synthetic** source-local SQLite debit together with a
+signed receipt, while x1's separate worker signs the intent.
+Both signatures are verified against exact operation/request
+digests. This is materially stronger than verifying a worker
+self-report alone, but does **not** make the two hosts distributed
+atomic or confer independently administered/production source
+authority. See
+[V2_SOURCE_TRANSACTION_BOUNDARY_HANDOFF.md](V2_SOURCE_TRANSACTION_BOUNDARY_HANDOFF.md).
