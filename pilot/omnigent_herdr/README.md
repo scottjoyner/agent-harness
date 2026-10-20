@@ -743,3 +743,29 @@ remain HOLD; exact committed observations can be reconciled by
 a fresh process without another write. This is process-crash
 testing, not independent custody, host power loss or distributed
 exactly-once authorization. No agent/model work is admitted.
+
+
+## V2 signed source denial fences and two-worker race (2026-10-20)
+
+See [V2_SOURCE_FORK_FENCE_HANDOFF.md](V2_SOURCE_FORK_FENCE_HANDOFF.md).
+The disposable source now signs and persists a bounded, **local**
+stale-operation denial in its private SQLite transaction when
+a losing request presents an exact old prefix of source history.
+Resubmitting that same operation ID with a newer source head is
+denied; an independently pinned read-only `fence` probe
+rechecks the Ed25519 signature, intent, original source head,
+observed winning head and non-grant flags.
+
+Fleet Commander physically raced two distinct synthetic
+worker-signed operations, two intents with the same operation ID,
+and exact duplicate delivery across simultaneous SSH one-shot
+processes on Destroyer. **Only one source-local debit committed**
+in each case. A legitimate exact duplicate can recover that
+one signed receipt read-only; distinct losers cannot adopt it.
+The prior source/journal process-crash canary remains passing.
+
+These are SAME-ADMIN, SYNTHETIC experiments. A different newly
+minted operation ID or rollback of the source DB **and** old
+trusted head remains outside the local fence authority.
+No model, agent, production provider or release admission is
+authorized. Lenovo's 15-source SAME-HOST receipt stays HOLD.

@@ -164,3 +164,17 @@ SSH/Python source process recovered the latter exact receipt
 without debiting again. **Worker/source distributed atomicity
 and independent source custody remain unproved.**
 See [V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md](V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md).
+
+
+## Follow-on: signed source-local stale-operation fencing
+
+A new v2 source schema retains SOURCE-SIGNED denial records when
+a distinct losing operation presents a **verified stale prefix**
+of the source head. This prevents rebasing that same operation
+onto the winner's newer head and receiving an extra local debit.
+Three physical concurrent two-worker SSH scenarios passed on
+Destroyer. The source validates denial signatures/history on
+reopen and offers a read-only signed `fence` inspection.
+The scope is operation-ID local only, not a production owner
+identity grant or globally monotonic independent authority.
+See [V2_SOURCE_FORK_FENCE_HANDOFF.md](V2_SOURCE_FORK_FENCE_HANDOFF.md).

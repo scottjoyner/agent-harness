@@ -39,10 +39,12 @@ OP_RE = re.compile(r"^[a-f0-9]{32}$")
 SHA_RE = re.compile(r"^[a-f0-9]{64}$")
 SOURCE_ID = "destroyer-synthetic-resource"
 SOURCE_DOMAIN = b"og-v2-disposable-resource-local-commit-receipt-v1\0"
+FENCE_DOMAIN = b"og-v2-disposable-resource-stale-attempt-fence-v1\0"
 STATE_DOMAIN = b"og-v2-disposable-resource-state-v1\0"
 APP_ID = 0x4F475352  # OGSR
-APP_VER = 1
+APP_VER = 2
 MAX_RECORDS = 2
+MAX_FENCES = 4
 MAX_DB = 256 * 1024
 PAYLOAD_KEYS = {
     "schema", "kind", "source_id", "source_pin", "record_no", "operation_id",
@@ -227,6 +229,72 @@ def verify_source_corresponds_to_signed_worker_intent(
         expected_after_sha256=expected_source_after_state)
 
 
+def verify_stale_source_fence(
+        fence: object, *, source_public_key: Ed25519PublicKey,
+        expected_source_pin: str, expected_operation: str,
+        expected_intent_sha256: str,
+        expected_prior_head: tuple[int, str],
+        expected_observed_head: tuple[int, str]) -> bool:
+    """Validate a SOURCE-signed synthetic denial, never a grant or retry.
+
+    This proves that the current *operator-held source signing key*
+    signed a denial of a specific stale operation/intent and predecessor
+    head. It is not proof of external immutable fencing or real custody.
+    """
+    try:
+        if (not isinstance(fence, dict)
+                or set(fence) != {"algorithm", "payload", "signature"}
+                or fence["algorithm"] != "Ed25519"
+                or not isinstance(fence["payload"],dict)
+                or set(fence["payload"]) != {
+                    "schema", "kind", "source_id", "source_pin",
+                    "operation_id", "intent_sha256", "prior_record",
+                    "prior_head", "observed_record", "observed_head",
+                    "retry_authorized", "agent_dispatch_authorized",
+                    "provider_requests_forwarded"}
+                or not isinstance(expected_source_pin,str)
+                or SHA_RE.fullmatch(expected_source_pin) is None
+                or public_fingerprint(source_public_key) != expected_source_pin
+                or not isinstance(expected_operation,str)
+                or OP_RE.fullmatch(expected_operation) is None
+                or not isinstance(expected_intent_sha256,str)
+                or SHA_RE.fullmatch(expected_intent_sha256) is None
+                or not isinstance(expected_prior_head,tuple)
+                or len(expected_prior_head)!=2
+                or not isinstance(expected_observed_head,tuple)
+                or len(expected_observed_head)!=2
+                or type(expected_prior_head[0]) is not int
+                or type(expected_observed_head[0]) is not int
+                or not 0 <= expected_prior_head[0] < expected_observed_head[0] <= MAX_RECORDS
+                or not all(isinstance(x[1],str) and SHA_RE.fullmatch(x[1])
+                           for x in (expected_prior_head,expected_observed_head))):
+            return False
+        p=fence["payload"]
+        if (type(p["schema"]) is not int or p["schema"]!=1
+                or p["kind"]!="synthetic_source_stale_attempt_denied"
+                or p["source_id"]!=SOURCE_ID
+                or p["source_pin"]!=expected_source_pin
+                or p["operation_id"]!=expected_operation
+                or p["intent_sha256"]!=expected_intent_sha256
+                or type(p["prior_record"]) is not int
+                or p["prior_record"]!=expected_prior_head[0]
+                or p["prior_head"]!=expected_prior_head[1]
+                or type(p["observed_record"]) is not int
+                or p["observed_record"]!=expected_observed_head[0]
+                or p["observed_head"]!=expected_observed_head[1]
+                or p["retry_authorized"] is not False
+                or p["agent_dispatch_authorized"] is not False
+                or type(p["provider_requests_forwarded"]) is not int
+                or p["provider_requests_forwarded"]!=0):
+            return False
+        source_public_key.verify(
+            _decode(fence["signature"]), FENCE_DOMAIN + _json_bytes(p))
+        return True
+    except (InvalidSignature, ValueError, TypeError, KeyError,
+            UnicodeError, AttributeError):
+        return False
+
+
 def _unique_fields(pairs):
     result = {}
     for key, value in pairs:
@@ -277,6 +345,12 @@ class SyntheticResourceSource:
                     intent_sha256 TEXT NOT NULL,
                     receipt_json TEXT NOT NULL,
                     receipt_sha256 TEXT NOT NULL
+                )""")
+                db.execute("""CREATE TABLE denied_intents (
+                    operation_id TEXT PRIMARY KEY,
+                    intent_sha256 TEXT NOT NULL,
+                    signed_fence_json TEXT NOT NULL,
+                    fence_sha256 TEXT NOT NULL
                 )""")
                 db.execute("INSERT INTO resource VALUES (1,2,0,?,?)",
                            (ZERO, public_fingerprint(signer.public_key())))
@@ -357,7 +431,96 @@ class SyntheticResourceSource:
             previous = sha
         if head != previous:
             raise UnsafeSourceState("source head is not last committed receipt")
+        # A stale losing worker must not escape its original declined
+        # attempt by resubmitting the SAME operation with a newly
+        # observed source head. Denials are independently signed by
+        # this disposable SOURCE key, not by the worker/caller.
+        fences = db.execute(
+            "SELECT operation_id,intent_sha256,signed_fence_json,fence_sha256 "
+            "FROM denied_intents ORDER BY operation_id").fetchall()
+        if len(fences) > MAX_FENCES:
+            raise UnsafeSourceState("too many stale attempt fences")
+        committed = {record[1] for record in rows}
+        all_heads = [ZERO] + [record[4] for record in rows]
+        for op, intent, serialized, sha in fences:
+            if (not isinstance(serialized, str) or len(serialized) > 4096
+                    or not isinstance(op, str) or OP_RE.fullmatch(op) is None
+                    or op in committed or not isinstance(intent, str)
+                    or SHA_RE.fullmatch(intent) is None):
+                raise UnsafeSourceState("unsafe source denial record")
+            try:
+                signed = json.loads(
+                    serialized, object_pairs_hook=_unique_fields)
+                if serialized != _json_bytes(signed).decode("ascii"):
+                    raise UnsafeSourceState("noncanonical source fence")
+                if (not isinstance(signed, dict)
+                        or set(signed) != {"algorithm","payload","signature"}
+                        or signed["algorithm"] != "Ed25519"
+                        or _digest(signed) != sha):
+                    raise UnsafeSourceState("source fence digest mismatch")
+                payload = signed["payload"]
+                if (not isinstance(payload, dict)
+                        or set(payload) != {
+                            "schema","kind","source_id","source_pin",
+                            "operation_id","intent_sha256",
+                            "prior_record","prior_head",
+                            "observed_record","observed_head",
+                            "retry_authorized","agent_dispatch_authorized",
+                            "provider_requests_forwarded"}
+                        or type(payload["schema"]) is not int
+                        or payload["schema"] != 1
+                        or payload["kind"] != "synthetic_source_stale_attempt_denied"
+                        or payload["source_id"] != SOURCE_ID
+                        or payload["source_pin"] != self.pin
+                        or payload["operation_id"] != op
+                        or payload["intent_sha256"] != intent
+                        or type(payload["prior_record"]) is not int
+                        or type(payload["observed_record"]) is not int
+                        or not 0 <= payload["prior_record"] < payload["observed_record"] <= count
+                        or payload["prior_head"] != all_heads[payload["prior_record"]]
+                        or payload["observed_head"] != all_heads[payload["observed_record"]]
+                        or payload["retry_authorized"] is not False
+                        or payload["agent_dispatch_authorized"] is not False
+                        or type(payload["provider_requests_forwarded"]) is not int
+                        or payload["provider_requests_forwarded"] != 0):
+                    raise UnsafeSourceState("unsafe signed stale attempt fence")
+                self.signer.public_key().verify(
+                    _decode(signed["signature"]),
+                    FENCE_DOMAIN + _json_bytes(payload))
+            except (InvalidSignature, ValueError, KeyError,
+                    AttributeError, TypeError, UnicodeError) as exc:
+                raise UnsafeSourceState("source stale attempt fence untrusted") from exc
         return count, head, balance, rows
+
+    def _persist_stale_fence(self, db, *, operation_id: str,
+                             intent_sha256: str,
+                             prior: tuple[int,str],
+                             observed: tuple[int,str]):
+        # Called strictly inside the existing source BEGIN IMMEDIATE
+        # transaction after full signature/ledger validation.
+        if db.execute("SELECT count(*) FROM denied_intents").fetchone()[0] >= MAX_FENCES:
+            raise UnsafeSourceState("stale attempt fence capacity exhausted")
+        payload = {
+            "schema": 1,
+            "kind": "synthetic_source_stale_attempt_denied",
+            "source_id": SOURCE_ID,
+            "source_pin": self.pin,
+            "operation_id": operation_id,
+            "intent_sha256": intent_sha256,
+            "prior_record": prior[0], "prior_head": prior[1],
+            "observed_record": observed[0], "observed_head": observed[1],
+            "retry_authorized": False,
+            "agent_dispatch_authorized": False,
+            "provider_requests_forwarded": 0,
+        }
+        signed = {
+            "algorithm": "Ed25519", "payload": payload,
+            "signature": _encode(self.signer.sign(
+                FENCE_DOMAIN + _json_bytes(payload))),
+        }
+        canonical = _json_bytes(signed).decode("ascii")
+        db.execute("INSERT INTO denied_intents VALUES (?,?,?,?)",
+                   (operation_id, intent_sha256, canonical, _digest(signed)))
 
     def commit(self, *, operation_id: str, intent_sha256: str,
                trusted_head: tuple[int, str]) -> dict:
@@ -372,14 +535,37 @@ class SyntheticResourceSource:
         db = self._open()
         try:
             db.execute("BEGIN IMMEDIATE")
-            count, head, balance, _rows = self._inspect_state(db)
-            if (trusted_head != (count, head)
-                    or balance <= 0 or count >= MAX_RECORDS):
-                raise UnsafeSourceState("stale, replayed or exhausted source debit")
+            count, head, balance, rows = self._inspect_state(db)
+            # Committed or already denied operations are permanently
+            # unavailable in this local source image. A newer caller-
+            # supplied head cannot "rebase" a rejected operation.
             if db.execute(
                     "SELECT 1 FROM debits WHERE operation_id=?",
                     (operation_id,)).fetchone():
                 raise UnsafeSourceState("already committed source operation")
+            if db.execute(
+                    "SELECT 1 FROM denied_intents WHERE operation_id=?",
+                    (operation_id,)).fetchone():
+                raise UnsafeSourceState("synthetic stale operation permanently fenced")
+            if trusted_head != (count, head):
+                # Record an irreversible-by-local-policy DENIAL only for
+                # an actually valid old prefix that lost a source race.
+                # Unknown/future/forged heads never create a trust record.
+                prior_n, prior_sha = trusted_head
+                known = [ZERO] + [row[4] for row in rows]
+                if (0 <= prior_n < count
+                        and prior_sha == known[prior_n]):
+                    self._persist_stale_fence(
+                        db, operation_id=operation_id,
+                        intent_sha256=intent_sha256,
+                        prior=trusted_head, observed=(count,head))
+                    self._inspect_state(db)
+                    db.execute("COMMIT")
+                    raise UnsafeSourceState(
+                        "stale source head: losing operation fenced")
+                raise UnsafeSourceState("untrusted/stale source head")
+            if balance <= 0 or count >= MAX_RECORDS:
+                raise UnsafeSourceState("source synthetic balance exhausted")
             before = _state_digest(balance, count, head)
             after = _state_digest(balance - 1, count + 1, head)
             payload = {
@@ -486,6 +672,58 @@ class SyntheticResourceSource:
         finally:
             db.close()
 
+    def inspect_stale_denial(
+            self, *, operation_id: str, intent_sha256: str,
+            trusted_prior_head: tuple[int,str],
+            trusted_current_head: tuple[int,str]) -> dict:
+        """Read-only verification of a source-local stale-attempt fence.
+
+        An absent fence is NO assurance that a resource debit is safe
+        to retry. This never modifies DB or calls provider/agent code.
+        """
+        if (not isinstance(operation_id,str)
+                or OP_RE.fullmatch(operation_id) is None
+                or not isinstance(intent_sha256,str)
+                or SHA_RE.fullmatch(intent_sha256) is None):
+            raise UnsafeSourceState("invalid fenced operation binding")
+        db=self._open()
+        try:
+            db.execute("BEGIN")
+            count,head,balance,rows=self._inspect_state(db)
+            if (type(trusted_current_head) is not tuple
+                    or trusted_current_head != (count,head)):
+                raise UnsafeSourceState("missing protected source high-water")
+            record=db.execute(
+                "SELECT signed_fence_json FROM denied_intents "
+                "WHERE operation_id=? AND intent_sha256=?",
+                (operation_id,intent_sha256)).fetchone()
+            if not record:
+                raise UnsafeSourceState("no source signed stale-operation denial")
+            envelope=json.loads(record[0],object_pairs_hook=_unique_fields)
+            if not verify_stale_source_fence(
+                    envelope, source_public_key=self.signer.public_key(),
+                    expected_source_pin=self.pin,
+                    expected_operation=operation_id,
+                    expected_intent_sha256=intent_sha256,
+                    expected_prior_head=trusted_prior_head,
+                    expected_observed_head=(
+                        envelope["payload"]["observed_record"],
+                        envelope["payload"]["observed_head"])):
+                raise UnsafeSourceState("untrusted source attempt denial")
+            db.execute("COMMIT")
+            return {
+                "schema":1,"mode":"synthetic_stale_source_denial_read_only",
+                "head":[count,head],"balance":balance,
+                "signed_stale_attempt_fence":envelope,
+                "automatic_retry_authorized":False,
+                "agent_dispatch_authorized":False,
+                "model_egress_authorized":False,
+                "provider_requests_forwarded":0,
+                "decision":"HOLD",
+            }
+        finally:
+            db.close()
+
     def inspect(self, *, trusted_head: tuple[int, str]) -> dict:
         db = self._open()
         try:
@@ -513,7 +751,7 @@ def _cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument(
-        "--command", choices=("bootstrap", "commit", "inspect", "recover"),
+        "--command", choices=("bootstrap", "commit", "inspect", "recover", "fence"),
         required=True)
     parser.add_argument("--research-fault",
                         choices=("none", "crash-before-source-commit",
@@ -564,6 +802,15 @@ def _cli() -> int:
                     operation_id=request["operation_id"],
                     intent_sha256=request["intent_sha256"],
                     trusted_prior_head=tuple(request["trusted_prior_head"]))
+            elif args.command == "fence":
+                if set(request) != {"operation_id","intent_sha256",
+                                   "trusted_prior_head","trusted_current_head"}:
+                    raise UnsafeSourceState("invalid read-only stale denial scope")
+                result = source.inspect_stale_denial(
+                    operation_id=request["operation_id"],
+                    intent_sha256=request["intent_sha256"],
+                    trusted_prior_head=tuple(request["trusted_prior_head"]),
+                    trusted_current_head=tuple(request["trusted_current_head"]))
             else:
                 if set(request) != {"trusted_head"}:
                     raise UnsafeSourceState("read-only inspect request only")

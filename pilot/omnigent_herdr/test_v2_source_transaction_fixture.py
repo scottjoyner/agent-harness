@@ -21,6 +21,7 @@ from v2_outbox_publication import worker_publish
 from v2_source_transaction_fixture import (
     SyntheticResourceSource, UnsafeSourceState, _state_digest,
     _unique_fields, verify_source_receipt,
+    verify_stale_source_fence,
     verify_source_corresponds_to_signed_worker_intent,
 )
 
@@ -331,6 +332,190 @@ class SourceTransactionTests(unittest.TestCase):
                            intent=INTENT1, head=tuple(first["head"]))
         self.assertEqual(self.reopen().inspect(
             trusted_head=tuple(first["head"]))["balance"], 1)
+
+    def _signed_denial_after_stale_head(self):
+        first=self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2, intent=INTENT2,
+                           head=(0,ZERO))
+        fence=self.reopen().inspect_stale_denial(
+            operation_id=OP2,intent_sha256=INTENT2,
+            trusted_prior_head=(0,ZERO),
+            trusted_current_head=tuple(first["head"]))
+        return first,fence
+
+    def test_stale_loser_gets_a_signed_persistent_denial(self):
+        first, result=self._signed_denial_after_stale_head()
+        self.assertEqual(result["balance"],1)
+        self.assertFalse(result["automatic_retry_authorized"])
+        self.assertFalse(result["agent_dispatch_authorized"])
+        self.assertTrue(verify_stale_source_fence(
+            result["signed_stale_attempt_fence"],
+            source_public_key=self.source.signer.public_key(),
+            expected_source_pin=self.pin,expected_operation=OP2,
+            expected_intent_sha256=INTENT2,
+            expected_prior_head=(0,ZERO),
+            expected_observed_head=tuple(first["head"])))
+        with sqlite3.connect(self.source.dbpath) as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM denied_intents").fetchone()[0],1)
+            self.assertEqual(db.execute(
+                "SELECT balance FROM resource").fetchone()[0],1)
+
+    def test_stale_loser_cannot_rebase_after_winner_advances(self):
+        first,_=self._signed_denial_after_stale_head()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2,intent=INTENT2,
+                           head=tuple(first["head"]))
+        snap=self.reopen().inspect(trusted_head=tuple(first["head"]))
+        self.assertEqual(snap["balance"],1)
+        self.assertEqual(snap["head"],first["head"])
+
+    def test_signed_stale_fence_survives_newer_unrelated_debit(self):
+        first,fence=self._signed_denial_after_stale_head()
+        second=self.committed(
+            operation_id="3"*32,
+            intent=hashlib.sha256(b"distinct-second-debit").hexdigest(),
+            head=tuple(first["head"]))
+        self.assertEqual(second["balance"],0)
+        verified=self.reopen().inspect_stale_denial(
+            operation_id=OP2,intent_sha256=INTENT2,
+            trusted_prior_head=(0,ZERO),
+            trusted_current_head=tuple(second["head"]))
+        self.assertEqual(verified["signed_stale_attempt_fence"],
+                         fence["signed_stale_attempt_fence"])
+        self.assertEqual(verified["balance"],0)
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2, intent=INTENT2,
+                           head=tuple(second["head"]))
+
+    def test_wrong_stale_fence_root_or_head_denied(self):
+        first,_=self._signed_denial_after_stale_head()
+        for changed in (
+            {"operation_id":"f"*32},
+            {"intent_sha256":"f"*64},
+            {"trusted_prior_head":(0,"f"*64)},
+            {"trusted_current_head":(0,ZERO)},
+        ):
+            with self.subTest(changed=changed):
+                kwargs=dict(
+                    operation_id=OP2,intent_sha256=INTENT2,
+                    trusted_prior_head=(0,ZERO),
+                    trusted_current_head=tuple(first["head"]))
+                kwargs.update(changed)
+                with self.assertRaises(UnsafeSourceState):
+                    self.reopen().inspect_stale_denial(**kwargs)
+
+    def test_wrong_key_wrong_source_fence_signature_rejected(self):
+        first,denial=self._signed_denial_after_stale_head()
+        args=dict(
+            source_public_key=self.source.signer.public_key(),
+            expected_source_pin=self.pin,expected_operation=OP2,
+            expected_intent_sha256=INTENT2,
+            expected_prior_head=(0,ZERO),
+            expected_observed_head=tuple(first["head"]))
+        signed=denial["signed_stale_attempt_fence"]
+        for changed in (
+            {"source_public_key":Ed25519PrivateKey.generate().public_key()},
+            {"expected_source_pin":"f"*64},
+            {"expected_operation":OP1},
+            {"expected_prior_head":(0,"f"*64)},
+        ):
+            with self.subTest(changed=list(changed)):
+                self.assertFalse(verify_stale_source_fence(
+                    signed,**{**args,**changed}))
+        altered=deepcopy(signed)
+        altered["payload"]["retry_authorized"]=True
+        self.assertFalse(verify_stale_source_fence(altered,**args))
+        altered=deepcopy(signed)
+        altered["signature"]="AAAA"+altered["signature"][4:]
+        self.assertFalse(verify_stale_source_fence(altered,**args))
+
+    def test_tampered_persisted_fence_is_not_accepted_on_reopen(self):
+        first,_=self._signed_denial_after_stale_head()
+        with sqlite3.connect(self.source.dbpath) as db:
+            db.execute("UPDATE denied_intents SET signed_fence_json='{}'")
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect(trusted_head=tuple(first["head"]))
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id="3"*32,intent=INTENT2,
+                           head=tuple(first["head"]))
+
+    def test_unknown_head_does_not_create_a_signed_denial(self):
+        first=self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2,intent=INTENT2,
+                           head=(0,"f"*64))
+        with sqlite3.connect(self.source.dbpath) as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM denied_intents").fetchone()[0],0)
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect_stale_denial(
+                operation_id=OP2,intent_sha256=INTENT2,
+                trusted_prior_head=(0,"f"*64),
+                trusted_current_head=tuple(first["head"]))
+
+    def test_same_committed_operation_does_not_generate_stale_denial(self):
+        first=self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP1,intent=INTENT2,
+                           head=(0,ZERO))
+        with sqlite3.connect(self.source.dbpath) as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM denied_intents").fetchone()[0],0)
+
+    def test_local_denial_image_rollback_still_possible_with_old_head(self):
+        first=self.committed()
+        snapshot=self.root/"old-before-fence.sqlite3"
+        shutil.copy2(self.source.dbpath,snapshot)
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2,intent=INTENT2,head=(0,ZERO))
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP2,intent=INTENT2,
+                           head=tuple(first["head"]))
+        shutil.copy2(snapshot,self.source.dbpath)
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().inspect_stale_denial(
+                operation_id=OP2,intent_sha256=INTENT2,
+                trusted_prior_head=(0,ZERO),
+                trusted_current_head=tuple(first["head"]))
+        # Required NO-GO counterexample: local rollback + no independent
+        # retained signed fence allows the previously denied operation.
+        committed=self.committed(operation_id=OP2,intent=INTENT2,
+                                 head=tuple(first["head"]))
+        self.assertEqual(committed["balance"],0)
+
+    def test_parallel_distinct_op_race_persists_one_signed_denial(self):
+        barrier=threading.Barrier(2)
+        responses=[]
+        guard=threading.Lock()
+        def send(op,intent):
+            barrier.wait(timeout=8)
+            try:
+                result=self.committed(operation_id=op,intent=intent)
+                ok=True
+            except UnsafeSourceState:
+                result=None
+                ok=False
+            with guard: responses.append((op,intent,ok,result))
+        ths=[threading.Thread(target=send,args=x) for x in (
+            (OP1,INTENT1),(OP2,INTENT2))]
+        for t in ths:t.start()
+        for t in ths:t.join(timeout=8)
+        self.assertEqual(len(responses),2)
+        winning=[r for r in responses if r[2]]
+        losing=[r for r in responses if not r[2]]
+        self.assertEqual(len(winning),1)
+        self.assertEqual(len(losing),1)
+        head=tuple(winning[0][3]["head"])
+        op,intent,_,_=losing[0]
+        denial=self.reopen().inspect_stale_denial(
+            operation_id=op,intent_sha256=intent,
+            trusted_prior_head=(0,ZERO),trusted_current_head=head)
+        self.assertFalse(denial["automatic_retry_authorized"])
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=op,intent=intent,head=head)
+        self.assertEqual(self.reopen().inspect(trusted_head=head)["balance"],1)
 
     def test_cross_signed_worker_intent_matches_resource_operation(self):
         worker = Ed25519PrivateKey.generate()

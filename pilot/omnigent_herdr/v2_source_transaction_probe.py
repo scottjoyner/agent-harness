@@ -31,6 +31,7 @@ from observer_checkpoint import ZERO, public_fingerprint
 from v2_outbox_publication import worker_publish
 from v2_source_transaction_fixture import (
     _state_digest, verify_source_receipt,
+    verify_stale_source_fence,
     verify_source_corresponds_to_signed_worker_intent,
 )
 from v2_cross_host_uncertainty import classify_source_recovery
@@ -44,6 +45,7 @@ ROOT_RE = re.compile(
 WORKTREE = hashlib.sha256(b"source-physical-disposable-synthetic").hexdigest()
 OP1 = "1"*32
 OP2 = "2"*32
+STALE_OP = "e"*32
 TRUE = (
     "source_private_key_on_remote_only",
     "source_sqlite_debit_committed",
@@ -52,6 +54,8 @@ TRUE = (
     "source_readback_after_process_restart",
     "duplicate_operation_denied",
     "duplicate_intent_denied_by_stale_source_head",
+    "stale_source_attempt_signed_and_persisted",
+    "stale_attempt_rebase_refused",
     "worker_publication_forgery_denied",
     "wrong_source_key_denied",
     "source_receipt_mutation_denied",
@@ -118,7 +122,7 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
             observer_pin = public_fingerprint(observer.public_key())
 
             def remote_source(command: str, message: dict, *, fault="none"):
-                if command not in ("bootstrap", "commit", "inspect", "recover"):
+                if command not in ("bootstrap", "commit", "inspect", "recover", "fence"):
                     raise RuntimeError("forbidden source operation")
                 if (fault not in ("none", "crash-before-source-commit",
                                   "crash-after-source-commit")
@@ -499,11 +503,33 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                 "operation_id": OP1, "intent_sha256": source_intent,
                 "trusted_head": list(head1)})
             record["duplicate_operation_denied"] = duplicate_rc == 2
+            stale_intent = hashlib.sha256(b"original-stale-test").hexdigest()
             stale_rc, _ = remote_source("commit", {
-                "operation_id": OP2,
-                "intent_sha256": hashlib.sha256(b"second-test").hexdigest(),
+                "operation_id": STALE_OP,
+                "intent_sha256": stale_intent,
                 "trusted_head": [0, ZERO]})
             record["duplicate_intent_denied_by_stale_source_head"] = stale_rc == 2
+            fence_rc, fence_reply = remote_source("fence", {
+                "operation_id": STALE_OP,
+                "intent_sha256": stale_intent,
+                "trusted_prior_head": [0, ZERO],
+                "trusted_current_head": list(head1)})
+            record["stale_source_attempt_signed_and_persisted"] = (
+                fence_rc == 0
+                and fence_reply.get("automatic_retry_authorized") is False
+                and verify_stale_source_fence(
+                    fence_reply.get("signed_stale_attempt_fence"),
+                    source_public_key=source_pub,
+                    expected_source_pin=source_pin,
+                    expected_operation=STALE_OP,
+                    expected_intent_sha256=stale_intent,
+                    expected_prior_head=(0,ZERO),
+                    expected_observed_head=head1))
+            rebase_rc, _ = remote_source("commit", {
+                "operation_id": STALE_OP,
+                "intent_sha256": stale_intent,
+                "trusted_head": list(head1)})
+            record["stale_attempt_rebase_refused"] = rebase_rc == 2
             mutated_worker = deepcopy(publication)
             mutated_worker["payload"]["outbox_event"]["operation_id"] = OP2
             record["worker_publication_forgery_denied"] = (
