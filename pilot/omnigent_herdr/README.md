@@ -542,3 +542,28 @@ anchor is still accepted**. The identity keys, external monotonic
 high-water and source-attested worker transactions are NOT separately
 custodied or verified; the pilot continues to forbid real agent
 dispatch, model egress or any production deployment.
+
+
+## Physically off-host signed V2 inbox stage witness (2026-10-20)
+
+See [V2_OFFHOST_MARKER_WITNESS_HANDOFF.md](V2_OFFHOST_MARKER_WITNESS_HANDOFF.md).
+A research-only `v2_offhost_marker_witness.py` verifies observer-signed
+V2 inbox stage markers and records monotonic transitions in a private
+JSONL journal. It requires exact latest anchors and refuses stage
+skips, forged signatures, stale appenders and changed signed heads.
+
+Fleet Commander exercised the observer on x1-370 with the journal on
+Destroyer using new short-lived, strict-known-host SSH processes for
+each stage. An **actual restored older x1 SQLite image** was rejected
+when compared with Destroyer's still-newer witness. A rolled-back
+witness log was also denied against the retained newer anchor;
+the valid older witness **plus older anchor** rollback vulnerability
+was deliberately reproduced. The entire Destroyer scratch folder
+was cleaned after testing.
+
+**This is physically separated research evidence only.** Observer
+public keys and heads remain controlled by the same operator. The
+witness has no independently administered signer, source-attested
+transaction ID or monotonic immutable custody. It does not affect
+Lenovo's separate 15-source same-host HOLD decision and enables no
+agent dispatch, inference, or production deployment.

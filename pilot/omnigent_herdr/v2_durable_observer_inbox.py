@@ -422,6 +422,17 @@ class SyntheticV2DurableObserverInbox:
                 "decision": "HOLD",
             }
 
+    def export_signed_marker(self, *, trusted_anchor: tuple[int, str]) -> dict:
+        """Export only a validated signed observer marker, never signing keys.
+
+        The caller MUST provide the current externally held exact head.
+        This is suitable for a research witness and does not by itself
+        prove the holder's administrative independence or source authority.
+        """
+        with self._transaction(write=False) as (_, (mark, _pub, _ack, _delivery)):
+            self._check_anchor(mark, trusted_anchor)
+            return mark
+
     def quarantine_unverified(
             self, *, claimed_publication: object,
             expected_operation_id: str,

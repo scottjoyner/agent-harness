@@ -155,3 +155,19 @@ independent review are separate admission gates.
 **No real Herdr/Omnigent dispatch, provider traffic, production DB,
 real coding repository writes, protected merge, security-policy
 changes, public tunnel or existing-workload termination.**
+
+
+## Follow-on: signed stage markers witnessed on another host
+
+`v2_offhost_marker_witness.py` now validates the V2 observer inbox's
+signed stage markers in a separate, bounded fsync'd JSONL file.
+A Fleet Commander x1-370↔Destroyer test proved that a real restored
+older observer SQLite image disagrees with a separately retained,
+newer physical witness head. Stale/forked stages fail, as do restored
+old witness logs paired with a *retained newer anchor*.
+
+**No independent custody or immutable high-water:** the old witness
+log still succeeds with its old anchor, and the same fleet
+administrator controls both physical machines. This remains a
+research experiment, outside the 15-source Lenovo admission receipt.
+See [V2_OFFHOST_MARKER_WITNESS_HANDOFF.md](V2_OFFHOST_MARKER_WITNESS_HANDOFF.md).
