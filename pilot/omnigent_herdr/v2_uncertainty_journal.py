@@ -374,6 +374,52 @@ class SyntheticWorkerUncertaintyJournal:
         finally:
             db.close()
 
+    def reconcile_lost_observation_reply(
+            self, *, source_reply: object,
+            expected_context_sha256: str,
+            trusted_prior_journal_head: tuple[int, str]) -> dict:
+        """Strict, read-only check for a lost journal append ACK.
+
+        Caller supplies the *original exact observation* and separately
+        retained prior journal head. A successful result proves only that
+        this ONE observation follows that head in the current local SQLite
+        image. It does not create or reissue any debit/lease/agent work.
+        If the write never committed, evidence is missing: caller HOLDs,
+        rather than automatically retrying a local or remote write.
+        """
+        db = self._connect()
+        try:
+            db.execute("BEGIN")
+            ctx, publication, args, latest, status = self._validate(
+                db, expected_context_sha256)
+            if (not isinstance(trusted_prior_journal_head, tuple)
+                    or len(trusted_prior_journal_head) != 2
+                    or type(trusted_prior_journal_head[0]) is not int
+                    or not isinstance(trusted_prior_journal_head[1], str)
+                    or SHA_RE.fullmatch(trusted_prior_journal_head[1]) is None
+                    or latest[0] != trusted_prior_journal_head[0] + 1
+                    or not 1 <= latest[0] <= MAX_EVENTS):
+                raise UnsafeUncertaintyJournal(
+                    "lost-reply recovery is not exactly next observation")
+            last = db.execute(
+                "SELECT source_reply_json,previous_sha256 FROM observations "
+                "WHERE ordinal=?", (latest[0],)).fetchone()
+            if (not last or last[1] != trusted_prior_journal_head[1]
+                    or _load(last[0]) != {"reply": source_reply}):
+                raise UnsafeUncertaintyJournal(
+                    "source observation differs from persisted signed evidence")
+            # _validate() above recomputes original worker and source
+            # signatures, saved verdicts, and EVERY hash-chain link.
+            # Comparison here binds the replayed source evidence exactly.
+            db.execute("COMMIT")
+            return self._response(
+                {"status": status,
+                 "source_local_commit_verified":
+                     status == "SOURCE_LOCAL_COMMITTED_HOLD"},
+                latest, expected_context_sha256)
+        finally:
+            db.close()
+
     def inspect(self, *, expected_context_sha256: str,
                 trusted_journal_head: tuple[int, str]) -> dict:
         """Exact-head readback from NEW process. Always denies dispatch."""
@@ -410,31 +456,69 @@ class SyntheticWorkerUncertaintyJournal:
 
 
 def _cli() -> int:
-    """Read-only, fail-closed one-shot recovery readback for process trials."""
+    """One-shot scratch-only journal, with controlled process exit windows."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--command", choices=("inspect",), required=True)
+    parser.add_argument("--command", choices=("inspect", "observe", "reconcile"),
+                        required=True)
     parser.add_argument("--context-sha256", required=True)
     parser.add_argument("--head", required=True)
+    parser.add_argument(
+        "--research-fault",
+        choices=("none", "crash-before-journal-commit",
+                 "crash-after-journal-commit"),
+        default="none",
+        help="Fault applies ONLY to a disposable journal observe process.")
     args = parser.parse_args()
     try:
-        bits = args.head.split(":")
-        if (len(bits) != 2 or not re.fullmatch(r"[0-4]", bits[0])
-                or SHA_RE.fullmatch(bits[1]) is None):
-            raise UnsafeUncertaintyJournal("invalid caller-held journal head")
+        parts = args.head.split(":")
+        if (len(parts) != 2 or not re.fullmatch(r"[0-4]", parts[0])
+                or SHA_RE.fullmatch(parts[1]) is None):
+            raise UnsafeUncertaintyJournal("invalid pinned journal head")
+        head = (int(parts[0]), parts[1])
+        if (args.research_fault != "none" and args.command != "observe"):
+            raise UnsafeUncertaintyJournal("fault flag denied for readback")
         journal = SyntheticWorkerUncertaintyJournal(args.root)
-        value = journal.inspect(
-            expected_context_sha256=args.context_sha256,
-            trusted_journal_head=(int(bits[0]), bits[1]))
-        print(json.dumps(value, sort_keys=True))
+        if args.command == "inspect":
+            result = journal.inspect(
+                expected_context_sha256=args.context_sha256,
+                trusted_journal_head=head)
+        else:
+            raw = sys.stdin.buffer.readline(MAX_JSON + 1)
+            if not raw or len(raw) > MAX_JSON:
+                raise UnsafeUncertaintyJournal(
+                    "missing or oversized journal observation")
+            request = json.loads(raw, object_pairs_hook=_unique)
+            if not isinstance(request, dict) or set(request) != {"source_reply"}:
+                raise UnsafeUncertaintyJournal("unexpected journal observation")
+            reply = request["source_reply"]
+            if args.command == "reconcile":
+                result = journal.reconcile_lost_observation_reply(
+                    source_reply=reply,
+                    expected_context_sha256=args.context_sha256,
+                    trusted_prior_journal_head=head)
+            else:
+                if args.research_fault == "crash-before-journal-commit":
+                    # Exit only THIS authorized disposable CLI process,
+                    # before performing any worker journal write.
+                    os._exit(96)
+                result = journal.observe(
+                    reply, expected_context_sha256=args.context_sha256,
+                    trusted_prior_journal_head=head)
+                if args.research_fault == "crash-after-journal-commit":
+                    # Local SQLite commit already returned. Deliberately
+                    # suppress the ACK to exercise read-only reconciliation.
+                    os._exit(97)
+        print(json.dumps(result, sort_keys=True))
         return 0
     except (UnsafeUncertaintyJournal, sqlite3.Error, OSError,
-            ValueError, TypeError, KeyError, AttributeError, UnicodeError):
+            ValueError, TypeError, KeyError, AttributeError,
+            UnicodeError, OverflowError):
         print(json.dumps({
             **BASE, "mode": "synthetic_v2_durable_uncertainty_journal",
             "status": "QUARANTINED_HOLD",
             "source_local_commit_verified": False,
-            "error": "research journal readback denied",
+            "error": "research journal operation denied",
         }, sort_keys=True))
         return 2
 

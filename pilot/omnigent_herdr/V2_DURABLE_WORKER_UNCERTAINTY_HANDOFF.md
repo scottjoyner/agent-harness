@@ -167,3 +167,21 @@ and no unrelated process terminations occurred.
 
 **NO DEPLOY / NO MERGE / NO LIVE AGENT / NO MODEL
 FORWARDING / NO AUTO RETRY OR REFUND.**
+
+
+## Follow-on: lost acknowledgment from the worker journal itself
+
+`v2_uncertainty_journal.py` now accepts a scoped, **read-only**
+`reconcile` when an `observe` operation could have committed
+but its ACK was lost. The caller must supply the original source
+response, exact previous journal head and immutable signed-worker
+genesis context hash. Only the immediately following stored
+observation may be recovered, after complete signature/hash-chain
+revalidation. A missing row or mismatch is unresolved HOLD, not
+permission to retry or refund.
+
+Both before-commit and after-commit **disposable process exits**
+were injected in Fleet Commander physical x1→Destroyer research.
+No source debit or worker lease was reissued. Same-admin journal
+rollback and distributed transaction atomicity remain unproven.
+See [V2_LOST_WORKER_JOURNAL_ACK_HANDOFF.md](V2_LOST_WORKER_JOURNAL_ACK_HANDOFF.md).

@@ -74,6 +74,11 @@ TRUE = (
     "durable_worker_signed_evidence_after_source_recovery",
     "worker_journal_fresh_process_readback",
     "worker_journal_denies_unpinned_old_head",
+    "journal_crash_before_append_left_existing_head",
+    "journal_crash_after_append_returned_no_reply",
+    "journal_lost_ack_read_only_reconciled",
+    "journal_duplicate_append_after_lost_ack_denied",
+    "journal_reconcile_did_not_redebit_source",
 )
 FALSE = (
     "independently_custodied_source_verified",
@@ -256,6 +261,39 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                     raise RuntimeError("worker recovery journal subprocess failed")
                 return r.returncode, json.loads(r.stdout)
 
+            def journal_one_shot(command, head, *, reply=None, fault="none"):
+                if command not in ("observe", "reconcile", "inspect"):
+                    raise RuntimeError("unexpected journal fixture action")
+                if (fault not in ("none", "crash-before-journal-commit",
+                                  "crash-after-journal-commit")
+                        or (fault != "none" and command != "observe")):
+                    raise RuntimeError("bad disposable journal fault")
+                argv = [
+                    "python3", "-B",
+                    str(Path(__file__).with_name("v2_uncertainty_journal.py")),
+                    "--root", journal_dir, "--command", command,
+                    "--context-sha256", jctx_hash,
+                    "--head", str(head[0]) + ":" + head[1],
+                    "--research-fault", fault]
+                r = subprocess.run(
+                    argv,
+                    input=json.dumps({"source_reply": reply}, sort_keys=True)+"\n",
+                    capture_output=True, text=True, timeout=12,
+                    check=False)
+                if r.returncode in (96, 97) and fault != "none":
+                    if r.stdout or r.stderr:
+                        raise RuntimeError("unexpected interrupted worker ACK")
+                    return r.returncode, None
+                if r.returncode not in (0, 2) or len(r.stdout) > 8192:
+                    raise RuntimeError("untrusted worker journal subprocess")
+                data = json.loads(r.stdout)
+                if (not isinstance(data, dict) or data.get("decision") != "HOLD"
+                        or data.get("agent_dispatch_authorized") is not False
+                        or type(data.get("provider_requests_forwarded")) is not int
+                        or data["provider_requests_forwarded"] != 0):
+                    raise RuntimeError("journal fixture returned active grant")
+                return r.returncode, data
+
             stage = "source_fault_injection_preparation"
             recovery_scope = {
                 "worker_publication": publication,
@@ -329,10 +367,52 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
             record["read_only_recovery_proves_committed_source"] = (
                 verdict["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
                 and verdict["source_local_commit_verified"] is True)
-            journal_verified = journal.observe(
-                one, expected_context_sha256=jctx_hash,
-                trusted_prior_journal_head=journal_head)
+            stage = "crash_before_worker_journal_commit"
+            prior_jhead = journal_head
+            before_jrc, before_jreply = journal_one_shot(
+                "observe", prior_jhead, reply=one,
+                fault="crash-before-journal-commit")
+            check_before_rc, check_before_reply = journal_one_shot(
+                "inspect", prior_jhead)
+            record["journal_crash_before_append_left_existing_head"] = (
+                before_jrc == 96 and before_jreply is None
+                and check_before_rc == 0
+                and check_before_reply["journal_head"] == list(prior_jhead)
+                and check_before_reply["status"] == "UNCERTAIN_HOLD")
+
+            stage = "crash_after_worker_journal_commit_before_ack"
+            after_jrc, after_jreply = journal_one_shot(
+                "observe", prior_jhead, reply=one,
+                fault="crash-after-journal-commit")
+            record["journal_crash_after_append_returned_no_reply"] = (
+                after_jrc == 97 and after_jreply is None)
+            stage = "read_only_worker_journal_lost_ack_reconcile"
+            reconciled_rc, journal_verified = journal_one_shot(
+                "reconcile", prior_jhead, reply=one)
+            if reconciled_rc or journal_verified is None:
+                raise RuntimeError(
+                    "signed journal append not recovered after lost ACK")
             journal_head = tuple(journal_verified["journal_head"])
+            record["journal_lost_ack_read_only_reconciled"] = (
+                journal_verified["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
+                and journal_verified["journal_head"][0] == prior_jhead[0]+1
+                and journal_verified["source_local_commit_verified"] is True
+                and journal_verified["automatic_retry_authorized"] is False)
+
+            duplicate_jrc, duplicate_jreply = journal_one_shot(
+                "observe", prior_jhead, reply=one)
+            record["journal_duplicate_append_after_lost_ack_denied"] = (
+                duplicate_jrc == 2 and duplicate_jreply is not None
+                and duplicate_jreply["status"] == "QUARANTINED_HOLD")
+            source_after_jrc, source_after_jreply = remote_source(
+                "inspect", {"trusted_head": list(one["head"])})
+            record["journal_reconcile_did_not_redebit_source"] = (
+                source_after_jrc == 0
+                and source_after_jreply.get("balance") == 1
+                and source_after_jreply.get("receipt") == one["receipt"]
+                and gate.inspect(trusted_anchor=worker_head)[
+                    "event_count"] == 1)
+
             record["durable_worker_signed_evidence_after_source_recovery"] = (
                 journal_verified["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
                 and journal_verified["source_local_commit_verified"] is True

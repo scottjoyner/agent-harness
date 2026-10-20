@@ -725,3 +725,21 @@ source evidence after recovery. Restoring an older local journal
 is rejected only with a newer retained external head;
 **old journal + old head** remains a same-admin rollback attack.
 Separate worker/source SQLite transactions are NOT globally atomic.
+
+
+## Lost worker-journal ACK crash-window recovery (2026-10-20)
+
+See [V2_LOST_WORKER_JOURNAL_ACK_HANDOFF.md](V2_LOST_WORKER_JOURNAL_ACK_HANDOFF.md).
+A new read-only `reconcile_lost_observation_reply` API proves that
+the exact expected source observation is the single next committed
+entry after the caller-held prior journal head, re-verifying the
+original worker/source signatures and complete local hash chain.
+It never appends or retries any worker/resource debit.
+
+The disposable CLI injects **before** and **after** journal-local
+commit one-shot Python-process exits to simulate lost ACKs.
+Missing observations, stale heads and altered source receipts
+remain HOLD; exact committed observations can be reconciled by
+a fresh process without another write. This is process-crash
+testing, not independent custody, host power loss or distributed
+exactly-once authorization. No agent/model work is admitted.
