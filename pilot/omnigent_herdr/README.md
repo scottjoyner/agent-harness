@@ -769,3 +769,23 @@ minted operation ID or rollback of the source DB **and** old
 trusted head remains outside the local fence authority.
 No model, agent, production provider or release admission is
 authorized. Lenovo's 15-source SAME-HOST receipt stays HOLD.
+
+## AssistX / Auto-Router read-only deployment preflight (2026-10-20)
+
+See [ASSISTX_READONLY_DEPLOYMENT_HANDOFF.md](ASSISTX_READONLY_DEPLOYMENT_HANDOFF.md).
+`assistx_operator_probe.py --json` is a one-shot standard-library
+fleet diagnostic staged as an ordinary user; it observes only fixed
+localhost health status codes, running service-name patterns and
+Tailscale Serve forwarding metadata. It cannot authenticate,
+start or terminate an agent, change the router, access a model
+provider or promote a release from HOLD.
+
+Physical results differ by node: Beelink shows live rootless
+AssistX/Auto-Router processes but ports 8000/8088 are not
+reachable from its host namespace; the existing root Serve
+proxy goes to 8081 (404 on /health). On x1-370, localhost
+AssistX/Auto-Router report HTTP 200 and their OpenAPI titles
+identify them; unauthenticated AssistX whoami returns 401.
+Those observations are not proof of independently authorized
+provider admission. Keep the Herdr/Omnigent pilot disconnected
+from production dispatch.
