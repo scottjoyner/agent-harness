@@ -620,3 +620,24 @@ x1 research harness. No independent administrator, immutable external
 high-water, resource-side transaction authority, agent model access,
 admission, or production deployment was established. Lenovo's
 separate 15-source admission receipt remains HOLD.
+
+
+## V2 synthetic custody signing ledger + local revocation (2026-10-20)
+
+See [V2_DURABLE_CUSTODY_LEDGER_HANDOFF.md](V2_DURABLE_CUSTODY_LEDGER_HANDOFF.md).
+Lenovo's disposable research signer now creates an owner-private
+**SQLite checkpoint/signature journal** with immutable-by-local-policy
+four-role public roots, complete signed-receipt re-verification,
+sequential generation/previous-digest checks, strictly advancing
+witness/observer heads, and durable local terminal revocation.
+A repeated `sign` is denied; a lost response uses a separate,
+read-only `readback` with exact generation/heads/scope.
+
+Fleet Commander physically exercised the x1-370→Destroyer→Lenovo
+chain, including an actual earlier SQLite image rollback, a new
+generation after receipt-bound ACK, revocation that persists across
+separate processes, and refusal of a valid new signature after
+revocation. **Old ledger + old head** or **unrevoked old SQLite image**
+are still accepted under shared admin control; this is NOT external
+rollback resistance or independently administered revocation.
+All fixtures are disposable and no real model/agent access is allowed.

@@ -29,7 +29,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 from atomic_synthetic_lease_outbox import AtomicSyntheticLeaseOutbox
 from observer_checkpoint import ZERO, public_fingerprint
 from v2_durable_observer_inbox import SyntheticV2DurableObserverInbox
-from v2_outbox_publication import worker_publish
+from v2_outbox_publication import worker_publish, worker_sign_delivery
 from v2_witness_countersign import verify_witness_receipt
 from v2_custody_checkpoint_contract import (
     checkpoint_digest, verify_research_checkpoint,
@@ -62,6 +62,13 @@ TRUE = (
     "generation_chain_verified",
     "old_checkpoint_with_old_floor_still_accepted",
     "expired_checkpoint_rejected",
+    "lenovo_duplicate_sign_refused",
+    "lenovo_durable_chain_reopened",
+    "lenovo_stale_ledger_rejected_against_newer_head",
+    "lenovo_old_ledger_with_old_head_still_accepted",
+    "lenovo_revocation_persists_across_processes",
+    "lenovo_revocation_blocks_new_valid_signature",
+    "lenovo_revocation_can_be_reverted_by_same_admin",
 )
 FALSE = (
     "independent_custodian_verified",
@@ -162,6 +169,31 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
                 return remote(
                     CUSTODY_HOST, "v2_custody_signer_fixture.py",
                     ["--command", cmd], request)
+
+            def copy_custody_ledger(source: str, target: str):
+                # No arbitrary files or shell: only files created by this
+                # one-shot fixture in the already-validated scratch root.
+                permitted = {
+                    "custody-checkpoints.sqlite3",
+                    "ledger-old.sqlite3",
+                    "ledger-current.sqlite3",
+                    "ledger-unrevoked.sqlite3",
+                    "ledger-revoked.sqlite3",
+                }
+                if source not in permitted or target not in permitted:
+                    raise RuntimeError("unapproved synthetic ledger image")
+                command = [
+                    "ssh", "-o", "BatchMode=yes",
+                    "-o", "StrictHostKeyChecking=yes",
+                    "-o", "ConnectTimeout=6", CUSTODY_HOST,
+                    "cp", "-f", "--",
+                    custody_root + "/" + source,
+                    custody_root + "/" + target,
+                ]
+                checked = subprocess.run(
+                    command, capture_output=True, text=True, timeout=12)
+                if checked.returncode != 0:
+                    raise RuntimeError("disposable Lenovo image copy failed")
 
             phase = "role_bootstrap"
             rc, wb = witness("bootstrap")
@@ -314,12 +346,17 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
                 verify(cp1, receipt1, w1, head1, generation=1,
                        previous=ZERO, expected_digest=cp1_digest,
                        floor=0))
-            # A lost response can be read by re-signing identical validated
-            # test fields from a NEW one-shot process, using the same
-            # disposable Lenovo private key. No resource debit is retried.
-            rc, replay = custodian("sign", request1)
+            # A lost response must use a SEPARATE read-only API. The
+            # original signing command is permanently non-idempotent.
+            rc_repeat, _denied = custodian("sign", request1)
+            rc, replay = custodian("readback", {
+                "generation": 1, "witness_head": list(w1),
+                "observer_head": list(head1), "scope": SCOPE,
+            })
             report["lenovo_signing_key_reopened_same_checkpoint"] = (
-                rc == 0 and replay.get("checkpoint") == cp1)
+                rc_repeat == 2 and rc == 0
+                and replay.get("checkpoint") == cp1
+                and replay.get("checkpoint_sha256") == cp1_digest)
             report["missing_external_anchor_rejected"] = (
                 not verify(cp1, receipt1, w1, head1,
                            generation=1, previous=ZERO,
@@ -369,6 +406,10 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
             request2 = custodian_request(
                 receipt2, w2, head2,
                 generation=2, previous=cp1_digest)
+            # Preserve one valid older image for an actual on-Lenovo
+            # SQLite rollback injection, never from user/production data.
+            copy_custody_ledger(
+                "custody-checkpoints.sqlite3", "ledger-old.sqlite3")
             rc, cp2_response = custodian("sign", request2)
             if rc:
                 raise RuntimeError("valid checkpoint 2 denied")
@@ -388,6 +429,101 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
             report["old_checkpoint_with_old_floor_still_accepted"] = (
                 verify(cp1, receipt1, w1, head1, generation=1,
                        previous=ZERO, expected_digest=cp1_digest, floor=0))
+
+            phase = "durable_ledger_duplicate_and_restart"
+            duplicate_rc, _ = custodian("sign", request2)
+            recover_rc, recovered = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            report["lenovo_duplicate_sign_refused"] = duplicate_rc == 2
+            report["lenovo_durable_chain_reopened"] = (
+                recover_rc == 0
+                and recovered.get("checkpoint_sha256") == cp2_digest
+                and recovered.get("checkpoint") == cp2_response["checkpoint"]
+                and recovered.get("ledger_generation") == 2)
+
+            phase = "actual_ledger_image_rollback"
+            copy_custody_ledger(
+                "custody-checkpoints.sqlite3", "ledger-current.sqlite3")
+            copy_custody_ledger(
+                "ledger-old.sqlite3", "custody-checkpoints.sqlite3")
+            new_head_rc, _ = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            old_head_rc, old_readback = custodian("readback", {
+                "generation": 1, "witness_head": list(w1),
+                "observer_head": list(head1), "scope": SCOPE,
+            })
+            report["lenovo_stale_ledger_rejected_against_newer_head"] = (
+                new_head_rc == 2)
+            report["lenovo_old_ledger_with_old_head_still_accepted"] = (
+                old_head_rc == 0
+                and old_readback.get("checkpoint_sha256") == cp1_digest)
+            copy_custody_ledger(
+                "ledger-current.sqlite3", "custody-checkpoints.sqlite3")
+            resumed_rc, resumed = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            if resumed_rc != 0 or resumed.get("checkpoint_sha256") != cp2_digest:
+                raise RuntimeError("newest research custody ledger failed to recover")
+
+            phase = "local_revocation"
+            copy_custody_ledger(
+                "custody-checkpoints.sqlite3", "ledger-unrevoked.sqlite3")
+            revoke_rc, revoked = custodian("revoke", {
+                "generation": 2, "checkpoint_sha256": cp2_digest})
+            recovered_after_rc, _ = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            report["lenovo_revocation_persists_across_processes"] = (
+                revoke_rc == 0 and revoked.get("locally_revoked") is True
+                and recovered_after_rc == 2)
+
+            # A valid NEW observer/witness stage must remain un-signable
+            # when this local custodian has been revoked.
+            delivery = worker_sign_delivery(
+                signer=worker, publication=publication,
+                observer_ack=ack,
+                observer_public_key=observer.public_key(),
+                trusted_observer_fingerprint=observer_pin,
+                expected_generation=2,
+                previous_checkpoint_sha256=ZERO)
+            head3 = reopen().confirm(
+                delivery=delivery, trusted_anchor=head2)
+            w3, receipt3 = stage(
+                reopen().export_signed_marker(trusted_anchor=head3), w2)
+            request3 = custodian_request(
+                receipt3, w3, head3, generation=3,
+                previous=cp2_digest)
+            denied_rc, _ = custodian("sign", request3)
+            report["lenovo_revocation_blocks_new_valid_signature"] = (
+                denied_rc == 2)
+            # Required negative control: operator can restore old valid
+            # ledger and old claimed trust root to undo the revocation.
+            phase = "revocation_rollback_negative_control"
+            copy_custody_ledger(
+                "custody-checkpoints.sqlite3", "ledger-revoked.sqlite3")
+            copy_custody_ledger(
+                "ledger-unrevoked.sqlite3", "custody-checkpoints.sqlite3")
+            old_recover_rc, old_recover = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            report["lenovo_revocation_can_be_reverted_by_same_admin"] = (
+                old_recover_rc == 0
+                and old_recover.get("checkpoint_sha256") == cp2_digest)
+            copy_custody_ledger(
+                "ledger-revoked.sqlite3", "custody-checkpoints.sqlite3")
+            final_denied_rc, _ = custodian("readback", {
+                "generation": 2, "witness_head": list(w2),
+                "observer_head": list(head2), "scope": SCOPE,
+            })
+            if final_denied_rc != 2:
+                raise RuntimeError("revocation fence not restored after control")
 
             if not all(report[k] is True for k in TRUE):
                 report["errors"].append("incomplete 3-node custody experiment")

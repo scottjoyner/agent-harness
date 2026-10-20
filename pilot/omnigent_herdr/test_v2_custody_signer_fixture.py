@@ -107,12 +107,22 @@ class IsolatedCustodySignerTests(unittest.TestCase):
             expected_checkpoint_sha256=checkpoint_digest(checkpoint),
             trusted_now=1700000020,
             minimum_witness_count=0))
-        again = _execute(self.root, command="sign", request=request)
-        self.assertEqual(signed, again)
+        # A duplicate signing command now fails even when the request
+        # bytes match. Lost-response recovery is a SEPARATE read-only API.
+        from v2_custody_signer_fixture import UnsafeResearchCustodian
+        with self.assertRaises(UnsafeResearchCustodian):
+            _execute(self.root, command="sign", request=request)
+        again = _execute(self.root, command="readback", request={
+            "generation": 1, "witness_head": request["witness_head"],
+            "observer_head": request["observer_head"], "scope": request["scope"],
+        })
+        self.assertEqual(signed["checkpoint"], again["checkpoint"])
+        self.assertEqual(signed["checkpoint_sha256"], again["checkpoint_sha256"])
         changed = deepcopy(request)
         changed["witness_receipt"]["signature"] = "forged"
-        from v2_custody_checkpoint_contract import UnsafeCustodyCheckpoint
-        with self.assertRaises(UnsafeCustodyCheckpoint):
+        # Subsequent signing requests, even forged ones, cannot fork an
+        # already committed generation.
+        with self.assertRaises(UnsafeResearchCustodian):
             _execute(self.root, command="sign", request=changed)
 
     def test_wrong_root_or_symlink_denied(self):

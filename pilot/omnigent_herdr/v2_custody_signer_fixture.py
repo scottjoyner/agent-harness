@@ -15,6 +15,7 @@ import binascii
 import json
 import os
 import re
+import sqlite3
 import stat
 import sys
 from pathlib import Path
@@ -106,10 +107,15 @@ def _pub64(value: object) -> Ed25519PublicKey:
 
 def _execute(root: Path, *, command: str, request: object) -> dict:
     _root_ok(root)
+    # Lazy import keeps this low-level signer safe to use by the ledger,
+    # without an import cycle. All signing/sequence checks are delegated
+    # to this ONE local SQLite journal; no caller-supplied recovery path.
+    from v2_custody_signing_ledger import SyntheticV2CustodyLedger
     if command == "bootstrap":
         if request != {}:
             raise UnsafeResearchCustodian("bootstrap takes no attached claims")
         signer = _load_key(root, create=True)
+        SyntheticV2CustodyLedger(root, signer).initialize()
         pub = signer.public_key()
         return {
             "schema": 1, "mode": "synthetic_v2_custodian_bootstrap",
@@ -121,8 +127,29 @@ def _execute(root: Path, *, command: str, request: object) -> dict:
             "decision": "HOLD", "agent_dispatch_authorized": False,
             "provider_requests_forwarded": 0,
         }
-    if command != "sign" or not isinstance(request, dict):
+    if command not in ("sign", "readback", "revoke") or not isinstance(request, dict):
         raise UnsafeResearchCustodian("unsupported synthetic signer operation")
+    signer = _load_key(root, create=False)
+    ledger = SyntheticV2CustodyLedger(root, signer)
+    if command == "readback":
+        if set(request) != {"generation", "witness_head", "observer_head", "scope"}:
+            raise UnsafeResearchCustodian("unknown readback fields")
+        for name in ("witness_head", "observer_head"):
+            part = request[name]
+            if (not isinstance(part, list) or len(part) != 2
+                    or type(part[0]) is not int or not isinstance(part[1], str)):
+                raise UnsafeResearchCustodian("bad readback scope")
+        return ledger.readback(
+            generation=request["generation"],
+            witness_head=tuple(request["witness_head"]),
+            observer_head=tuple(request["observer_head"]),
+            scope=request["scope"])
+    if command == "revoke":
+        if set(request) != {"generation", "checkpoint_sha256"}:
+            raise UnsafeResearchCustodian("unknown revocation fields")
+        return ledger.revoke(
+            generation=request["generation"],
+            checkpoint_sha256=request["checkpoint_sha256"])
     fields = {
         "witness_receipt", "witness_public_base64",
         "witness_pin", "observer_public_base64",
@@ -138,32 +165,7 @@ def _execute(root: Path, *, command: str, request: object) -> dict:
                 or type(value[0]) is not int
                 or not isinstance(value[1], str)):
             raise UnsafeResearchCustodian("wrong scoped checkpoint head")
-    signer = _load_key(root, create=False)
-    witness_key = _pub64(request["witness_public_base64"])
-    observer_key = _pub64(request["observer_public_base64"])
-    checkpoint = sign_research_checkpoint(
-        custodian_signer=signer,
-        witness_receipt=request["witness_receipt"],
-        trusted_witness_key=witness_key,
-        expected_witness_pin=request["witness_pin"],
-        observer_public_key=observer_key,
-        worker_fingerprint=request["worker_fingerprint"],
-        observer_id=request["observer_id"],
-        worker_id=request["worker_id"],
-        expected_witness_head=tuple(request["witness_head"]),
-        expected_observer_head=tuple(request["observer_head"]),
-        scope=request["scope"],
-        generation=request["generation"],
-        previous_checkpoint_sha256=request["previous_checkpoint_sha256"],
-        issued_at=request["issued_at"],
-        expires_at=request["expires_at"])
-    return {
-        "schema": 1, "mode": "synthetic_v2_custodian_signed_checkpoint",
-        "checkpoint": checkpoint,
-        "checkpoint_sha256": checkpoint_digest(checkpoint),
-        "decision": "HOLD", "agent_dispatch_authorized": False,
-        "provider_requests_forwarded": 0,
-    }
+    return ledger.sign_once(request)
 
 
 def _no_duplicate_fields(items):
@@ -178,7 +180,7 @@ def _no_duplicate_fields(items):
 def _cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", required=True, type=Path)
-    parser.add_argument("--command", choices=("bootstrap", "sign"), required=True)
+    parser.add_argument("--command", choices=("bootstrap", "sign", "readback", "revoke"), required=True)
     args = parser.parse_args()
     try:
         line = sys.stdin.buffer.readline(MAX_REQUEST + 1)
@@ -191,7 +193,7 @@ def _cli() -> int:
         return 0
     except (UnsafeResearchCustodian, UnsafeCustodyCheckpoint,
             OSError, ValueError, TypeError, KeyError, UnicodeError,
-            binascii.Error, json.JSONDecodeError):
+            binascii.Error, sqlite3.Error, json.JSONDecodeError):
         print(json.dumps({
             "decision": "HOLD", "agent_dispatch_authorized": False,
             "provider_requests_forwarded": 0,

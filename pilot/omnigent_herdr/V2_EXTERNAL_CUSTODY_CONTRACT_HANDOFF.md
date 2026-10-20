@@ -165,3 +165,19 @@ requirements and device/sandbox gates are satisfied.
 **No production deployment, PR merge, host-policy change,
 provider request, LLM inference, live agent, production database
 write, or protected user repository modification occurred.**
+
+
+## Follow-on: Lenovo custody signer now has a local durable checkpoint journal
+
+The research-only fourth-role Lenovo signer now persists an exclusive,
+owner-private SQLite chain for checkpoints and locally recorded
+revocation. A duplicate `sign` is denied instead of relying on
+deterministic re-signing. A lost response is recovered using exact-head
+`readback`, with no new signature or V2 debit.
+The complete chain and witness receipts are verified at each reopen.
+
+Actual x1→Destroyer→Lenovo tests include an older image rollback,
+revocation restart and attempted post-revocation signing. **The
+local revocation can still be undone by restoring an older valid
+unrevoked image**; this is not independent authoritative custody.
+See [V2_DURABLE_CUSTODY_LEDGER_HANDOFF.md](V2_DURABLE_CUSTODY_LEDGER_HANDOFF.md).
