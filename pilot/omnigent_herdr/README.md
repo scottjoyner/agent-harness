@@ -499,3 +499,22 @@ The same-host Fleet Commander receipt now checks **14** evidence
 categories. Lenovo's physical report remains `decision=HOLD`;
 all live provider, model, sandbox and runtime admission paths are
 disabled.
+
+
+## V2 signed outbox publication / ACK / delivery fixture (2026-10-20)
+
+See [V2_OUTBOX_PUBLICATION_HANDOFF.md](V2_OUTBOX_PUBLICATION_HANDOFF.md).
+The V2 outbox now supports read-only export of one fully locally
+verified event at a caller-provided exact head. New
+`v2_outbox_publication.py` defines narrowly scoped Ed25519 worker
+publication, observer ACK, and worker delivery records. The observer
+refuses to sign before verifying the exact worker operation/head/state;
+the worker refuses to sign delivery before checking the observer ACK.
+
+Disposable x1-370↔Lenovo physical tests PASS five scenarios: valid
+exchange, missing ACK, tampered publication, tampered ACK and tampered
+delivery. **No live inference, agent dispatch or provider calls.**
+The exchanged public keys are self-introduced over the same SSH
+test session: independent signer custody, durable source authority,
+cross-restart fencing and external high-water are NOT established.
+The 14-source Lenovo same-host admission receipt remains HOLD.

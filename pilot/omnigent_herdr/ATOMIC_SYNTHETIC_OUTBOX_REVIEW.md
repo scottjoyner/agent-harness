@@ -144,3 +144,15 @@ permission to call a real provider.
 **Release decision: DRAFT / NO-MERGE / NO-DEPLOY / NO DISPATCH.**
 No host security settings modified; no processes outside the
 disposable fixture were stopped.
+
+
+## Follow-on (October 20): cross-host V2 signature binding experiment
+
+A bounded x1-370 observer / Lenovo disposable-worker fixture now signs
+one exported V2 outbox head, verifies an operation-bound observer ACK
+and signs a worker delivery receipt. Five physical success/negative
+scenarios passed. This proves scoped signature verification across
+cooperative processes, **not durable publication**: keys and trust
+pins are ephemeral over the same test channel, no outside source
+attestation exists and there is no persistent uncertainty ledger.
+See [V2_OUTBOX_PUBLICATION_HANDOFF.md](V2_OUTBOX_PUBLICATION_HANDOFF.md).

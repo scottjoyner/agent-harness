@@ -168,6 +168,41 @@ class AtomicSyntheticLeaseOutbox(DurableSyntheticLeaseGate):
             tuple(fields[k] for k in CORE_FIELDS) + (record_sha, mac))
         return {**fields, "record_sha256": record_sha, "hmac_sha256": mac}
 
+    def export_head_event(self, *, trusted_anchor: tuple[int, str]) -> dict:
+        """Read back exactly the latest HMAC-verified V2 synthetic debit.
+
+        Caller-supplied head is REQUIRED and must equal the validated DB
+        head.  The HMAC key, token, full request and arbitrary DB bytes
+        are never exposed to the observer.  This is worker SELF-report,
+        not separately attested resource authority.
+        """
+        with self._transaction(write=False) as (db, meta):
+            row = db.execute(
+                "SELECT " + ",".join(CORE_FIELDS)
+                + ",record_sha256,hmac_sha256 FROM atomic_outbox "
+                "ORDER BY record_no DESC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                raise UnsafeLeaseState("no committed synthetic outbox event")
+            fields = dict(zip(
+                CORE_FIELDS + ("record_sha256", "hmac_sha256"), row
+            ))
+            actual = (fields["record_no"], fields["record_sha256"])
+            if (not isinstance(trusted_anchor, tuple)
+                    or len(trusted_anchor) != 2
+                    or type(trusted_anchor[0]) is not int
+                    or trusted_anchor != actual):
+                raise UnsafeLeaseState("missing or stale trusted outbox head")
+            return {
+                "schema": 1,
+                "kind": "synthetic_v2_outbox_head",
+                "outbox_event": {k: fields[k] for k in CORE_FIELDS},
+                "outbox_record_sha256": fields["record_sha256"],
+                "lease_state_sha256": self._state_digest_db(db, meta),
+                "agent_dispatch_authorized": False,
+                "provider_requests_forwarded": 0,
+            }
+
     def inspect(self, *, trusted_anchor: tuple[int, str] | None) -> dict:
         """Non-authorizing outbox read, pinned to a caller-controlled head."""
         with self._transaction(write=False) as (db, meta):
