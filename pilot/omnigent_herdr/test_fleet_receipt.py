@@ -141,6 +141,29 @@ def complete_evidence():
             "used_real_repository": False,
             "errors": [],
         },
+        "v2_observer_inbox_fixture": {
+            "mode": "synthetic_restart_durable_v2_observer_inbox",
+            "worker_v2_atomic_outbox_bound": True,
+            "publication_fence_survives_process_restart": True,
+            "signed_ack_fence_survives_process_restart": True,
+            "lost_ack_cannot_be_reissued": True,
+            "forged_delivery_cannot_clear_fence": True,
+            "valid_delivery_survives_process_restart": True,
+            "stale_anchor_denied": True,
+            "newer_anchor_detects_old_valid_db": True,
+            "old_db_and_old_anchor_still_match": True,
+            "unverified_publication_quarantine_survived_restart": True,
+            "signing_keys_persisted": False,
+            "independent_worker_identity_verified": False,
+            "durable_external_anchor_verified": False,
+            "source_transaction_attested": False,
+            "rollback_resistance_verified": False,
+            "agent_dispatch_authorized": False,
+            "model_egress_authorized": False,
+            "provider_requests_forwarded": 0,
+            "used_real_repository": False,
+            "errors": [],
+        },
     }
     for item in values.values():
         item["observed_host"] = "scott-Lenovo-ideapad-330S-15IKB"
@@ -322,6 +345,43 @@ class ReceiptTests(unittest.TestCase):
         e["atomic_outbox_fixture"]["observed_host"] = "destroyer"
         self.assertFalse(create_receipt(e, timestamp="test")[
             "gate_outcomes"]["atomic_outbox_fixture"])
+
+    def test_v2_observer_inbox_evidence_missing_denied(self):
+        e = complete_evidence()
+        del e["v2_observer_inbox_fixture"]
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["v2_observer_inbox_fixture"])
+
+    def test_v2_observer_inbox_must_exhibit_rollback_vulnerability(self):
+        e = complete_evidence()
+        e["v2_observer_inbox_fixture"]["old_db_and_old_anchor_still_match"] = False
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["v2_observer_inbox_fixture"])
+
+    def test_v2_observer_inbox_forged_authority_rejected(self):
+        for field in (
+            "independent_worker_identity_verified",
+            "durable_external_anchor_verified", "source_transaction_attested",
+            "rollback_resistance_verified", "agent_dispatch_authorized",
+        ):
+            with self.subTest(field=field):
+                e = complete_evidence()
+                e["v2_observer_inbox_fixture"][field] = True
+                self.assertFalse(create_receipt(e, timestamp="test")[
+                    "gate_outcomes"]["v2_observer_inbox_fixture"])
+
+    def test_v2_observer_inbox_must_persist_unverified_quarantine(self):
+        e = complete_evidence()
+        e["v2_observer_inbox_fixture"][
+            "unverified_publication_quarantine_survived_restart"] = False
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["v2_observer_inbox_fixture"])
+
+    def test_v2_observer_inbox_cross_host_rejected(self):
+        e = complete_evidence()
+        e["v2_observer_inbox_fixture"]["observed_host"] = "destroyer"
+        self.assertFalse(create_receipt(e, timestamp="test")[
+            "gate_outcomes"]["v2_observer_inbox_fixture"])
 
     def test_lease_missing_denied(self):
         e = complete_evidence()

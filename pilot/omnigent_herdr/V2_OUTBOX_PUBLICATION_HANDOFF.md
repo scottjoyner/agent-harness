@@ -123,3 +123,15 @@ sandbox/identity/catalog checks to claim admission.
 **No real agents, provider requests, user repositories, production
 deployments, host security-policy changes, existing-workload
 terminations or PR merges occurred in this slice.**
+
+
+## Follow-on: durable observer inbox (2026-10-20)
+
+The observer can now persist the **research** publication/ACK/delivery
+handshake to a private SQLite inbox, with signed stage markers and
+exact caller-held head anchoring. An invalid possibly-committed worker
+publication can be durably **quarantined**, and a signed ACK lost in
+transit is not silently regenerated. Separate subprocess and
+cross-host disposable probes pass. This is cooperative local restart
+durability, **not** independent rollback or signer custody. Full
+handoff: [V2_DURABLE_OBSERVER_INBOX_HANDOFF.md](V2_DURABLE_OBSERVER_INBOX_HANDOFF.md).

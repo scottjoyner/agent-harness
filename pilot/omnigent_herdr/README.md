@@ -518,3 +518,27 @@ The exchanged public keys are self-introduced over the same SSH
 test session: independent signer custody, durable source authority,
 cross-restart fencing and external high-water are NOT established.
 The 14-source Lenovo same-host admission receipt remains HOLD.
+
+
+## V2 restart-durable observer inbox and untrusted-claim quarantine (2026-10-20)
+
+See [V2_DURABLE_OBSERVER_INBOX_HANDOFF.md](V2_DURABLE_OBSERVER_INBOX_HANDOFF.md).
+`v2_durable_observer_inbox.py` introduces a **separate private SQLite
+inbox** that persists one verified V2 worker publication, its signed
+observer ACK and later worker delivery with observer-signed stage
+markers. Uncertain publication and signed-but-undelivered ACKs remain
+fenced across cooperative observer restarts. A worker's unverified
+claim can be **durably quarantined** without authorizing an ACK,
+retry or refund.
+
+The short-lived subprocess fixture passed on x1-370, Lenovo and
+Destroyer. Five strict-host-key x1↔Lenovo scenarios also passed with
+`two_node_v2_outbox_probe.py --durable-inbox`, including invalid
+publication quarantine. The release qualification receipt now has
+**15 same-host evidence inputs** and remains `decision=HOLD`.
+
+An old valid observer SQLite image **plus its old claimed trusted
+anchor is still accepted**. The identity keys, external monotonic
+high-water and source-attested worker transactions are NOT separately
+custodied or verified; the pilot continues to forbid real agent
+dispatch, model egress or any production deployment.

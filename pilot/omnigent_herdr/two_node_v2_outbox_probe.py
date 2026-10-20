@@ -15,6 +15,8 @@ import binascii
 import json
 import selectors
 import socket
+import tempfile
+from pathlib import Path
 import subprocess
 
 from cryptography.hazmat.primitives import serialization
@@ -23,6 +25,9 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from observer_checkpoint import ZERO, public_fingerprint
+from v2_durable_observer_inbox import (
+    SyntheticV2DurableObserverInbox, UnsafeObserverInbox,
+)
 from v2_outbox_publication import (
     observer_sign_ack, observer_verify_publication,
     observer_verify_delivery,
@@ -40,11 +45,18 @@ SCENARIOS = (
 MAX_REPLY = 256 * 1024
 
 
-def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
+def physical(*, scenario: str = "success", remote: str = REMOTE_HOST,
+             durable_inbox: bool = False) -> dict:
     report = {
         "schema": 1,
         "mode": "two_node_synthetic_v2_outbox_publication",
         "scenario": scenario,
+        "durable_inbox_mode": durable_inbox,
+        "durable_inbox_state_verified": False,
+        "durable_inbox_fence_survives_reopen": False,
+        "durable_inbox_completed_non_authorizing": False,
+        "durable_inbox_independent_custody_verified": False,
+        "durable_inbox_rollback_resistance_verified": False,
         "observer_host": socket.gethostname(),
         "worker_host": "scott-Lenovo-ideapad-330S-15IKB",
         "worker_and_observer_keys_distinct": False,
@@ -77,6 +89,7 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
         "python3", "-B", "-u", WORKER_FILE,
     ]
     child = None
+    observer_scratch = None
     try:
         signer = Ed25519PrivateKey.generate()
         observer_pin = public_fingerprint(signer.public_key())
@@ -143,6 +156,29 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
             if not report["worker_and_observer_keys_distinct"]:
                 raise ValueError("signing roles overlap")
             first_state = init["before_state_sha256"]
+            if durable_inbox:
+                observer_scratch = tempfile.TemporaryDirectory(
+                    prefix="og-v2-cross-node-inbox-",
+                    dir=Path.home() / ".cache")
+                scratch = Path(observer_scratch.name)
+                scratch.chmod(0o700)
+                inbox_path = scratch / "observer.sqlite3"
+                journal = SyntheticV2DurableObserverInbox(
+                    inbox_path, observer_signer=signer,
+                    worker_public_key=worker_key,
+                    observer_id="x1-v2-observer",
+                    worker_id="lenovo-v2-worker",
+                    initial_state=first_state, create=True)
+                genesis_head = journal.created_head
+                if genesis_head is None:
+                    raise RuntimeError("fixture genesis anchor unavailable")
+
+                def reopen_inbox():
+                    return SyntheticV2DurableObserverInbox(
+                        inbox_path, observer_signer=signer,
+                        worker_public_key=worker_key,
+                        observer_id="x1-v2-observer",
+                        worker_id="lenovo-v2-worker")
             committed = stage({"op": "commit"})
             if committed.get("status") != "awaiting_observer_ACK":
                 raise ValueError("synthetic V2 debit was not committed")
@@ -192,14 +228,74 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
                         expected_before_state=first_state,
                         expected_after_state=payload["lease_state_sha256"]))
                 report["uncertain_operation_stays_fenced"] = True
+                if durable_inbox:
+                    try:
+                        journal.receive(
+                            publication=altered, trusted_anchor=genesis_head,
+                            expected_operation_id="a"*32,
+                            expected_outbox_head=expected_head,
+                            expected_after_state=payload["lease_state_sha256"])
+                    except UnsafeObserverInbox:
+                        state = reopen_inbox().inspect(
+                            trusted_anchor=genesis_head)
+                        report["durable_inbox_state_verified"] = (
+                            state["stage"] == "empty"
+                            and not state["agent_dispatch_authorized"])
+                    if not report["durable_inbox_state_verified"]:
+                        raise RuntimeError("tampered publication unexpectedly accepted")
+                    quarantined_head = reopen_inbox().quarantine_unverified(
+                        claimed_publication=altered,
+                        expected_operation_id="a"*32,
+                        trusted_anchor=genesis_head)
+                    after_quarantine = reopen_inbox().inspect(
+                        trusted_anchor=quarantined_head)
+                    report["durable_inbox_fence_survives_reopen"] = (
+                        after_quarantine["stage"] == "quarantined_untrusted"
+                        and after_quarantine["uncertain"] is True
+                        and after_quarantine["signed_publication_present"] is False
+                        and after_quarantine["agent_dispatch_authorized"] is False)
+                    if not report["durable_inbox_fence_survives_reopen"]:
+                        raise RuntimeError("tampered publication quarantine not durable")
                 disconnect()
                 return report
+            if durable_inbox:
+                received_head = journal.receive(
+                    publication=publication, trusted_anchor=genesis_head,
+                    expected_operation_id="a"*32,
+                    expected_outbox_head=expected_head,
+                    expected_after_state=payload["lease_state_sha256"])
+                stage_one = reopen_inbox().inspect(
+                    trusted_anchor=received_head)
+                if stage_one["stage"] != "publication_fenced":
+                    raise RuntimeError("durable publication fence did not persist")
+                report["durable_inbox_state_verified"] = True
             if scenario == "missing_ack":
+                if durable_inbox:
+                    # Sign + persist, then simulate loss BEFORE sending the
+                    # ACK. Never regenerate it or clear the pending fence.
+                    signed_head, _lost_ack = reopen_inbox().issue_ack(
+                        trusted_anchor=received_head)
+                    stage_two = reopen_inbox().inspect(
+                        trusted_anchor=signed_head)
+                    report["durable_inbox_fence_survives_reopen"] = (
+                        stage_two["stage"] == "ack_signed_fenced"
+                        and stage_two["uncertain"] is True)
                 report["missing_ack_did_not_confirm_delivery"] = True
                 report["uncertain_operation_stays_fenced"] = True
                 disconnect()
                 return report
-            ack = observer_sign_ack(
+            if durable_inbox:
+                signed_head, ack = reopen_inbox().issue_ack(
+                    trusted_anchor=received_head)
+                stage_two = reopen_inbox().inspect(
+                    trusted_anchor=signed_head)
+                report["durable_inbox_fence_survives_reopen"] = (
+                    stage_two["stage"] == "ack_signed_fenced"
+                    and stage_two["uncertain"] is True)
+                if not report["durable_inbox_fence_survives_reopen"]:
+                    raise RuntimeError("signed ACK not persistently fenced")
+            else:
+                ack = observer_sign_ack(
                 signer=signer, publication=publication,
                 worker_public_key=worker_key,
                 trusted_worker_fingerprint=worker_pin,
@@ -219,6 +315,12 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
                 report["tampered_ack_denied_by_worker"] = (
                     response.get("status") == "denied")
                 report["uncertain_operation_stays_fenced"] = True
+                if durable_inbox:
+                    state = reopen_inbox().inspect(
+                        trusted_anchor=signed_head)
+                    report["durable_inbox_fence_survives_reopen"] = (
+                        state["stage"] == "ack_signed_fenced"
+                        and state["uncertain"] is True)
                 disconnect()
                 return report
             delivered = stage({"op": "ack", "signed_ack": ack})
@@ -243,12 +345,36 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
                 report["tampered_delivery_rejected_by_observer"] = (
                     not valid_delivery)
                 report["uncertain_operation_stays_fenced"] = True
+                if durable_inbox:
+                    try:
+                        reopen_inbox().confirm(
+                            delivery=delivered_record,
+                            trusted_anchor=signed_head)
+                    except UnsafeObserverInbox:
+                        stage_two = reopen_inbox().inspect(
+                            trusted_anchor=signed_head)
+                        report["durable_inbox_fence_survives_reopen"] = (
+                            stage_two["stage"] == "ack_signed_fenced"
+                            and stage_two["uncertain"] is True)
+                    if not report["durable_inbox_fence_survives_reopen"]:
+                        raise RuntimeError("forged delivery cleared observer fence")
                 disconnect()
                 return report
             report["worker_signed_delivery_verified_by_observer"] = (
                 valid_delivery)
             if not valid_delivery:
                 raise ValueError("synthetic worker delivery not verified")
+            if durable_inbox:
+                delivered_head = reopen_inbox().confirm(
+                    delivery=delivered_record, trusted_anchor=signed_head)
+                verified = reopen_inbox().inspect(
+                    trusted_anchor=delivered_head)
+                report["durable_inbox_completed_non_authorizing"] = (
+                    verified["stage"] == "delivered"
+                    and verified["agent_dispatch_authorized"] is False
+                    and verified["source_transaction_attested"] is False)
+                if not report["durable_inbox_completed_non_authorizing"]:
+                    raise RuntimeError("observer completion falsely authorized")
             last = stage({"op": "quit"})
             if last.get("status") != "clean_exit":
                 raise ValueError("remote did not complete the fixture")
@@ -260,6 +386,8 @@ def physical(*, scenario: str = "success", remote: str = REMOTE_HOST) -> dict:
             json.JSONDecodeError):
         report["errors"].append("bounded two-node V2 fixture failed closed")
     finally:
+        if observer_scratch is not None:
+            observer_scratch.cleanup()
         if child is not None and child.poll() is None:
             child.terminate()  # Only this explicitly spawned SSH process.
             try:
@@ -308,13 +436,39 @@ def exit_status(report: dict) -> int:
                    and report.get("uncertain_operation_stays_fenced") is True)
     else:
         outcome = False
+    if report.get("durable_inbox_mode") is True:
+        durable = (
+            report.get("durable_inbox_state_verified") is True
+            and report.get("durable_inbox_independent_custody_verified") is False
+            and report.get("durable_inbox_rollback_resistance_verified") is False
+        )
+        if name == "success":
+            durable &= (
+                report.get("durable_inbox_fence_survives_reopen") is True
+                and report.get("durable_inbox_completed_non_authorizing") is True
+            )
+        elif name == "tampered_publication":
+            durable &= (
+                report.get("durable_inbox_fence_survives_reopen") is True
+                and report.get("durable_inbox_completed_non_authorizing") is False
+            )
+        else:
+            durable &= (
+                report.get("durable_inbox_fence_survives_reopen") is True
+                and report.get("durable_inbox_completed_non_authorizing") is False
+            )
+        outcome = outcome and durable
+    elif report.get("durable_inbox_mode") is not False:
+        outcome = False
     return 0 if base and outcome else 2
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=SCENARIOS, default="success")
+    parser.add_argument("--durable-inbox", action="store_true")
     args = parser.parse_args()
-    proof = physical(scenario=args.scenario)
+    proof = physical(scenario=args.scenario,
+                     durable_inbox=args.durable_inbox)
     print(json.dumps(proof, indent=2, sort_keys=True))
     raise SystemExit(exit_status(proof))

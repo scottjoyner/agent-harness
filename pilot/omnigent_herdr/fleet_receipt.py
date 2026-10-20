@@ -18,7 +18,7 @@ INPUTS = ("preflight", "resource", "sandbox", "catalog", "apparmor",
           "egress", "git", "integrated", "lease",
           "durability_fixture", "observer_fixture",
           "observer_journal_fixture", "worker_receipt_fixture",
-          "atomic_outbox_fixture")
+          "atomic_outbox_fixture", "v2_observer_inbox_fixture")
 GATES = {
     "preflight": ("configuration_valid", "bootstrap_ready"),
     "resource": ("resource_prefilter_passed",),
@@ -90,6 +90,18 @@ GATES = {
         "second_receipt_chained_in_one_db",
         "old_lease_image_rejected_with_newer_head",
         "old_image_with_old_head_still_valid",
+    ),
+    "v2_observer_inbox_fixture": (
+        "worker_v2_atomic_outbox_bound",
+        "publication_fence_survives_process_restart",
+        "signed_ack_fence_survives_process_restart",
+        "lost_ack_cannot_be_reissued",
+        "forged_delivery_cannot_clear_fence",
+        "valid_delivery_survives_process_restart",
+        "stale_anchor_denied",
+        "newer_anchor_detects_old_valid_db",
+        "old_db_and_old_anchor_still_match",
+        "unverified_publication_quarantine_survived_restart",
     ),
 }
 
@@ -211,6 +223,22 @@ def create_receipt(evidence: dict[str, dict], *, timestamp: str) -> dict:
         and not atomic.get("errors")
     ):
         gates["atomic_outbox_fixture"] = False
+    v2_inbox = evidence.get("v2_observer_inbox_fixture", {})
+    if not isinstance(v2_inbox, dict) or not (
+        v2_inbox.get("mode") == "synthetic_restart_durable_v2_observer_inbox"
+        and v2_inbox.get("signing_keys_persisted") is False
+        and v2_inbox.get("independent_worker_identity_verified") is False
+        and v2_inbox.get("durable_external_anchor_verified") is False
+        and v2_inbox.get("source_transaction_attested") is False
+        and v2_inbox.get("rollback_resistance_verified") is False
+        and v2_inbox.get("agent_dispatch_authorized") is False
+        and v2_inbox.get("model_egress_authorized") is False
+        and v2_inbox.get("used_real_repository") is False
+        and type(v2_inbox.get("provider_requests_forwarded")) is int
+        and v2_inbox["provider_requests_forwarded"] == 0
+        and not v2_inbox.get("errors")
+    ):
+        gates["v2_observer_inbox_fixture"] = False
     origin = evidence.get("preflight", {})
     if not isinstance(origin, dict) or "lenovo" not in str(
         origin.get("observed_host", "")).lower():

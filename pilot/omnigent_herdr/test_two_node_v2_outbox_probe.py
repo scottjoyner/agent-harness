@@ -50,6 +50,12 @@ def sample(scenario="success"):
     return {
         "schema": 1, "mode": "two_node_synthetic_v2_outbox_publication",
         "scenario": scenario,
+        "durable_inbox_mode": False,
+        "durable_inbox_state_verified": False,
+        "durable_inbox_fence_survives_reopen": False,
+        "durable_inbox_completed_non_authorizing": False,
+        "durable_inbox_independent_custody_verified": False,
+        "durable_inbox_rollback_resistance_verified": False,
         "worker_and_observer_keys_distinct": True,
         "worker_signed_outbox_publication_verified": True,
         "remote_exited_cleanly": True,
@@ -66,6 +72,31 @@ class V2TwoNodeSafetyContract(unittest.TestCase):
                 event = sample(scenario)
                 self.assertEqual(exit_status(event), 0)
                 self.assertFalse(event["agent_dispatch_authorized"])
+
+    def test_durable_success_and_negative_report_contracts(self):
+        for scenario in ALL:
+            with self.subTest(scenario=scenario):
+                event = sample(scenario)
+                event["durable_inbox_mode"] = True
+                event["durable_inbox_state_verified"] = True
+                event["durable_inbox_fence_survives_reopen"] = True
+                event["durable_inbox_completed_non_authorizing"] = (
+                    scenario == "success")
+                self.assertEqual(exit_status(event), 0)
+                self.assertFalse(event["agent_dispatch_authorized"])
+
+    def test_missing_durable_fence_or_forged_custody_denied(self):
+        event = sample("missing_ack")
+        event.update({
+            "durable_inbox_mode": True,
+            "durable_inbox_state_verified": True,
+            "durable_inbox_fence_survives_reopen": False,
+        })
+        self.assertEqual(exit_status(event), 2)
+        event["durable_inbox_fence_survives_reopen"] = True
+        self.assertEqual(exit_status(event), 0)
+        event["durable_inbox_independent_custody_verified"] = True
+        self.assertEqual(exit_status(event), 2)
 
     def test_missing_or_incomplete_qualification_rejected(self):
         self.assertEqual(exit_status({}), 2)
