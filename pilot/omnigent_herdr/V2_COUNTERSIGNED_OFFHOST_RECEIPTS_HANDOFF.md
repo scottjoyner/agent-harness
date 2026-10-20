@@ -141,3 +141,17 @@ automatically unfence uncertain transactions.
 
 **Everything in this slice is synthetic: HOLD, NO-MERGE, NO-DEPLOY,
 NO LLM DISPATCH, NO MODEL/PROVIDER FORWARDING.**
+
+
+## Follow-on: four-role signed detached custody checkpoint
+
+A new strict offline, deny-only `v2_custody_checkpoint_contract.py`
+verifies that a *separately supplied* custodian public key signed the
+exact witness receipt and checkpoint head under a pin, previous hash,
+generation, trusted clock and witness high-water floor. The
+three-node x1-370/Destroyer/Lenovo physical experiment passed in
+disposable signing roots, including an old-head acceptance negative
+control. **Lenovo and Destroyer are still under the same
+administrative operator**; the test does not constitute independent
+external key custody. See
+[V2_EXTERNAL_CUSTODY_CONTRACT_HANDOFF.md](V2_EXTERNAL_CUSTODY_CONTRACT_HANDOFF.md).

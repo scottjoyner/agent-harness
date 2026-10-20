@@ -593,3 +593,30 @@ Signer bootstrap and key-pin exchange are on the same operator's SSH
 channel. No immutable external high-water, source transaction
 attestation, live inference, runtime admission or production release
 is established. Lenovo's separate 15-gate release HOLD is unchanged.
+
+
+## Fourth-role detached custody checkpoint verification (2026-10-20)
+
+See [V2_EXTERNAL_CUSTODY_CONTRACT_HANDOFF.md](V2_EXTERNAL_CUSTODY_CONTRACT_HANDOFF.md).
+The research-only `v2_custody_checkpoint_contract.py` requires an
+explicitly supplied, separately pinned custodian Ed25519 public key,
+exact current signed checkpoint SHA-256, previous checkpoint digest,
+witness/observer heads, public-key fingerprints, trusted time and
+monotonic witness-count floor. It rejects missing or stale inputs,
+forged witness receipts, signer substitutions and claimed model
+authority; every valid research result still says HOLD.
+
+Fleet Commander tested a disposable fourth signing role on **Lenovo**
+alongside x1-370's synthetic worker/observer and **Destroyer's**
+witness signer. A new Lenovo process reproduced the same signed
+checkpoint, and a generation-2 checkpoint rejected the older stage
+when the newer external floor was supplied. **The original old
+checkpoint also passed when the old floor was supplied**: mandatory
+counterexample, not rollback resistance.
+
+All four keys are generated under the SAME operator's administration
+in this trial, and the expected checkpoint/floor comes from the same
+x1 research harness. No independent administrator, immutable external
+high-water, resource-side transaction authority, agent model access,
+admission, or production deployment was established. Lenovo's
+separate 15-source admission receipt remains HOLD.
