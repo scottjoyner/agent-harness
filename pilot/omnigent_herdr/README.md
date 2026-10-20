@@ -684,3 +684,25 @@ SSH administration. Source and worker SQLite transactions are
 not distributed-atomic; no real model, provider, repository effect,
 independent resource custody or agent dispatch is proven. The Lenovo
 15-source admission receipt remains HOLD.
+
+
+## V2 lost-response crash-window recovery (2026-10-20)
+
+See [V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md](V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md).
+The disposable Destroyer source now supports **read-only**
+`recover` of the exact next source-signed receipt from the
+caller-held prior head, operation ID and original worker-intent
+SHA-256. `v2_cross_host_uncertainty.py` distinguishes
+`SOURCE_LOCAL_COMMITTED_HOLD`, `UNCERTAIN_HOLD` (missing or
+unreachable source), and `QUARANTINED_HOLD` (untrusted evidence),
+with **no automatic retry, refund, unfence, model or agent grant**.
+
+Fleet Commander physically killed only two disposable source
+test processes: one **before** source commit (no effect) and one
+**after** source commit but **before** returning a response
+(effect recovered by fresh SSH/Python read-only lookup). Both
+cases keep distributed transaction authority on HOLD.
+An old source DB with its old head still passes the mandatory
+rollback counterexample. These are synthetic, process-level
+faults, not actual fleet power cuts or independently custodied
+production transaction proofs.

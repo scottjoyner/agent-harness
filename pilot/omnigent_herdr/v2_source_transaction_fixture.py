@@ -440,6 +440,52 @@ class SyntheticResourceSource:
             "decision": "HOLD",
         }
 
+    def recover_committed_operation(
+            self, *, operation_id: str, intent_sha256: str,
+            trusted_prior_head: tuple[int, str]) -> dict:
+        """Read-only recovery of a lost source COMMIT reply.
+
+        A returned receipt is a verified *source-local* effect, never a
+        cross-host transaction completion or permission to retry. Caller
+        must retain a concrete previously trusted source head; the source
+        must still be at precisely the next record after that head.
+        Missing/ambiguous/outdated records are DENIED (caller remains
+        UNCERTAIN) instead of being interpreted as safe nonexecution.
+        """
+        if (not isinstance(operation_id, str)
+                or OP_RE.fullmatch(operation_id) is None
+                or not isinstance(intent_sha256, str)
+                or SHA_RE.fullmatch(intent_sha256) is None
+                or not isinstance(trusted_prior_head, tuple)
+                or len(trusted_prior_head) != 2
+                or type(trusted_prior_head[0]) is not int
+                or not isinstance(trusted_prior_head[1], str)
+                or SHA_RE.fullmatch(trusted_prior_head[1]) is None):
+            raise UnsafeSourceState("invalid read-only recovery scope")
+        db = self._open()
+        try:
+            db.execute("BEGIN")
+            count, sha, balance, rows = self._inspect_state(db)
+            if (count < 1 or trusted_prior_head[0] != count - 1
+                    or count > MAX_RECORDS):
+                raise UnsafeSourceState("missing or non-immediate source effect")
+            # The source's last receipt MUST be the one after the exact
+            # supplied prior head; do not 'find' an older record under
+            # a newly advanced head.
+            last = json.loads(rows[-1][3], object_pairs_hook=_unique_fields)
+            payload = last["payload"]
+            if (payload["previous_record_sha256"] != trusted_prior_head[1]
+                    or payload["operation_id"] != operation_id
+                    or payload["intent_sha256"] != intent_sha256):
+                raise UnsafeSourceState("not the exact scoped source effect")
+            before = payload["before_state_sha256"]
+            after = payload["after_state_sha256"]
+            db.execute("COMMIT")
+            return self._response(count, sha, balance, last, before, after,
+                                  mode="synthetic_source_read_only_recovery")
+        finally:
+            db.close()
+
     def inspect(self, *, trusted_head: tuple[int, str]) -> dict:
         db = self._open()
         try:
@@ -466,8 +512,14 @@ class SyntheticResourceSource:
 def _cli() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
-    parser.add_argument("--command", choices=("bootstrap", "commit", "inspect"),
-                        required=True)
+    parser.add_argument(
+        "--command", choices=("bootstrap", "commit", "inspect", "recover"),
+        required=True)
+    parser.add_argument("--research-fault",
+                        choices=("none", "crash-before-source-commit",
+                                 "crash-after-source-commit"),
+                        default="none",
+                        help="Disposable research CLI process only; NEVER a production flag")
     args = parser.parse_args()
     try:
         line = sys.stdin.buffer.readline(8193)
@@ -476,6 +528,8 @@ def _cli() -> int:
         request = json.loads(line, object_pairs_hook=_unique_fields)
         if not isinstance(request, dict):
             raise UnsafeSourceState("expected JSON object")
+        if (args.research_fault != "none" and args.command != "commit"):
+            raise UnsafeSourceState("fault injection is only for fixture commit")
         if args.command == "bootstrap":
             if request != {}:
                 raise UnsafeSourceState("bootstrap cannot accept an operation")
@@ -491,10 +545,25 @@ def _cli() -> int:
             if args.command == "commit":
                 if set(request) != {"operation_id", "intent_sha256", "trusted_head"}:
                     raise UnsafeSourceState("invalid source commit request")
+                if args.research_fault == "crash-before-source-commit":
+                    # This exits ONLY the bounded disposable Python worker.
+                    # It does not change network or other machine processes.
+                    os._exit(96)
                 result = source.commit(
                     operation_id=request["operation_id"],
                     intent_sha256=request["intent_sha256"],
                     trusted_head=tuple(request["trusted_head"]))
+                if args.research_fault == "crash-after-source-commit":
+                    # DB has committed, but the caller receives NO reply.
+                    os._exit(97)
+            elif args.command == "recover":
+                if set(request) != {
+                        "operation_id", "intent_sha256", "trusted_prior_head"}:
+                    raise UnsafeSourceState("invalid source recovery scope")
+                result = source.recover_committed_operation(
+                    operation_id=request["operation_id"],
+                    intent_sha256=request["intent_sha256"],
+                    trusted_prior_head=tuple(request["trusted_prior_head"]))
             else:
                 if set(request) != {"trusted_head"}:
                     raise UnsafeSourceState("read-only inspect request only")

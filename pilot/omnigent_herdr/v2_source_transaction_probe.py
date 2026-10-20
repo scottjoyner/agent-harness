@@ -32,6 +32,7 @@ from v2_source_transaction_fixture import (
     _state_digest, verify_source_receipt,
     verify_source_corresponds_to_signed_worker_intent,
 )
+from v2_cross_host_uncertainty import classify_source_recovery
 
 SOURCE_HOST = "destroyer"
 ROOT_RE = re.compile(
@@ -55,6 +56,16 @@ TRUE = (
     "old_source_sqlite_with_old_head_still_valid",
     "restored_new_source_head_verified",
     "source_budget_exhaustion_denied",
+    "crash_before_source_commit_left_genesis",
+    "crash_before_commit_did_not_authorize_retry",
+    "crash_after_commit_returned_no_reply",
+    "read_only_recovery_proves_committed_source",
+    "recovery_did_not_redebit",
+    "recovery_holds_dispatch",
+    "partition_without_readback_uncertain",
+    "malformed_recovery_quarantined",
+    "wrong_pinned_recovery_quarantined",
+    "repeat_commit_after_recovery_denied",
 )
 FALSE = (
     "independently_custodied_source_verified",
@@ -91,20 +102,33 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
             worker_pin = public_fingerprint(worker.public_key())
             observer_pin = public_fingerprint(observer.public_key())
 
-            def remote_source(command: str, message: dict):
-                if command not in ("bootstrap", "commit", "inspect"):
+            def remote_source(command: str, message: dict, *, fault="none"):
+                if command not in ("bootstrap", "commit", "inspect", "recover"):
                     raise RuntimeError("forbidden source operation")
+                if (fault not in ("none", "crash-before-source-commit",
+                                  "crash-after-source-commit")
+                        or (fault != "none" and command != "commit")):
+                    raise RuntimeError("invalid disposable fault injection")
                 args = [
                     "ssh", "-o", "BatchMode=yes",
                     "-o", "StrictHostKeyChecking=yes",
                     "-o", "ConnectTimeout=6", remote,
                     "python3", "-B",
                     remote_root + "/v2_source_transaction_fixture.py",
-                    "--root", remote_root, "--command", command]
+                    "--root", remote_root, "--command", command,
+                    "--research-fault", fault]
                 p = subprocess.run(
                     args, input=json.dumps(message, sort_keys=True) + "\n",
                     text=True, capture_output=True, timeout=16,
                     check=False)
+                if p.returncode in (96, 97) and fault != "none":
+                    # Explicitly *no* answer: the same disposable CLI
+                    # process exited at a fixed fault point. The caller
+                    # cannot infer whether its request committed solely
+                    # from a missing reply.
+                    if p.stdout or p.stderr:
+                        raise RuntimeError("unexpected fault output")
+                    return p.returncode, None
                 if p.returncode not in (0, 2) or len(p.stdout) > 8192:
                     raise RuntimeError("remote synthetic source unavailable")
                 try:
@@ -183,12 +207,90 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                     trusted_anchor=worker_head))
             source_intent = publication["payload"]["outbox_event"]["request_sha256"]
 
-            stage = "source_first_atomic_debit"
-            rc, one = remote_source("commit", {
-                "operation_id": OP1, "intent_sha256": source_intent,
-                "trusted_head": [0, ZERO]})
+            recovery_scope = {
+                "worker_publication": publication,
+                "worker_public_key": worker.public_key(),
+                "trusted_worker_pin": worker_pin,
+                "trusted_observer_pin": observer_pin,
+                "expected_worker_id": "worker",
+                "expected_observer_id": "observer",
+                "expected_operation_id": OP1,
+                "expected_worker_outbox_head": worker_head,
+                "expected_worker_before_state": before,
+                "expected_worker_after_state": after,
+                "source_public_key": source_pub,
+                "trusted_source_pin": source_pin,
+                "trusted_prior_source_head": (0, ZERO),
+            }
+            recover_req = {
+                "operation_id": OP1,
+                "intent_sha256": source_intent,
+                "trusted_prior_head": [0, ZERO],
+            }
+            first_req = {
+                "operation_id": OP1,
+                "intent_sha256": source_intent,
+                "trusted_head": [0, ZERO],
+            }
+            stage = "crash_before_local_commit"
+            crash_rc, crash_reply = remote_source(
+                "commit", first_req, fault="crash-before-source-commit")
+            missing_rc, missing = remote_source("recover", recover_req)
+            genesis_rc, genesis_after = remote_source(
+                "inspect", {"trusted_head": [0, ZERO]})
+            record["crash_before_source_commit_left_genesis"] = (
+                crash_rc == 96 and crash_reply is None
+                and missing_rc == 2 and genesis_rc == 0
+                and genesis_after.get("balance") == 2)
+            record["crash_before_commit_did_not_authorize_retry"] = (
+                classify_source_recovery(
+                    source_reply=missing, **recovery_scope)["status"]
+                == "UNCERTAIN_HOLD"
+                and classify_source_recovery(
+                    source_reply=None, **recovery_scope)[
+                        "automatic_retry_authorized"] is False)
+
+            stage = "crash_after_local_commit_before_reply"
+            lost_rc, lost_reply = remote_source(
+                "commit", first_req, fault="crash-after-source-commit")
+            record["crash_after_commit_returned_no_reply"] = (
+                lost_rc == 97 and lost_reply is None)
+            record["partition_without_readback_uncertain"] = (
+                classify_source_recovery(
+                    source_reply=None, **recovery_scope)["status"]
+                    == "UNCERTAIN_HOLD")
+            stage = "read_only_post_crash_recovery"
+            rc, one = remote_source("recover", recover_req)
             if rc or one.get("balance") != 1:
-                raise RuntimeError("source debit not committed")
+                raise RuntimeError("signed source readback failed after lost reply")
+            verdict = classify_source_recovery(
+                source_reply=one, **recovery_scope)
+            record["read_only_recovery_proves_committed_source"] = (
+                verdict["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
+                and verdict["source_local_commit_verified"] is True)
+            record["recovery_holds_dispatch"] = all(
+                verdict[k] is False for k in (
+                    "agent_dispatch_authorized",
+                    "model_egress_authorized",
+                    "automatic_retry_authorized",
+                    "automatic_refund_authorized",
+                    "lease_unfence_authorized",
+                    "worker_source_distributed_atomicity_verified"))
+            record["malformed_recovery_quarantined"] = (
+                classify_source_recovery(
+                    source_reply={"forged": True}, **recovery_scope)["status"]
+                == "QUARANTINED_HOLD")
+            record["wrong_pinned_recovery_quarantined"] = (
+                classify_source_recovery(
+                    source_reply=one, **{**recovery_scope,
+                        "trusted_source_pin": "f"*64})["status"]
+                    == "QUARANTINED_HOLD")
+            repeat_rc, _ = remote_source(
+                "commit", {
+                    "operation_id": OP1, "intent_sha256": source_intent,
+                    "trusted_head": list(one["head"])})
+            record["repeat_commit_after_recovery_denied"] = repeat_rc == 2
+            stage = "source_first_atomic_debit"
             head1 = tuple(one["head"])
             record["source_sqlite_debit_committed"] = (
                 one.get("local_debit_and_signed_receipt_atomic") is True
@@ -231,6 +333,9 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
             record["source_readback_after_process_restart"] = (
                 rc == 0 and reopened.get("receipt") == one["receipt"]
                 and reopened.get("balance") == 1)
+            record["recovery_did_not_redebit"] = (
+                rc == 0 and reopened.get("balance") == 1
+                and reopened.get("head") == one["head"])
             duplicate_rc, _ = remote_source("commit", {
                 "operation_id": OP1, "intent_sha256": source_intent,
                 "trusted_head": list(head1)})

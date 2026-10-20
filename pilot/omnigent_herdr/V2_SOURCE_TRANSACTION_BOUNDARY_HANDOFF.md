@@ -148,3 +148,19 @@ approval for any host sandbox policy change.
 
 **Research source checks are not execution grants. DRAFT / HOLD /
 NO-MERGE / NO DEPLOY / NO MODEL FORWARDING / NO AGENT DISPATCH.**
+
+
+## Follow-on: lost-response and cross-host crash-window handling
+
+A bounded read-only source `recover` API and
+`v2_cross_host_uncertainty.py` now require the original
+worker-signed intent and caller-held prior source head before
+accepting a locally committed synthetic source receipt.
+No or malformed evidence is never a license to retry/refund
+the worker or unfence the operation. Physical Fleet Commander
+tests simulated a source-process exit both before commit and
+after local commit but before returning its reply; a new
+SSH/Python source process recovered the latter exact receipt
+without debiting again. **Worker/source distributed atomicity
+and independent source custody remain unproved.**
+See [V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md](V2_SOURCE_CRASH_PARTITION_RECOVERY_HANDOFF.md).

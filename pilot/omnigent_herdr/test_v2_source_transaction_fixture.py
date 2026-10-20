@@ -259,6 +259,79 @@ class SourceTransactionTests(unittest.TestCase):
         with self.assertRaises(UnsafeSourceState):
             self.reopen().inspect(trusted_head=tuple(first["head"]))
 
+    def test_read_only_lost_reply_recovery_requires_previous_head(self):
+        committed = self.committed()
+        recovered = self.reopen().recover_committed_operation(
+            operation_id=OP1, intent_sha256=INTENT1,
+            trusted_prior_head=self.genesis)
+        self.assertEqual(recovered["mode"],
+                         "synthetic_source_read_only_recovery")
+        self.assertEqual(recovered["receipt"], committed["receipt"])
+        self.assertEqual(recovered["head"], committed["head"])
+        self.assertFalse(recovered["agent_dispatch_authorized"])
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=tuple(committed["head"]))["balance"], 1)
+
+    def test_absent_effect_recovery_refused_not_safe_retry(self):
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().recover_committed_operation(
+                operation_id=OP1, intent_sha256=INTENT1,
+                trusted_prior_head=self.genesis)
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=self.genesis)["balance"], 2)
+
+    def test_wrong_prior_anchor_never_recovers_signed_receipt(self):
+        committed = self.committed()
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().recover_committed_operation(
+                operation_id=OP1, intent_sha256=INTENT1,
+                trusted_prior_head=(0, "f"*64))
+        self.assertTrue(self.verify(committed))
+
+    def test_wrong_operation_or_digest_never_recovers(self):
+        self.committed()
+        for op, intent in ((OP2, INTENT1), (OP1, INTENT2)):
+            with self.subTest(operation=op, intent=intent):
+                with self.assertRaises(UnsafeSourceState):
+                    self.reopen().recover_committed_operation(
+                        operation_id=op, intent_sha256=intent,
+                        trusted_prior_head=self.genesis)
+
+    def test_only_latest_source_effect_is_eligible_for_recovery(self):
+        first = self.committed()
+        self.committed(operation_id=OP2, intent=INTENT2,
+                       head=tuple(first["head"]))
+        with self.assertRaises(UnsafeSourceState):
+            self.reopen().recover_committed_operation(
+                operation_id=OP1, intent_sha256=INTENT1,
+                trusted_prior_head=self.genesis)
+        result = self.reopen().recover_committed_operation(
+            operation_id=OP2, intent_sha256=INTENT2,
+            trusted_prior_head=tuple(first["head"]))
+        self.assertEqual(result["balance"], 0)
+
+    def test_bad_type_prior_head_recovery_denied(self):
+        self.committed()
+        for head in (None, [0, ZERO], (True, ZERO), (0, "no")):
+            with self.subTest(head=head):
+                with self.assertRaises(UnsafeSourceState):
+                    self.reopen().recover_committed_operation(
+                        operation_id=OP1, intent_sha256=INTENT1,
+                        trusted_prior_head=head)
+
+    def test_after_local_commit_recover_cannot_debit_twice(self):
+        first = self.committed()
+        for _ in range(3):
+            recovery = self.reopen().recover_committed_operation(
+                operation_id=OP1, intent_sha256=INTENT1,
+                trusted_prior_head=self.genesis)
+            self.assertEqual(recovery["receipt"], first["receipt"])
+        with self.assertRaises(UnsafeSourceState):
+            self.committed(operation_id=OP1,
+                           intent=INTENT1, head=tuple(first["head"]))
+        self.assertEqual(self.reopen().inspect(
+            trusted_head=tuple(first["head"]))["balance"], 1)
+
     def test_cross_signed_worker_intent_matches_resource_operation(self):
         worker = Ed25519PrivateKey.generate()
         observer = Ed25519PrivateKey.generate()
