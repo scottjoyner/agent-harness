@@ -266,7 +266,14 @@ class V2PublicationTests(unittest.TestCase):
 
     def test_replay_observer_ack_with_different_publication_rejected(self):
         forged = deepcopy(self.publication)
-        forged["signature"] = "X" + forged["signature"][1:]
+        # Guarantee a genuinely different, still-base64url signature.
+        # Using a fixed "X" was flaky when the random Ed25519
+        # signature already started with X (~1/64 of runs).
+        original_signature = forged["signature"]
+        forged["signature"] = (
+            ("A" if original_signature[0] != "A" else "B")
+            + original_signature[1:])
+        self.assertNotEqual(original_signature, forged["signature"])
         self.assertFalse(worker_verify_ack(
             envelope=self.ack, observer_public_key=self.observer.public_key(),
             trusted_observer_fingerprint=self.observer_pin,
