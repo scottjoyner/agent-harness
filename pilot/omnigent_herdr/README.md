@@ -706,3 +706,22 @@ An old source DB with its old head still passes the mandatory
 rollback counterexample. These are synthetic, process-level
 faults, not actual fleet power cuts or independently custodied
 production transaction proofs.
+
+
+## Durable worker-side HOLD journal after source failure (2026-10-20)
+
+See [V2_DURABLE_WORKER_UNCERTAINTY_HANDOFF.md](V2_DURABLE_WORKER_UNCERTAINTY_HANDOFF.md).
+The optional disposable `v2_uncertainty_journal.py` stores the
+original worker-signed intent plus bounded hash-linked recovered
+source evidence. Every reopened record is checked against worker
+and source signatures, pinned keys, original source head and
+prior journal hash. States remain `UNCERTAIN_HOLD`,
+`QUARANTINED_HOLD` or `SOURCE_LOCAL_COMMITTED_HOLD`—never
+retry, refund, agent dispatch or model egress.
+
+Fleet Commander exercised before/after source-commit process
+crashes and a **fresh x1 Python-process readback** of the signed
+source evidence after recovery. Restoring an older local journal
+is rejected only with a newer retained external head;
+**old journal + old head** remains a same-admin rollback attack.
+Separate worker/source SQLite transactions are NOT globally atomic.

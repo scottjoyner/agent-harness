@@ -21,6 +21,7 @@ import tempfile
 from copy import deepcopy
 from pathlib import Path
 
+from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PrivateKey, Ed25519PublicKey,
 )
@@ -33,6 +34,9 @@ from v2_source_transaction_fixture import (
     verify_source_corresponds_to_signed_worker_intent,
 )
 from v2_cross_host_uncertainty import classify_source_recovery
+from v2_uncertainty_journal import (
+    SyntheticWorkerUncertaintyJournal, context_digest,
+)
 
 SOURCE_HOST = "destroyer"
 ROOT_RE = re.compile(
@@ -66,6 +70,10 @@ TRUE = (
     "malformed_recovery_quarantined",
     "wrong_pinned_recovery_quarantined",
     "repeat_commit_after_recovery_denied",
+    "durable_worker_uncertainty_before_source_recovery",
+    "durable_worker_signed_evidence_after_source_recovery",
+    "worker_journal_fresh_process_readback",
+    "worker_journal_denies_unpinned_old_head",
 )
 FALSE = (
     "independently_custodied_source_verified",
@@ -93,8 +101,10 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
     try:
         cache = Path.home() / ".cache"
         cache.mkdir(exist_ok=True)
-        with tempfile.TemporaryDirectory(
-                prefix="og-v2-source-x1-", dir=cache) as dirname:
+        with (tempfile.TemporaryDirectory(
+                prefix="og-v2-source-x1-", dir=cache) as dirname,
+                tempfile.TemporaryDirectory(
+                    prefix="og-v2-uncertain-", dir=cache) as journal_dir):
             here = Path(dirname)
             here.chmod(0o700)
             worker = Ed25519PrivateKey.generate()
@@ -206,7 +216,47 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                 exported_head=gate.export_head_event(
                     trusted_anchor=worker_head))
             source_intent = publication["payload"]["outbox_event"]["request_sha256"]
+            stage = "worker_uncertainty_journal_setup"
+            jctx = {
+                "schema": 1,
+                "kind": "synthetic_v2_uncertain_worker_intent",
+                "operation_id": OP1,
+                "worker_public_base64": base64.b64encode(
+                    worker.public_key().public_bytes(
+                        encoding=serialization.Encoding.Raw,
+                        format=serialization.PublicFormat.Raw,
+                    )).decode("ascii"),
+                "worker_pin": worker_pin,
+                "observer_pin": observer_pin,
+                "source_public_base64": genesis["source_public_base64"],
+                "source_pin": source_pin,
+                "worker_id": "worker", "observer_id": "observer",
+                "worker_outbox_head": list(worker_head),
+                "worker_before_state": before,
+                "worker_after_state": after,
+                "prior_source_head": [0, ZERO],
+            }
+            jctx_hash = context_digest(jctx)
+            journal = SyntheticWorkerUncertaintyJournal(
+                Path(journal_dir), create=True, context=jctx,
+                worker_publication=publication)
+            journal_head = (0, jctx_hash)
 
+            def worker_journal_fresh_readback(head):
+                command = [
+                    "python3", "-B",
+                    str(Path(__file__).with_name("v2_uncertainty_journal.py")),
+                    "--root", journal_dir, "--command", "inspect",
+                    "--context-sha256", jctx_hash,
+                    "--head", str(head[0]) + ":" + head[1]]
+                r = subprocess.run(
+                    command, capture_output=True, text=True,
+                    check=False, timeout=12)
+                if (r.returncode not in (0, 2) or len(r.stdout) > 8192):
+                    raise RuntimeError("worker recovery journal subprocess failed")
+                return r.returncode, json.loads(r.stdout)
+
+            stage = "source_fault_injection_preparation"
             recovery_scope = {
                 "worker_publication": publication,
                 "worker_public_key": worker.public_key(),
@@ -249,6 +299,13 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                 and classify_source_recovery(
                     source_reply=None, **recovery_scope)[
                         "automatic_retry_authorized"] is False)
+            journal_uncertain = journal.observe(
+                missing, expected_context_sha256=jctx_hash,
+                trusted_prior_journal_head=journal_head)
+            journal_head = tuple(journal_uncertain["journal_head"])
+            record["durable_worker_uncertainty_before_source_recovery"] = (
+                journal_uncertain["status"] == "UNCERTAIN_HOLD"
+                and journal_uncertain["automatic_retry_authorized"] is False)
 
             stage = "crash_after_local_commit_before_reply"
             lost_rc, lost_reply = remote_source(
@@ -259,6 +316,10 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
                 classify_source_recovery(
                     source_reply=None, **recovery_scope)["status"]
                     == "UNCERTAIN_HOLD")
+            journal_no_reply = journal.observe(
+                None, expected_context_sha256=jctx_hash,
+                trusted_prior_journal_head=journal_head)
+            journal_head = tuple(journal_no_reply["journal_head"])
             stage = "read_only_post_crash_recovery"
             rc, one = remote_source("recover", recover_req)
             if rc or one.get("balance") != 1:
@@ -268,6 +329,24 @@ def physical(*, remote_root: str, remote: str = SOURCE_HOST) -> dict:
             record["read_only_recovery_proves_committed_source"] = (
                 verdict["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
                 and verdict["source_local_commit_verified"] is True)
+            journal_verified = journal.observe(
+                one, expected_context_sha256=jctx_hash,
+                trusted_prior_journal_head=journal_head)
+            journal_head = tuple(journal_verified["journal_head"])
+            record["durable_worker_signed_evidence_after_source_recovery"] = (
+                journal_verified["status"] == "SOURCE_LOCAL_COMMITTED_HOLD"
+                and journal_verified["source_local_commit_verified"] is True
+                and journal_verified["automatic_retry_authorized"] is False)
+            fresh_rc, fresh = worker_journal_fresh_readback(journal_head)
+            record["worker_journal_fresh_process_readback"] = (
+                fresh_rc == 0 and fresh["status"]
+                == "SOURCE_LOCAL_COMMITTED_HOLD"
+                and fresh["journal_head"] == list(journal_head)
+                and fresh["agent_dispatch_authorized"] is False)
+            stale_rc, stale = worker_journal_fresh_readback(
+                (journal_head[0]-1, journal_no_reply["journal_head"][1]))
+            record["worker_journal_denies_unpinned_old_head"] = (
+                stale_rc == 2 and stale["status"] == "QUARANTINED_HOLD")
             record["recovery_holds_dispatch"] = all(
                 verdict[k] is False for k in (
                     "agent_dispatch_authorized",

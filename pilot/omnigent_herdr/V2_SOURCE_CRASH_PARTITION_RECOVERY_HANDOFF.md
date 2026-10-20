@@ -160,3 +160,20 @@ scenarios. Continue to keep the agent runtime, production
 provider routing and deployments disabled.
 
 **DRAFT / NO-MERGE / HOLD / NO LIVE AGENT / NO MODEL FORWARDING.**
+
+
+## Follow-on: persistent signed-evidence HOLD journal on x1
+
+A new opt-in `v2_uncertainty_journal.py` records the original
+worker-signed intent and exact recovered source-signed receipt in
+a private, bounded local SQLite hash chain. A new x1 Python
+process can re-verify the entire evidence chain and return
+`SOURCE_LOCAL_COMMITTED_HOLD` after remote read-only recovery,
+but may not retry, refund, unfence, dispatch or route a model.
+Actual before- and after-commit source-process failures
+and fresh-process journal readback passed in the same physical
+x1→Destroyer disposable experiment.
+
+Same-admin restoring both the journal DB and expected trusted
+head remains a rollback risk. See
+[V2_DURABLE_WORKER_UNCERTAINTY_HANDOFF.md](V2_DURABLE_WORKER_UNCERTAINTY_HANDOFF.md).
