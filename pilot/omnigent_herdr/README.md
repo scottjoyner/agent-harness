@@ -567,3 +567,29 @@ witness has no independently administered signer, source-attested
 transaction ID or monotonic immutable custody. It does not affect
 Lenovo's separate 15-source same-host HOLD decision and enables no
 agent dispatch, inference, or production deployment.
+
+
+## Signed receipts from the separate V2 witness host (2026-10-20)
+
+See [V2_COUNTERSIGNED_OFFHOST_RECEIPTS_HANDOFF.md](V2_COUNTERSIGNED_OFFHOST_RECEIPTS_HANDOFF.md).
+`v2_witness_countersign.py` adds an ephemeral **Destroyer-generated
+Ed25519 witness signing key** in an owner-private disposable
+fixture directory. After verifying a signed V2 observer marker
+and an exact off-host witness head, a fresh SSH process signs a
+narrowly scoped acceptance receipt that x1-370 verifies against
+the originally bootstrapped witness public key.
+
+Reopening the same disposable key after process restart reconstructs
+the **same** deterministic receipt on read-only retry; stale or
+tampered receipts, wrong signer, stale witness writes and forged
+dispatch status are refused. The physical test actually restores an
+older valid witness log and proves retained newer heads reject it,
+while the old valid log **plus old anchor still succeeds**.
+All host scratch state and the test signing key are removed after
+the research run.
+
+**Role separation is not independent administrator custody.**
+Signer bootstrap and key-pin exchange are on the same operator's SSH
+channel. No immutable external high-water, source transaction
+attestation, live inference, runtime admission or production release
+is established. Lenovo's separate 15-gate release HOLD is unchanged.

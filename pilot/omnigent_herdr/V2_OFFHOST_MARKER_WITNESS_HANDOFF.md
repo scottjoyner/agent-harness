@@ -151,3 +151,18 @@ before even a disposable real agent task can run.
 production databases, real user repository writes, merges,
 production deployments, tunnel changes, security-policy edits,
 or unrelated process terminations were performed.**
+
+
+## Follow-on: Destroyer countersigns exact witness heads
+
+A separate, ephemeral **Destroyer-generated Ed25519 key** now signs a
+bounded no-dispatch receipt of the verified V2 observer marker and
+exact physical witness-log head. Another SSH/Python process can re-open
+the same disposable key after restart and reproduce identical signed
+readback for the same committed head without a second write. Incorrect
+keys, old heads, changed fields and forged model authority fail
+cryptographic verification. The old valid log **with the old anchor**
+still passes—therefore no independent immutable custody or rollback
+resistance is established.
+
+See [V2_COUNTERSIGNED_OFFHOST_RECEIPTS_HANDOFF.md](V2_COUNTERSIGNED_OFFHOST_RECEIPTS_HANDOFF.md).
