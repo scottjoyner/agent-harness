@@ -641,3 +641,23 @@ revocation. **Old ledger + old head** or **unrevoked old SQLite image**
 are still accepted under shared admin control; this is NOT external
 rollback resistance or independently administered revocation.
 All fixtures are disposable and no real model/agent access is allowed.
+
+
+## Signed offline research revocation authority state (2026-10-20)
+
+See [V2_EXTERNAL_REVOCATION_AUTHORITY_HANDOFF.md](V2_EXTERNAL_REVOCATION_AUTHORITY_HANDOFF.md).
+The new `v2_external_authority_state.py` requires a **fifth**
+Ed25519 role and exact independently *supplied* authority public key,
+signed-state SHA-256, predecessor, scope, sequence floor and clock.
+It validates synthetic `checkpoint_recorded` and
+`checkpoint_revoked` states but never authorizes any agent/model.
+A retained newer signed revocation rejects a checkpoint recovered
+from an **actually restored unrevoked Lenovo SQLite image**.
+
+The x1-370/Destroyer/Lenovo physical test passed. All five signing
+roles remain under **the same fleet operator's control**, however;
+the authority key is temporary on x1, not third-party provisioned.
+Rolling back BOTH the authority state and its claimed expected head
+re-enables acceptance of the old signed checkpoint, as the mandatory
+negative test confirms. This is *conditional* revocation verification,
+not independent immutable custody or a production admission gate.

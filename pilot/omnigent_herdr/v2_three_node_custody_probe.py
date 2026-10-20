@@ -34,6 +34,11 @@ from v2_witness_countersign import verify_witness_receipt
 from v2_custody_checkpoint_contract import (
     checkpoint_digest, verify_research_checkpoint,
 )
+from v2_external_authority_state import (
+    sign_synthetic_state, verify_external_state,
+    check_checkpoint_evidence_only, verify_revocation_evidence_only,
+    digest as authority_state_digest,
+)
 
 WORKER_HOST = "x1-370"
 WITNESS_HOST = "destroyer"
@@ -69,6 +74,12 @@ TRUE = (
     "lenovo_revocation_persists_across_processes",
     "lenovo_revocation_blocks_new_valid_signature",
     "lenovo_revocation_can_be_reverted_by_same_admin",
+    "research_external_recorded_checkpoint_verified",
+    "research_external_revocation_signature_verified",
+    "research_external_revocation_denies_restored_ledger",
+    "research_external_stale_state_rejected_with_newer_anchor",
+    "research_external_old_state_with_old_anchor_still_accepted",
+    "research_external_key_substitution_rejected",
 )
 FALSE = (
     "independent_custodian_verified",
@@ -78,6 +89,7 @@ FALSE = (
     "agent_dispatch_authorized",
     "model_egress_authorized",
     "used_real_repository",
+    "independently_custodied_external_authority_verified",
 )
 
 
@@ -430,6 +442,70 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
                 verify(cp1, receipt1, w1, head1, generation=1,
                        previous=ZERO, expected_digest=cp1_digest, floor=0))
 
+            # FIFTH cryptographic role: an ephemeral x1 research-only
+            # authority signer. This machine is operated by the SAME
+            # administrator as Lenovo/Destroyer; never imply true
+            # off-fleet custody or immutable rollback protection.
+            phase = "synthetic_research_external_authority_record"
+            authority = Ed25519PrivateKey.generate()
+            authority_pin = public_fingerprint(authority.public_key())
+            cp2 = cp2_response["checkpoint"]
+            auth_sign_params = dict(
+                authority_signer=authority, scope=SCOPE,
+                custodian_pin=custodian_pin,
+                witness_pin=witness_pin, observer_pin=observer_pin,
+                worker_pin=worker_pin,
+                sequence=1, previous_state_sha256=ZERO,
+                checkpoint_generation=2,
+                checkpoint_sha256=cp2_digest,
+                witness_count=w2[0], state="checkpoint_recorded",
+                issued_at=ISSUED, expires_at=EXPIRES)
+            recorded = sign_synthetic_state(**auth_sign_params)
+            recorded_head = authority_state_digest(recorded)
+
+            def research_evidence(state, state_head, seq, previous, floor):
+                return check_checkpoint_evidence_only(
+                    authority_state=state,
+                    trusted_authority_key=authority.public_key(),
+                    expected_authority_pin=authority_pin,
+                    expected_state_sha256=state_head,
+                    expected_sequence=seq,
+                    expected_previous_sha256=previous,
+                    minimum_sequence=floor,
+                    checkpoint=cp2,
+                    witness_receipt=receipt2,
+                    trusted_custodian_key=custodian_pub,
+                    trusted_witness_key=witness_pub,
+                    observer_public_key=observer.public_key(),
+                    worker_fingerprint=worker_pin,
+                    observer_id=OBSERVER, worker_id=WORKER,
+                    expected_witness_head=w2,
+                    expected_observer_head=head2,
+                    expected_scope=SCOPE,
+                    expected_checkpoint_generation=2,
+                    expected_checkpoint_previous_sha256=cp1_digest,
+                    expected_checkpoint_sha256=cp2_digest,
+                    minimum_witness_count=w1[0],
+                    trusted_now=ISSUED+10)
+            report["research_external_recorded_checkpoint_verified"] = (
+                research_evidence(recorded, recorded_head, 1, ZERO, 0))
+            report["research_external_key_substitution_rejected"] = (
+                not verify_external_state(
+                    recorded,
+                    trusted_authority_key=
+                        Ed25519PrivateKey.generate().public_key(),
+                    expected_authority_pin=authority_pin,
+                    expected_state_sha256=recorded_head,
+                    expected_sequence=1,
+                    expected_previous_sha256=ZERO,
+                    minimum_sequence=0,
+                    expected_scope=SCOPE,
+                    expected_custodian_pin=custodian_pin,
+                    expected_witness_pin=witness_pin,
+                    expected_observer_pin=observer_pin,
+                    expected_worker_pin=worker_pin,
+                    trusted_now=ISSUED+10))
+
             phase = "durable_ledger_duplicate_and_restart"
             duplicate_rc, _ = custodian("sign", request2)
             recover_rc, recovered = custodian("readback", {
@@ -483,6 +559,40 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
                 revoke_rc == 0 and revoked.get("locally_revoked") is True
                 and recovered_after_rc == 2)
 
+            phase = "synthetic_research_external_revocation"
+            revoked_state = sign_synthetic_state(**{
+                **auth_sign_params,
+                "sequence": 2,
+                "previous_state_sha256": recorded_head,
+                "state": "checkpoint_revoked",
+            })
+            revoked_state_head = authority_state_digest(revoked_state)
+            authority_check = dict(
+                authority_state=revoked_state,
+                trusted_authority_key=authority.public_key(),
+                expected_authority_pin=authority_pin,
+                expected_state_sha256=revoked_state_head,
+                expected_sequence=2,
+                expected_previous_sha256=recorded_head,
+                minimum_sequence=1,
+                expected_scope=SCOPE,
+                expected_custodian_pin=custodian_pin,
+                expected_witness_pin=witness_pin,
+                expected_observer_pin=observer_pin,
+                expected_worker_pin=worker_pin,
+                expected_checkpoint_sha256=cp2_digest,
+                trusted_now=ISSUED+10,
+            )
+            report["research_external_revocation_signature_verified"] = (
+                verify_revocation_evidence_only(**authority_check)
+                and not research_evidence(
+                    revoked_state, revoked_state_head,
+                    2, recorded_head, 1))
+            report["research_external_stale_state_rejected_with_newer_anchor"] = (
+                not research_evidence(
+                    recorded, revoked_state_head,
+                    2, recorded_head, 1))
+
             # A valid NEW observer/witness stage must remain un-signable
             # when this local custodian has been revoked.
             delivery = worker_sign_delivery(
@@ -516,6 +626,20 @@ def physical(*, witness_root: str, custody_root: str) -> dict:
             report["lenovo_revocation_can_be_reverted_by_same_admin"] = (
                 old_recover_rc == 0
                 and old_recover.get("checkpoint_sha256") == cp2_digest)
+            # Local Lenovo readback succeeds after the old SQLite image
+            # is restored. Retaining a separately signed x1 revocation
+            # still REFUSES this exact checkpoint as valid evidence.
+            report["research_external_revocation_denies_restored_ledger"] = (
+                old_recover_rc == 0
+                and verify_revocation_evidence_only(**authority_check)
+                and not research_evidence(
+                    revoked_state, revoked_state_head,
+                    2, recorded_head, 1))
+            # REQUIRED vulnerability: if same operator rolls back its
+            # claimed external state + head + sequence floor as well,
+            # the old valid recorded state verifies again. Still HOLD.
+            report["research_external_old_state_with_old_anchor_still_accepted"] = (
+                research_evidence(recorded, recorded_head, 1, ZERO, 0))
             copy_custody_ledger(
                 "ledger-revoked.sqlite3", "custody-checkpoints.sqlite3")
             final_denied_rc, _ = custodian("readback", {

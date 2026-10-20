@@ -138,3 +138,20 @@ transaction IDs, then crash/replay/partition injection. Until
 that independent authority is demonstrated, this implementation
 is only a synthetic research gate: no agent runtime, inference,
 production deployment, public tunnel, merge or host security change.
+
+
+## Follow-on: signed off-ledger revocation observed after Lenovo rollback
+
+An additional **research-only fifth-role signing fixture** on x1-370
+now issues signed `checkpoint_recorded` and `checkpoint_revoked`
+authority states tied to the exact Lenovo custody checkpoint.
+After a physical restore of an older, **unrevoked** Lenovo SQLite
+image, the off-ledger, retained newer signed authority revocation
+still **rejects the old checkpoint as valid evidence**.
+
+This is conditional on externally retained, trustworthy pins,
+expected signed-state SHA-256 and sequence floor. The same operator
+controls all of these values in this experiment. Restoring the
+old authority state and its old head/floor makes the old checkpoint
+look valid again: independent immutable custody remains UNPROVEN.
+See [V2_EXTERNAL_REVOCATION_AUTHORITY_HANDOFF.md](V2_EXTERNAL_REVOCATION_AUTHORITY_HANDOFF.md).
