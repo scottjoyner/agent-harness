@@ -892,3 +892,15 @@ behavior, restarts it, expires a fake lease, and proves old claim/token
 completion and duplicate DONE are rejected. It does not prove independent
 administrative custody, production mount protection, real task execution
 or production-grade distributed fencing. Release remains **HOLD**.
+
+## Hermes restricted Compose-created startup canary (2026-10-21)
+
+See [ASSISTX_HERMES_COMPOSE_PHYSICAL_HANDOFF.md](ASSISTX_HERMES_COMPOSE_PHYSICAL_HANDOFF.md).
+`assistx_hermes_compose_physical_canary.py` uses the existing guarded
+synthetic-only Compose YAML and physically confirms that `docker compose
+create --no-build --pull never` yields the exact reproducible rootless
+image, two synthetic mounts, no network and a normal-entrypoint mock poll.
+It checks negative knowledge/rootfs writes, disposable cleanup and the
+unchanged running production Hermes adapter. This does **not** approve
+real-data ingestion, provider/model execution or production cutover;
+issue #414 remains open and release stays HOLD.
