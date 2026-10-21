@@ -821,3 +821,18 @@ and its 20 focused tests are staged on both nodes. A
 synthetic restricted mount example may pass the static
 overlap test but is **not** a running-container proof.
 No production container or Compose file was modified.
+
+## Physically isolated Hermes image shell canary (2026-10-20)
+
+See [ASSISTX_HERMES_DISPOSABLE_IMAGE_CANARY_HANDOFF.md](ASSISTX_HERMES_DISPOSABLE_IMAGE_CANARY_HANDOFF.md).
+`assistx_hermes_container_canary.py` is a one-shot explicitly
+opt-in physical x1 operator fixture. It uses the exact IMAGE ID
+of the running AssistX Hermes adapter, but overrides its
+normal agent entrypoint with a fixed test shell; the short-lived
+container has no network/production mounts, non-root UID,
+read-only rootfs, all capabilities dropped and only synthetic
+RO knowledge plus RW scratch. Two distinct physical x1 runs
+passed; production Hermes stayed running on the same image.
+This does **not** prove legitimate Hermes production workflows,
+real evidence write denial, independent custody or model
+execution authorization. The fixture always returns HOLD.
