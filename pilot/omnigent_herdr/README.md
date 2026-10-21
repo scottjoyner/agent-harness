@@ -854,3 +854,15 @@ cross-run build-context timestamp difference. Fixing both the
 stable local FROM tag and copied context-file mtimes produced
 **identical image IDs across separate physical executions**.
 Production agent execution and source authority remain HOLD.
+
+## Disposable Hermes localhost HTTP lifecycle + restart (2026-10-21)
+
+See [ASSISTX_HERMES_LOOPBACK_HTTP_HANDOFF.md](ASSISTX_HERMES_LOOPBACK_HTTP_HANDOFF.md).
+`assistx_hermes_fake_http_canary.py` starts the verified rootless normal
+entrypoint twice in one strictly disposable container. In-network-disabled
+localhost HTTP exercises synthetic claim, token, heartbeats, DONE completion,
+revocation (HTTP 409), denied stale completion and completed-task restart
+behavior. This fake server is an in-process test thread, **not** production
+AssistX or independently administered lease fencing. All 10 physical
+checks passed on x1-370; ephemeral Docker objects were removed and production
+Hermes remained untouched. Release authority is still **HOLD**.
