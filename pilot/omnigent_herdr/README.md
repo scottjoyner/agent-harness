@@ -904,3 +904,15 @@ It checks negative knowledge/rootfs writes, disposable cleanup and the
 unchanged running production Hermes adapter. This does **not** approve
 real-data ingestion, provider/model execution or production cutover;
 issue #414 remains open and release stays HOLD.
+
+## Hermes restricted knowledge read/restart canary (2026-10-21)
+
+See [ASSISTX_HERMES_KNOWLEDGE_RESTART_HANDOFF.md](ASSISTX_HERMES_KNOWLEDGE_RESTART_HANDOFF.md).
+An opt-in Compose-created, networkless, rootless image canary calls the
+actual Hermes adapter’s bounded context read and eval-record persistence
+against synthetic RO corpus and isolated RW workspace. Two sequential
+fresh container starts prove output/registry persistence across restart.
+This reveals an **unresolved design gap**: knowledge reads and self-task
+writes share the same root; the fixture redirects its module variable
+solely for the synthetic read. No actual ingestion or real model tasks
+were authorized. The production deployment decision remains **HOLD**.
