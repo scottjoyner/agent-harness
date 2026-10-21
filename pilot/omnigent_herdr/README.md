@@ -836,3 +836,21 @@ passed; production Hermes stayed running on the same image.
 This does **not** prove legitimate Hermes production workflows,
 real evidence write denial, independent custody or model
 execution authorization. The fixture always returns HOLD.
+
+## Rootless Hermes normal entrypoint + reproducible mock startup (2026-10-21)
+
+See [ASSISTX_HERMES_NORMAL_STARTUP_REPRODUCIBLE_HANDOFF.md](ASSISTX_HERMES_NORMAL_STARTUP_REPRODUCIBLE_HANDOFF.md).
+`assistx_hermes_normal_startup_canary.py` is an explicit opt-in,
+one-shot x1-only synthetic container test. From the exact running
+Hermes image ID, it produces two timestamp-controlled local overlay
+builds, verifies image equality, then starts the **normal**
+rootless entrypoint and real `assistx.strict_executor_main`
+with all external task requests intercepted by a private
+mock. It uses no production mounts, network or credentials;
+all images and scratch containers are removed.
+
+The initial within-run overlay reproducibility report hid a
+cross-run build-context timestamp difference. Fixing both the
+stable local FROM tag and copied context-file mtimes produced
+**identical image IDs across separate physical executions**.
+Production agent execution and source authority remain HOLD.
