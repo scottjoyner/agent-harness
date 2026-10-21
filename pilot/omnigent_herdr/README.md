@@ -789,3 +789,17 @@ identify them; unauthenticated AssistX whoami returns 401.
 Those observations are not proof of independently authorized
 provider admission. Keep the Herdr/Omnigent pilot disconnected
 from production dispatch.
+
+## AssistX → Herdr read-only catalog bridge (2026-10-20)
+
+See [ASSISTX_READONLY_BRIDGE_HANDOFF.md](ASSISTX_READONLY_BRIDGE_HANDOFF.md).
+`assistx_readonly_bridge.py --json` is a one-shot operator diagnostic
+deployed to both x1-370 and Beelink in private user-owned folders.
+It checks fixed local AssistX/Router API identities, the protected
+anonymous auth boundary, and the **count only** of advertised
+Auto-Router models. On x1, both service identities matched, anonymous
+AssistX whoami/runtime catalog returned 401 and the router listed
+11 models. Beelink's rootless API ports were unreachable from the host
+namespace; no model catalog was inferred there. The bridge is
+**HOLD-only** and never turns model advertisements into loaded
+models, provider execution, agent dispatch or deployment authority.
