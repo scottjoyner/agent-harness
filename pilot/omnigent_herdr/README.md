@@ -866,3 +866,16 @@ behavior. This fake server is an in-process test thread, **not** production
 AssistX or independently administered lease fencing. All 10 physical
 checks passed on x1-370; ephemeral Docker objects were removed and production
 Hermes remained untouched. Release authority is still **HOLD**.
+
+## Separate synthetic AssistX API crash and lease canary (2026-10-21)
+
+See [ASSISTX_HERMES_SEPARATE_FAKE_API_FAULT_HANDOFF.md](ASSISTX_HERMES_SEPARATE_FAKE_API_FAULT_HANDOFF.md).
+`assistx_hermes_fault_process_canary.py` is an explicit opt-in x1-only
+physical qualification of the normal rootless Hermes executor with a
+**separate Python fake HTTP API process** (same disposable networkless
+container). Exercises DONE completion, synthetic revoke/HTTP 409, API
+SIGKILL + restart, preserved lease, expiration, replacement claim, old-token
+fencing, and final state recovery. All production tasks, provider egress and
+Compose deployment are out of scope. This is NOT separately administered
+revocation authority, independent custody or live concurrent fencing.
+Release remains HOLD.
