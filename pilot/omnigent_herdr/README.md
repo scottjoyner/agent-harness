@@ -879,3 +879,16 @@ fencing, and final state recovery. All production tasks, provider egress and
 Compose deployment are out of scope. This is NOT separately administered
 revocation authority, independent custody or live concurrent fencing.
 Release remains HOLD.
+
+## Hermes cross-container internal-bridge lease canary (2026-10-21)
+
+See [ASSISTX_HERMES_PRIVATE_BRIDGE_HANDOFF.md](ASSISTX_HERMES_PRIVATE_BRIDGE_HANDOFF.md).
+`assistx_hermes_private_network_canary.py` is an opt-in x1-only
+synthetic qualification with **two separate Docker containers** on an
+inspected private `--internal` bridge and no published ports. The normal
+rootless Hermes entrypoint exchanges real HTTP with a synthetic server;
+then the test stops only that server container, verifies connection-loss
+behavior, restarts it, expires a fake lease, and proves old claim/token
+completion and duplicate DONE are rejected. It does not prove independent
+administrative custody, production mount protection, real task execution
+or production-grade distributed fencing. Release remains **HOLD**.
