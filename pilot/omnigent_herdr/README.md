@@ -803,3 +803,21 @@ AssistX whoami/runtime catalog returned 401 and the router listed
 namespace; no model catalog was inferred there. The bridge is
 **HOLD-only** and never turns model advertisements into loaded
 models, provider execution, agent dispatch or deployment authority.
+
+## Hermes adapter mount exposure guard (2026-10-20)
+
+See [ASSISTX_HERMES_MOUNT_HOLD_HANDOFF.md](ASSISTX_HERMES_MOUNT_HOLD_HANDOFF.md).
+`assistx_hermes_mount_guard.py --json` performs one fixed,
+read-only Docker `inspect .Mounts` on `assistx-hermes-adapter`.
+It canonicalizes host mount sources (including symlinks), counts
+writable aliases enclosing the protected Watchdog evidence
+tree, and exports a sanitized HOLD-only summary.
+
+The **live x1 adapter** has 16 mounts, 9 writable; **two**
+distinct RW bind sources overlap the protected evidence.
+Beelink's ordinary user cannot inspect its rootless Docker
+mounts; evidence remains unavailable/HOLD. The mount guard
+and its 20 focused tests are staged on both nodes. A
+synthetic restricted mount example may pass the static
+overlap test but is **not** a running-container proof.
+No production container or Compose file was modified.
