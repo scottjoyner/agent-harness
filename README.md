@@ -1,5 +1,12 @@
 # Synergistic Agent Harness
 
+<!-- repo-entrypoint-guide:start -->
+> **Where to start:** For current real-task benchmarking, use [`docs/REAL-TASK-BENCHMARK.md`](docs/REAL-TASK-BENCHMARK.md) and [`docs/HARNESS-REGISTRY.md`](docs/HARNESS-REGISTRY.md); use [`EVIDENCE-PROVENANCE.md`](EVIDENCE-PROVENANCE.md) to distinguish legacy results from current evidence. The dual-model instructions below describe the earlier harness.
+> >
+> > **Safe first check:** `python3 realtime_bench.py validate` validates benchmark definitions without requiring a model endpoint. An isolated test or green local check does not establish production deployment readiness.
+<!-- repo-entrypoint-guide:end -->
+
+
 > **New in this branch: the real-task benchmark harness.**
 >
 > The sections below document the original dual-model synergistic harness and
