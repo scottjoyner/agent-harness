@@ -1,0 +1,19 @@
+# Research ONLY. This is NOT a production override or an authorizing rollback.
+# A unique disposable project name is mandatory for physical runs.
+name: assistx-hermes-quiescent-research
+services:
+  hermes-quiescent-synthetic:
+    profiles: [quiescent-canary]
+    image: ${HERMES_DISPOSABLE_IMAGE:?exact local research image required}
+    pull_policy: never
+    entrypoint: ["/bin/sleep"]
+    command: ["75"]
+    restart: "no"
+    user: "1000:1000"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 24
+    mem_limit: 134217728
+    cpus: 0.5

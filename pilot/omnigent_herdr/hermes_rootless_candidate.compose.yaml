@@ -1,0 +1,45 @@
+# Restricted Hermes staging only. NEVER use production Compose override files.
+# No default start: this service requires explicit synthetic-canary profile.
+name: assistx-hermes-disposable-research
+services:
+  hermes-synthetic:
+    profiles: [synthetic-canary]
+    image: ${HERMES_CANDIDATE_IMAGE:?immutable reviewed local image required}
+    pull_policy: never
+    entrypoint: ["/entrypoint.sh"]
+    command: ["python3", "-B", "-m", "assistx.strict_executor_main"]
+    restart: "no"
+    init: false
+    user: "1000:1000"
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 32
+    mem_limit: 402653184
+    cpus: 0.5
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16777216
+    environment:
+      HOME: /workspace
+      HERMES_HOME: /workspace/hermes-home
+      HERMES_CONFIG_HOME: /workspace/.hermes
+      PYTHONPATH: /workspace:/app/src
+      ASSISTX_URL: http://127.0.0.1:1
+      ASSISTX_EXECUTOR_BOOTSTRAP_TOKEN: SYNTHETIC_BOOTSTRAP_ONLY
+      ASSISTX_STRICT_EXECUTOR_AUTH: "true"
+      HERMES_AGENT_ID: hermes-synthetic-canary
+      HERMES_SELFTASK_ENABLED: "false"
+      HERMES_SELFTASK_BULK_MODELS: ""
+      HERMES_EVAL_PATH: /workspace/eval.json
+      HERMES_KNOWLEDGE_ROOT: /workspace/knowledge
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - type: bind
+        source: ${HERMES_SYNTHETIC_KNOWLEDGE:?synthetic RO fixture required}
+        target: /research/knowledge
+        read_only: true
+      - type: bind
+        source: ${HERMES_SYNTHETIC_WORKSPACE:?synthetic RW fixture required}
+        target: /workspace
+        read_only: false

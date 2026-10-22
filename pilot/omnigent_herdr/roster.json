@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "pilot_host": "lenovo",
+  "source": {
+    "og": "https://github.com/jmvbambico/og",
+    "evaluated_commit": "f3ed9ddd57d78e024724f4df741940f0e41e6585"
+  },
+  "orchestrator": {"id": "claude", "requested_model": "Opus 5.5", "model_pin": null},
+  "coders": [
+    {"id": "kilo", "model_pin": "kilo/kilo-auto/free"},
+    {"id": "opencode", "model_pin": "opencode/deepseek-v4.1-flash-free"},
+    {"id": "freebuff", "model_pin": "deepseek/deepseek-v4-flash"},
+    {"id": "cmdcode", "model_pin": "deepseek/deepseek-v4.1-flash"}
+  ],
+  "reviewer": {"id": "codex", "model_pin": "gpt-6-luna"},
+  "policy": {
+    "public_tunnel": false,
+    "auto_update": false,
+    "production_writes": false,
+    "deployment": false,
+    "merge": "manual_only",
+    "max_parallel_coders": 2
+  }
+}
