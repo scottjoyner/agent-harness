@@ -1,0 +1,54 @@
+{
+  "finished_at": "2026-10-28T22:46:50.234085",
+  "job_id": "2f6c26fa-22cf-4cd5-90b7-437d60b142ca",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__joyner-toolcall__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "bun-sourcemap-leak__twV9ntf"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T22:45:41.752963",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 24,
+        "consecutive_duplicate_calls": 6,
+        "reported_image_modality_unsupported": false,
+        "tool_calls": {
+          "bash": 5,
+          "read": 18
+        },
+        "tool_errors": {
+          "bash": 5,
+          "read": 18
+        },
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 75281,
+      "official_pass": false,
+      "output_tokens": 2030,
+      "reward": 0.0,
+      "task": "terminal-bench/bun-sourcemap-leak",
+      "trial": "bun-sourcemap-leak__twV9ntf"
+    }
+  ]
+}

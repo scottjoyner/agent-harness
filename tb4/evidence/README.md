@@ -34,3 +34,14 @@ not task-solving reliability.
 preflight on the R9700. The test invokes a made-up `tb4_probe` function and
 checks its JSON arguments; it is not a Terminal-Bench score. The RX480's
 existing text endpoint did not emit a native call on the corresponding probe.
+
+`r9700-guarded-vigenere-20261028.json` and
+`r9700-guarded-bun-20261028.json` contain official Harbor verifier rewards
+for two additional distinct v4 tasks (`interleaved-vigenere` and
+`bun-sourcemap-leak`) run with `tb4.pi_agent:GuardedPi` on the R9700-backed
+MiniCPM5 endpoint. Both completed without trial exceptions and received reward
+0.0. The Bun trial's tool observations confirm that the extension blocked
+six repeated failed commands; the model still failed task verification.
+The current EISDIR-memory improvement was added after those canary runs and
+is validated through deterministic extension event simulation, not another
+claim about changed benchmark success rate.

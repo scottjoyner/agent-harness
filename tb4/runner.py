@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 DATASET = "terminal-bench/terminal-bench@4.0.0"
 DEFAULT_HARBOR = "harbor"
 DEFAULT_AGENT = "pi"
+GUARDED_AGENT = "tb4.pi_agent:GuardedPi"
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS_DIR = ROOT / ".tb4-runs"
 PI_PROMPT = ROOT / "tb4" / "pi-task-prompt.md"
@@ -60,7 +61,7 @@ def make_command(args: argparse.Namespace, endpoint_override: str | None = None)
     if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", args.key_env):
         raise ValueError("key-env must be a safe environment variable name")
     cmd = [str(args.harbor), "run", "-d", DATASET,
-           "--agent", DEFAULT_AGENT, "--model", args.model,
+           "--agent", (GUARDED_AGENT if getattr(args, "guarded_pi", False) else DEFAULT_AGENT), "--model", args.model,
            "--base-url", endpoint, "--api-format", "openai_chat_completions",
            "--api-key-name", args.key_env,
            "--ak", f"max_turns={args.max_turns}",
@@ -117,6 +118,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-thinking-gateway", action="store_true",
                         help="Managed authenticated Docker-bridge gateway (no thinking)")
     parser.add_argument("--gateway-max-output-tokens", type=int, default=2048)
+    parser.add_argument("--guarded-pi", action="store_true",
+                        help="Use Pi tool-error repeat blocker (Harbor 0.25.0)")
     parser.add_argument("--probe-tools", action="store_true",
                         help="Run a tiny synthetic native-tool API capability probe")
     parser.add_argument("--require-tool-calls", action="store_true",
@@ -171,7 +174,8 @@ def main(argv: list[str] | None = None) -> int:
         command = make_command(args, endpoint_override=endpoint_for_agent)
         dest.mkdir(parents=True, exist_ok=True)
         manifest = {"timestamp_utc": datetime.now(timezone.utc).isoformat(),
-                    "dataset": DATASET, "agent": DEFAULT_AGENT, "model": args.model,
+                    "dataset": DATASET, "agent": (GUARDED_AGENT if args.guarded_pi else DEFAULT_AGENT),
+                    "model": args.model,
                     "endpoint": normalize_endpoint(args.endpoint), "mode": args.mode,
                     "agent_endpoint": endpoint_for_agent,
                     "gateway_disable_thinking": bool(gateway),

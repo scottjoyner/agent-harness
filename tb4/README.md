@@ -115,3 +115,31 @@ With a no-auth endpoint use both flags safely:
   --endpoint http://100.83.215.83:1234/v1 --model openai/joyner-toolcall \
   --probe-tools --require-tool-calls --job-name tb4-tool-probe
 ```
+
+## Opt-in Pi extension for invalid command recovery
+
+`--guarded-pi` selects the Harbor 0.25.0-compatible `tb4.pi_agent:GuardedPi`
+adapter. It leaves the official verifier untouched. A bundled Pi event hook
+blocks an immediately repeated failed tool call, directory reads using Pi's
+file reader (including paths observed to yield `EISDIR`), and terminal `cat > file` invocations without content. It does
+not guess repairs or rewrite task files. Valid heredocs and `write` are allowed.
+The extension is covered by a Node 22 runtime event simulation, as well as
+static and Harbor schema tests. The first official guarded canary did not pass;
+this is a tool-reliability feature, **not** a demonstrated TB4 score gain.
+
+## R9700 guarded canaries (October 28, 2026)
+
+Two additional distinct official tasks, `interleaved-vigenere` and
+`bun-sourcemap-leak`, completed with verifier reward 0.0. The first had 11
+tool calls; the latter had 23, including six blocked duplicates in its trace.
+Both used the existing R9700-backed model. The tool guard now also tracks
+`EISDIR` paths within a trial and prevents repeated file reads of known
+directories. That incremental behavior has runtime tests, but has not been
+benchmarked as an improvement over the same held-out tasks.
+
+The RX 480 remains a secondary lightweight inference target: its current text
+endpoint succeeded on a simple text request but did not satisfy the synthetic
+native-function-call gate. Do not route official tool-dependent Pi trials to it
+until its model and serving template are validated. `joyner` had very little
+free system RAM and full swap at inspection; do not launch new large models
+without checking both host RAM and dedicated GPU memory first.

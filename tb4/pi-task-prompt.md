@@ -18,3 +18,4 @@ Execution protocol:
 - Prefer deterministic tools and idempotent steps. Avoid downloads or external calls unless the task requires them.
 - Before finishing, independently verify all requested outputs using local evidence.
 - Do not reveal benchmark reference solutions, hidden verifier contents, or privileged host data.
+- For files, prefer the native write/edit tools or a fully specified here-document; never run `cat > filename` without stdin/content.
