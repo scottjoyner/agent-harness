@@ -192,3 +192,38 @@ premature context overflow, but **not** improved TB4 task success. Source
 records and numeric context telemetry are in `tb4/evidence/`. A dedicated
 R9700 head-to-head official run remains outstanding; never launch a second
 large server under Joyner's observed RAM pressure without a capacity check.
+
+## Explicit dedicated-R9700 inference and RX480 synthetic comparison (Oct 29)
+
+An existing production-safe, isolated LFM3-1.7B-QAD-Q4_0 service on `joyner`
+was used for a real eight-case inference test, with `--device Vulkan1` (32 GiB
+RADV GFX1201 **dedicated R9700**) and **no new model launch**. The service's
+local `online_probe.py` provides fixed public examples and uses its own
+protected API configuration; the benchmark collects no auth credentials or
+raw prompts/responses from the service. The exact run at 2026-10-29
+04:03:34.835547 UTC completed 8/8 HTTP requests, obtained **5/8 strict exact
+matches**, median end-to-end **0.2359 s**, and p95 **0.5648 s**. Two responses
+had zero-length final content after consuming 64 completion tokens; this
+suggests reasoning-budget exhaustion, but it has not been experimentally
+confirmed with a thinking-disabled R9700 run.
+
+The live RX480 Ling endpoint on `deathstar` executed the same eight public
+prompts via `python -m tb4.fleet_probe` in two modes:
+
+| Endpoint/model | Thinking | Exact matches | Median e2e latency | Completion tokens total |
+| --- | --- | ---: | ---: | ---: |
+| R9700 / LFM3 1.7B QAD Q4_0 | Default | 5/8 | 0.2359 s | 453 |
+| RX480 / Ling 3.0 tiny APEX | Enabled | 8/8 | 0.7611 s | 236 |
+| RX480 / Ling 3.0 tiny APEX | Disabled | 8/8 | 0.3431 s | 20 |
+
+The RX480 improved its median by ~55% with reasoning disabled on these fixed
+*synthetic* cases while retaining 8/8 exact answers. This is an endpoint/model
+and settings comparison, **not an apples-to-apples GPU throughput benchmark**:
+models, sizes, prompts' chat templates, and hosts differ. None of these
+samples were official TB4 tasks or verifier results. The more relevant TB4
+harness regression remains the earlier 0.0 official score on both Ling nodes.
+
+The dedicated R9700 has ~32 GiB nominal VRAM free but `joyner` had only
+~0.3 GiB available host RAM with its 4 GiB swap full. Do not infer safe
+capacity for launching large additional model processes from VRAM alone.
+The RX480 service was measured without stopping or replacing active workloads.

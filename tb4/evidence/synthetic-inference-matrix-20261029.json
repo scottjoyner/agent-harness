@@ -1,0 +1,44 @@
+{
+  "dataset": "eight_public_synthetic_instruction_following_cases",
+  "note": "not Terminal-Bench 4; different models and hosts; no hardware-normalized throughput inference",
+  "dedicated_r9700_device": "Vulkan1 RADV GFX1201, as selected explicitly by existing LFM3 service",
+  "rx480_device": "RX 480 8GiB, Vulkan device used by existing Ling service",
+  "runs": [
+    {
+      "label": "R9700 LFM3 1.7B QAD Q4_0 reasoning default",
+      "file": "joyner-r9700-lfm3-synthetic8-20261029.json",
+      "model": "LFM3-1.7B-QAD-Q4_0",
+      "exact_matches": 5,
+      "completed_requests": 8,
+      "median_e2e_latency_s": 0.2359,
+      "p95_e2e_latency_s": 0.5648,
+      "total_completion_tokens": 453,
+      "empty_responses": 2,
+      "synthetic_only": true
+    },
+    {
+      "label": "RX480 Ling thinking on",
+      "file": "deathstar-rx480-ling-synthetic8-thinking-on-20261029.json",
+      "model": "deathstar-ling-rx480",
+      "exact_matches": 8,
+      "completed_requests": 8,
+      "median_e2e_latency_s": 0.7611,
+      "p95_e2e_latency_s": 0.9946,
+      "total_completion_tokens": 236,
+      "empty_responses": 0,
+      "synthetic_only": true
+    },
+    {
+      "label": "RX480 Ling thinking off",
+      "file": "deathstar-rx480-ling-synthetic8-thinking-off-20261029.json",
+      "model": "deathstar-ling-rx480",
+      "exact_matches": 8,
+      "completed_requests": 8,
+      "median_e2e_latency_s": 0.3431,
+      "p95_e2e_latency_s": 0.4553,
+      "total_completion_tokens": 20,
+      "empty_responses": 0,
+      "synthetic_only": true
+    }
+  ]
+}

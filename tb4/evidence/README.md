@@ -64,3 +64,16 @@ kinds, and numeric history-compaction telemetry. The bounded runs reach their
 normal 28-turn budget, but all four official verifier rewards remain 0.0.
 No benchmark answer data, hidden verifier artifacts, inference credentials,
 or Tailscale IP addresses were added to the repository.
+
+### Actual R9700 inference (not default Vulkan0)
+
+`joyner-r9700-lfm3-synthetic8-20261029.json` was copied from the existing
+Joyner LFM3 probe receipt selected by its exact UTC timestamp
+`2026-10-29T04:03:34.835547+00:00`. The service declares `--device Vulkan1`,
+which is the discrete AMD GFX1201 R9700, not the default integrated GPU.
+`deathstar-rx480-ling-synthetic8-thinking-on-20261029.json` and
+`deathstar-rx480-ling-synthetic8-thinking-off-20261029.json` are independent
+bounded public eight-case runs of the RX480 Ling endpoint. Both are strict
+string-match synthetic instruction tests, **not** official Terminal-Bench.
+`synthetic-inference-matrix-20261029.json` is a normalized comparison without
+raw outputs, private cases, credential values, or full system prompts.
