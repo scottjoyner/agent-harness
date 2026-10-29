@@ -8,3 +8,10 @@ __pycache__/
 
 .pytest_cache/
 .ruff_cache/
+
+# Isolated Terminal-Bench 4 tooling and raw evaluation evidence
+.venv/
+.pi/
+.tb4-runs/
+
+.tb4-cache/

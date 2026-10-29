@@ -1,0 +1,55 @@
+{
+  "finished_at": "2026-10-28T21:08:50.859248",
+  "job_id": "e39c31f2-6ca7-42b5-995c-6cbf2225ef6c",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__joyner-toolcall__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "layout-config-recreation2__42A3EqV"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T21:07:29.868354",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 13,
+        "consecutive_duplicate_calls": 3,
+        "reported_image_modality_unsupported": true,
+        "tool_calls": {
+          "bash": 2,
+          "read": 11,
+          "write": 1
+        },
+        "tool_errors": {
+          "bash": 2,
+          "read": 9
+        },
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 46078,
+      "official_pass": false,
+      "output_tokens": 2706,
+      "reward": 0.0,
+      "task": "terminal-bench/layout-config-recreation2",
+      "trial": "layout-config-recreation2__42A3EqV"
+    }
+  ]
+}

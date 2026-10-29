@@ -1,0 +1,58 @@
+{
+  "finished_at": "2026-10-28T23:31:23.256308",
+  "job_id": "049a7e46-e9f7-47bd-a7e8-9147c7264642",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__deathstar-ling-rx480__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "legacy-utility-triage__KxVbFEF"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T23:26:09.910579",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 28,
+        "consecutive_duplicate_calls": 0,
+        "inference_errors": {
+          "agent_turn_limit": 1
+        },
+        "model_turns": 29,
+        "pi_events_available": true,
+        "reported_image_modality_unsupported": false,
+        "tool_calls": {
+          "bash": 24,
+          "read": 6
+        },
+        "tool_errors": {
+          "bash": 1
+        },
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 97840,
+      "official_pass": false,
+      "output_tokens": 1849,
+      "reward": 0.0,
+      "task": "terminal-bench/legacy-utility-triage",
+      "trial": "legacy-utility-triage__KxVbFEF"
+    }
+  ]
+}

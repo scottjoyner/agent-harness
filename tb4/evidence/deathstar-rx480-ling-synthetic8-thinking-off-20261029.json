@@ -1,0 +1,106 @@
+{
+  "schema": "tb4.synthetic_fleet_probe.v1",
+  "timestamp_utc": "2026-10-29T04:05:24.915186+00:00",
+  "model": "deathstar-ling-rx480",
+  "think_disabled": true,
+  "scope": "public_synthetic_instruction_adherence_not_terminal_bench",
+  "probe_count": 8,
+  "completed_requests": 8,
+  "exact_matches": 8,
+  "empty_responses": 0,
+  "median_e2e_latency_s": 0.3431,
+  "p95_e2e_latency_s": 0.4553,
+  "samples": [
+    {
+      "case_id": "arithmetic",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 3,
+      "prompt_tokens": 41,
+      "elapsed_s": 0.4959
+    },
+    {
+      "case_id": "capital",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 2,
+      "prompt_tokens": 38,
+      "elapsed_s": 0.3112
+    },
+    {
+      "case_id": "translation",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 2,
+      "prompt_tokens": 39,
+      "elapsed_s": 0.3372
+    },
+    {
+      "case_id": "extraction",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 3,
+      "prompt_tokens": 44,
+      "elapsed_s": 0.3588
+    },
+    {
+      "case_id": "boundary",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 2,
+      "prompt_tokens": 42,
+      "elapsed_s": 0.349
+    },
+    {
+      "case_id": "format",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 3,
+      "prompt_tokens": 39,
+      "elapsed_s": 0.306
+    },
+    {
+      "case_id": "successor",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 3,
+      "prompt_tokens": 35,
+      "elapsed_s": 0.3799
+    },
+    {
+      "case_id": "classification",
+      "request_ok": true,
+      "strict_exact_match": true,
+      "output_was_empty": false,
+      "reasoning_was_present": false,
+      "finish_reason": "stop",
+      "completion_tokens": 2,
+      "prompt_tokens": 40,
+      "elapsed_s": 0.3342
+    }
+  ],
+  "contains_raw_responses": false,
+  "contains_credentials": false,
+  "official_tb4_reward": null
+}

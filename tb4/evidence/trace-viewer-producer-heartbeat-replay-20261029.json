@@ -1,0 +1,30 @@
+{
+  "duplicate_reimport_events": 0,
+  "filtered_request_provenance": [
+    [
+      "reported",
+      10,
+      34348
+    ]
+  ],
+  "imported_publisher_state_lines": 2,
+  "initial_export_lines": 12,
+  "journal_lines": 13,
+  "latest_publisher_state": "stopped",
+  "new_inference_executed": false,
+  "note": "Replayed existing real Harbor records into a synthetic empty source projection; producer heartbeat active/stopped reflects replay lifecycle, not a fresh GPU run or verified performance.",
+  "observed_requests": 10,
+  "official_verifier_reward": 0.0,
+  "official_verifier_trials": 1,
+  "provider_reported_tokens": 34348,
+  "publisher_states": [
+    "active",
+    "stopped"
+  ],
+  "schema": "tb4.publisher_liveness_replay.v1",
+  "session_events": 11,
+  "source": "previously saved actual 10-turn RX480 Harbor/Pi run",
+  "source_trace_db_changed": false,
+  "stop_export_lines": 1,
+  "verified_successes": 0
+}

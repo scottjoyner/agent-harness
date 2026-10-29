@@ -1,0 +1,22 @@
+{
+  "duplicate_reimport_lines": 0,
+  "host": "deathstar",
+  "legacy_without_publisher_clock": 0,
+  "new_inference_executed": false,
+  "notes": "saved-run replay of actual Harbor records; no new inference or TB4 score, no sustained live delivery claim",
+  "official_reward": 0.0,
+  "official_trials": 1,
+  "private_journal": true,
+  "published_records": 11,
+  "publisher_to_import_age_seconds": 0,
+  "recorded_derived_total_lines": 0,
+  "recorded_legacy_unknown_total_lines": 0,
+  "recorded_native_pi_total_lines": 10,
+  "recorded_requests": 10,
+  "recorded_total_tokens": 34348,
+  "schema": "tb4.publisher_replay.v2",
+  "source": "actual archived 10-turn RX480 Harbor/Pi run",
+  "source_archive_modified": false,
+  "token_latency_measured": false,
+  "verified_successes": 0
+}

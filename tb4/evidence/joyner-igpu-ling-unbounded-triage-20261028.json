@@ -1,0 +1,56 @@
+{
+  "finished_at": "2026-10-28T23:18:03.330751",
+  "job_id": "3bfd8f9a-8a57-4784-90a1-ba29fce63307",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__joyner-ling__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "legacy-utility-triage__AViU5t8"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T23:17:03.101756",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 4,
+        "consecutive_duplicate_calls": 0,
+        "inference_errors": {
+          "upstream_context_overflow": 1
+        },
+        "model_turns": 4,
+        "pi_events_available": true,
+        "reported_image_modality_unsupported": false,
+        "tool_calls": {
+          "bash": 2,
+          "read": 2
+        },
+        "tool_errors": {},
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 14351,
+      "official_pass": false,
+      "output_tokens": 209,
+      "reward": 0.0,
+      "task": "terminal-bench/legacy-utility-triage",
+      "trial": "legacy-utility-triage__AViU5t8"
+    }
+  ]
+}

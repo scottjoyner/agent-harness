@@ -1,0 +1,66 @@
+{
+  "dataset": "terminal-bench/terminal-bench@4.0.0",
+  "task": "terminal-bench/legacy-utility-triage",
+  "agent": "tb4.pi_agent:GuardedPi",
+  "max_turns": 28,
+  "runs": [
+    {
+      "evidence_file": "joyner-igpu-ling-unbounded-triage-20261028.json",
+      "endpoint_model": "openai/joyner-ling",
+      "device": "Ryzen integrated Vulkan0 (not R9700 discrete)",
+      "bounded_history": true,
+      "official_reward": 0.0,
+      "model_turn_events": 4,
+      "inference_error_categories": {
+        "upstream_context_overflow": 1
+      },
+      "gateway_telemetry": null
+    },
+    {
+      "evidence_file": "deathstar-rx480-ling-unbounded-triage-20261028.json",
+      "endpoint_model": "openai/deathstar-ling-rx480",
+      "device": "RX480 Vulkan0 discrete",
+      "bounded_history": true,
+      "official_reward": 0.0,
+      "model_turn_events": 5,
+      "inference_error_categories": {
+        "upstream_context_overflow": 1
+      },
+      "gateway_telemetry": null
+    },
+    {
+      "evidence_file": "joyner-igpu-ling-bounded-triage-20261028.json",
+      "endpoint_model": "openai/joyner-ling",
+      "device": "Ryzen integrated Vulkan0 (not R9700 discrete)",
+      "bounded_history": true,
+      "official_reward": 0.0,
+      "model_turn_events": 29,
+      "inference_error_categories": {
+        "agent_turn_limit": 1
+      },
+      "gateway_telemetry": {
+        "requests": 28,
+        "tool_outputs_compacted": 369,
+        "old_turns_dropped": 182,
+        "max_estimated_prompt_tokens": 7016
+      }
+    },
+    {
+      "evidence_file": "deathstar-rx480-ling-bounded-triage-20261028.json",
+      "endpoint_model": "openai/deathstar-ling-rx480",
+      "device": "RX480 Vulkan0 discrete",
+      "bounded_history": true,
+      "official_reward": 0.0,
+      "model_turn_events": 29,
+      "inference_error_categories": {
+        "agent_turn_limit": 1
+      },
+      "gateway_telemetry": {
+        "requests": 28,
+        "tool_outputs_compacted": 347,
+        "old_turns_dropped": 155,
+        "max_estimated_prompt_tokens": 7038
+      }
+    }
+  ]
+}

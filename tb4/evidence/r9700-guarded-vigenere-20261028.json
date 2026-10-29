@@ -1,0 +1,54 @@
+{
+  "finished_at": "2026-10-28T22:44:15.198507",
+  "job_id": "156b4427-79b4-4ddd-a747-bdf4be8bcb28",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__joyner-toolcall__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "interleaved-vigenere__9kLS9D5"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T22:43:06.659345",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 12,
+        "consecutive_duplicate_calls": 5,
+        "reported_image_modality_unsupported": false,
+        "tool_calls": {
+          "bash": 9,
+          "read": 2
+        },
+        "tool_errors": {
+          "bash": 1,
+          "read": 2
+        },
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 32295,
+      "official_pass": false,
+      "output_tokens": 993,
+      "reward": 0.0,
+      "task": "terminal-bench/interleaved-vigenere",
+      "trial": "interleaved-vigenere__9kLS9D5"
+    }
+  ]
+}
