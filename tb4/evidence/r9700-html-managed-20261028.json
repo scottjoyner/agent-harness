@@ -1,0 +1,52 @@
+{
+  "finished_at": "2026-10-28T21:24:08.314791",
+  "job_id": "600e3751-519e-448a-8eac-902652785c2f",
+  "official_completed": 1,
+  "official_errors": 0,
+  "official_evals": {
+    "pi__joyner-toolcall__terminal-bench/terminal-bench": {
+      "exception_stats": {},
+      "metrics": [
+        {
+          "mean": 0.0
+        }
+      ],
+      "n_errors": 0,
+      "n_trials": 1,
+      "pass_at_k": {},
+      "reward_stats": {
+        "reward": {
+          "0.0": [
+            "html-js-filter__g95PXAD"
+          ]
+        }
+      }
+    }
+  },
+  "passes_from_official_verifier": 0,
+  "started_at": "2026-10-28T21:22:53.320878",
+  "trial_count_with_results": 1,
+  "trials": [
+    {
+      "diagnostics": {
+        "agent_steps": 7,
+        "consecutive_duplicate_calls": 3,
+        "reported_image_modality_unsupported": false,
+        "tool_calls": {
+          "read": 6
+        },
+        "tool_errors": {
+          "read": 6
+        },
+        "trajectory_available": true
+      },
+      "exception": null,
+      "input_tokens": 16055,
+      "official_pass": false,
+      "output_tokens": 985,
+      "reward": 0.0,
+      "task": "terminal-bench/html-js-filter",
+      "trial": "html-js-filter__g95PXAD"
+    }
+  ]
+}
