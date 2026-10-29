@@ -41,6 +41,42 @@ def inspect_trajectory(path: Path) -> dict[str, Any]:
             "reported_image_modality_unsupported": unsupported_images}
 
 
+
+def inspect_pi_events(path: Path) -> dict[str, Any]:
+    """Categorize model errors only; never copy prompts or errors into reports."""
+    errors: Counter[str] = Counter()
+    completed_turns = 0
+    if not path.is_file():
+        return {"pi_events_available": False}
+    with path.open(errors="replace") as lines:
+        for line in lines:
+            try:
+                event = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if event.get("type") == "turn_end":
+                completed_turns += 1
+            if event.get("type") != "message_end":
+                continue
+            message = event.get("message") or {}
+            if message.get("role") != "assistant" or message.get("stopReason") != "error":
+                continue
+            reason = str(message.get("errorMessage", "")).lower()
+            if "this operation was aborted" in reason:
+                category = "agent_turn_limit"
+            elif "exceed_context_size_error" in reason or "exceeds the available context" in reason:
+                category = "upstream_context_overflow"
+            elif "invalid json payload" in reason or "immutable instructions" in reason:
+                category = "gateway_rejected_request"
+            elif "timed out" in reason or "timeout" in reason:
+                category = "inference_timeout"
+            else:
+                category = "other_inference_error"
+            errors[category] += 1
+    return {"pi_events_available": True, "model_turns": completed_turns,
+            "inference_errors": dict(errors)}
+
+
 def report_job(job_dir: Path) -> dict[str, Any]:
     job = json.loads((job_dir / "result.json").read_text())
     trials: list[dict[str, Any]] = []
@@ -49,6 +85,7 @@ def report_job(job_dir: Path) -> dict[str, Any]:
         verifier = result.get("verifier_result") or {}
         reward = (verifier.get("rewards") or {}).get("reward")
         diagnosis = inspect_trajectory(path.parent / "agent" / "trajectory.json")
+        diagnosis.update(inspect_pi_events(path.parent / "agent" / "pi.txt"))
         trials.append({"task": result.get("task_name"), "trial": result.get("trial_name"),
                        "reward": reward, "official_pass": reward == 1.0,
                        "exception": result.get("exception_info"),

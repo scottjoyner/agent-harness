@@ -17,7 +17,81 @@ from urllib.request import Request, urlopen
 MAX_REQUEST_BYTES = 2 * 1024 * 1024
 
 
-def tune_body(body: bytes, *, disable_thinking: bool, max_output_tokens: int | None) -> bytes:
+
+def _estimate_prompt_tokens(payload: dict) -> int:
+    """Conservative character estimate, not a model-specific tokenizer."""
+    pieces = [payload.get("messages", []), payload.get("tools", []), payload.get("tool_choice", None)]
+    return int(sum(len(json.dumps(x, ensure_ascii=False)) for x in pieces) / 2.5) + 24 * len(payload.get("messages", []))
+
+
+def compact_chat_history(payload: dict, *, context_window: int,
+                         output_budget: int, safety_margin: int = 640) -> dict:
+    """Bound old history, never trim system, user instructions, or tool definitions.
+
+    Shorten old tool outputs first; remove entire old assistant+tool groups only
+    if necessary. Keep latest six messages intact. Fail closed if immutable task
+    instructions and recent state cannot fit; never truncate the task prompt.
+    """
+    if context_window < 2048 or output_budget < 64:
+        raise ValueError("Invalid context or output budget")
+    available = context_window - output_budget - safety_margin
+    if available < 1000:
+        raise ValueError("Not enough prompt context after output reservation")
+    messages = payload.get("messages")
+    if not isinstance(messages, list) or any(not isinstance(m, dict) for m in messages):
+        raise ValueError("messages must be a list of objects")
+    # Do not modify caller's messages in-place.
+    messages = json.loads(json.dumps(messages))
+    payload["messages"] = messages
+    if _estimate_prompt_tokens(payload) <= available:
+        return {"old_tool_outputs_compacted": 0, "old_turns_dropped": 0, "estimated_tokens": _estimate_prompt_tokens(payload)}
+    keep_tail = 2
+    # Do not touch any system/developer or user instruction message, even if old.
+    protected = {i for i, m in enumerate(messages) if m.get("role") in {"system", "developer", "user"}}
+    changed, dropped = 0, 0
+    for i, msg in enumerate(messages):
+        if _estimate_prompt_tokens(payload) <= available:
+            break
+        if i >= len(messages) - keep_tail or i in protected or msg.get("role") != "tool":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and len(content) > 320:
+            msg["content"] = content[:160] + "\n[Older tool output omitted by bounded-context gateway. Re-run the tool if necessary.]\n" + content[-80:]
+            changed += 1
+    # Recent tool results can themselves be larger than the backend's entire
+    # window. Shorten them only as a last resort, retaining the beginning and
+    # end so the model can choose to re-read targeted sections.
+    for i, msg in enumerate(messages):
+        if _estimate_prompt_tokens(payload) <= available:
+            break
+        if msg.get("role") != "tool" or not isinstance(msg.get("content"), str):
+            continue
+        content = msg["content"]
+        if len(content) > 500:
+            msg["content"] = content[:300] + "\n[Tool output abbreviated for context. Request narrow sections as needed.]\n" + content[-100:]
+            changed += 1
+    # If still oversized, drop complete prior assistant/tool groups; never a
+    # dangling result without its tool_call and never the latest six messages.
+    while _estimate_prompt_tokens(payload) > available:
+        start = next((i for i, msg in enumerate(messages[:max(0, len(messages)-keep_tail)])
+                      if msg.get("role") == "assistant"), None)
+        if start is None:
+            break
+        end = start + 1
+        while end < len(messages) and messages[end].get("role") == "tool":
+            end += 1
+        if end > len(messages) - keep_tail:
+            break
+        del messages[start:end]
+        dropped += 1
+    estimate = _estimate_prompt_tokens(payload)
+    if estimate > available:
+        raise ValueError("Immutable instructions and recent turns exceed configured context; aborting instead of truncating task")
+    return {"old_tool_outputs_compacted": changed, "old_turns_dropped": dropped, "estimated_tokens": estimate}
+
+
+def tune_body(body: bytes, *, disable_thinking: bool, max_output_tokens: int | None,
+              context_window: int | None = None, telemetry: dict | None = None) -> bytes:
     payload = json.loads(body)
     if not isinstance(payload, dict):
         raise ValueError("Expected JSON request object")
@@ -33,11 +107,22 @@ def tune_body(body: bytes, *, disable_thinking: bool, max_output_tokens: int | N
             current = payload.get(name)
             if current is not None and isinstance(current, int) and current > max_output_tokens:
                 payload[name] = max_output_tokens
+    if context_window is not None:
+        stats = compact_chat_history(payload, context_window=context_window,
+                                     output_budget=max_output_tokens or 1024)
+        if telemetry is not None:
+            with telemetry["lock"]:
+                telemetry["requests"] += 1
+                telemetry["tool_outputs_compacted"] += stats["old_tool_outputs_compacted"]
+                telemetry["old_turns_dropped"] += stats["old_turns_dropped"]
+                telemetry["max_estimated_prompt_tokens"] = max(telemetry["max_estimated_prompt_tokens"], stats["estimated_tokens"])
     return json.dumps(payload, separators=(",", ":")).encode()
 
 
 def make_handler(upstream: str, key: str, *, disable_thinking: bool,
-                 max_output_tokens: int | None = None, forward_auth: bool = False):
+                 max_output_tokens: int | None = None, forward_auth: bool = False,
+                 context_window: int | None = None, telemetry: dict | None = None,
+                 upstream_key: str | None = None):
     """Bind upstream and auth once; requests cannot choose arbitrary URLs."""
     upstream = upstream.rstrip("/")
     if not upstream.endswith("/v1"):
@@ -76,14 +161,15 @@ def make_handler(upstream: str, key: str, *, disable_thinking: bool,
                         return
                     request_body = tune_body(self.rfile.read(size),
                                              disable_thinking=disable_thinking,
-                                             max_output_tokens=max_output_tokens)
+                                             max_output_tokens=max_output_tokens,
+                                             context_window=context_window, telemetry=telemetry)
                 except (ValueError, json.JSONDecodeError):
                     self.send_error(400, "Invalid JSON payload")
                     return
             headers = {"Content-Type": "application/json"}
-            # Only relay the configured gateway credential when explicitly enabled.
+            # Keep the random per-trial gateway token separate from upstream credentials.
             if forward_auth:
-                headers["Authorization"] = "Bearer " + key
+                headers["Authorization"] = "Bearer " + (upstream_key if upstream_key is not None else key)
             upstream_request = Request(upstream + path[len('/v1'):],
                                        data=request_body, headers=headers,
                                        method=self.command)
@@ -120,12 +206,15 @@ def main() -> None:
     parser.add_argument("--disable-thinking", action="store_true")
     parser.add_argument("--forward-auth", action="store_true")
     parser.add_argument("--max-output-tokens", type=int, default=2048)
+    parser.add_argument("--context-window", type=int, default=None,
+                        help="Optional conservative chat history budgeting in tokens")
     args = parser.parse_args()
     if args.max_output_tokens < 64:
         parser.error("Minimum max output is 64")
     key = os.environ.get(args.key_env)
     handler = make_handler(args.upstream, key or "", disable_thinking=args.disable_thinking,
-                           max_output_tokens=args.max_output_tokens, forward_auth=args.forward_auth)
+                           max_output_tokens=args.max_output_tokens, forward_auth=args.forward_auth,
+                           context_window=args.context_window)
     with ThreadingHTTPServer((args.bind, args.port), handler) as server:
         print(json.dumps({"listening": f"http://{args.bind}:{args.port}/v1",
                           "upstream": args.upstream,

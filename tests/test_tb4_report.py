@@ -31,6 +31,13 @@ class ReportTests(unittest.TestCase):
             ]
             (root / 'task-a' / 'agent' / 'trajectory.json').write_text(
                 json.dumps({'steps': steps}))
+            (root / 'task-a' / 'agent' / 'pi.txt').write_text('\n'.join(json.dumps(x) for x in [
+                {'type':'turn_end'},
+                {'type':'message_end','message':{'role':'assistant','stopReason':'error',
+                    'errorMessage':'400: request (9000 tokens) exceeds the available context size (8192 tokens), exceed_context_size_error'}},
+                {'type':'message_end','message':{'role':'assistant','stopReason':'error',
+                    'errorMessage':'400 Invalid JSON payload'}},
+            ]))
             data = report_job(root)
             self.assertEqual(data['official_completed'], 2)
             self.assertEqual(data['passes_from_official_verifier'], 1)
@@ -39,6 +46,9 @@ class ReportTests(unittest.TestCase):
             self.assertTrue(diag['reported_image_modality_unsupported'])
             self.assertEqual(diag['consecutive_duplicate_calls'], 1)
             self.assertEqual(diag['tool_errors']['read'], 1)
+            self.assertEqual(diag['inference_errors']['upstream_context_overflow'], 1)
+            self.assertEqual(diag['inference_errors']['gateway_rejected_request'], 1)
+            self.assertEqual(diag['model_turns'], 1)
 
 
 if __name__ == '__main__':

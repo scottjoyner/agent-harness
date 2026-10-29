@@ -12,6 +12,7 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -118,6 +119,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-thinking-gateway", action="store_true",
                         help="Managed authenticated Docker-bridge gateway (no thinking)")
     parser.add_argument("--gateway-max-output-tokens", type=int, default=2048)
+    parser.add_argument("--gateway-context-window", type=int, default=None,
+                        help="Bound chat history to this server context window; enables managed gateway")
     parser.add_argument("--guarded-pi", action="store_true",
                         help="Use Pi tool-error repeat blocker (Harbor 0.25.0)")
     parser.add_argument("--probe-tools", action="store_true",
@@ -131,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("For this OpenAI-compatible endpoint runner, use openai/<model-id>")
     gateway = None
     gateway_thread = None
+    gateway_telemetry = None
+    job_environment = os.environ.copy()
+    dest = None
     try:
         make_command(args)
         if not shutil.which(str(args.harbor)) and not args.harbor.exists():
@@ -159,14 +165,23 @@ def main(argv: list[str] | None = None) -> int:
         dest = RESULTS_DIR / args.job_name
         if dest.exists() and args.mode == "run":
             raise RuntimeError("Run directory already exists; use a unique job name")
-        if args.disable_thinking_gateway and args.mode == "run":
+        if (args.disable_thinking_gateway or args.gateway_context_window) and args.mode == "run":
             from tb4.gateway import make_handler
+            from threading import Lock
+            gateway_telemetry = {"lock": Lock(), "requests": 0, "tool_outputs_compacted": 0,
+                                 "old_turns_dropped": 0, "max_estimated_prompt_tokens": 0}
+            if args.gateway_context_window is not None and not (2048 <= args.gateway_context_window <= 262144):
+                raise ValueError("gateway-context-window must be 2048..262144")
             if not (64 <= args.gateway_max_output_tokens <= 32768):
                 raise ValueError("gateway-max-output-tokens must be 64-32768")
+            gateway_token = secrets.token_urlsafe(32)
+            job_environment[args.key_env] = gateway_token
             gateway = ThreadingHTTPServer(("172.17.0.1", 0), make_handler(
-                args.endpoint, os.environ[args.key_env], disable_thinking=True,
+                args.endpoint, gateway_token, disable_thinking=args.disable_thinking_gateway,
                 max_output_tokens=args.gateway_max_output_tokens,
-                forward_auth=args.gateway_forward_auth))
+                forward_auth=args.gateway_forward_auth,
+                upstream_key=(os.environ[args.key_env] if args.gateway_forward_auth else None),
+                context_window=args.gateway_context_window, telemetry=gateway_telemetry))
             gateway_thread = Thread(target=gateway.serve_forever, daemon=True)
             gateway_thread.start()
         endpoint_for_agent = (f"http://172.17.0.1:{gateway.server_port}/v1"
@@ -178,7 +193,8 @@ def main(argv: list[str] | None = None) -> int:
                     "model": args.model,
                     "endpoint": normalize_endpoint(args.endpoint), "mode": args.mode,
                     "agent_endpoint": endpoint_for_agent,
-                    "gateway_disable_thinking": bool(gateway),
+                    "gateway_disable_thinking": bool(gateway and args.disable_thinking_gateway),
+                    "gateway_context_window": args.gateway_context_window,
                     "gateway_max_output_tokens": (args.gateway_max_output_tokens if gateway else None),
                     "gateway_forward_auth": (args.gateway_forward_auth if gateway else None),
                     "tasks_limit": args.tasks, "attempts": args.attempts,
@@ -192,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
                           "model": args.model, "disk_free_gib": free_gb}), flush=True)
         with (dest / f"{args.mode}.log").open("w") as logfile:
             completed = subprocess.run(command, stdout=logfile, stderr=subprocess.STDOUT,
-                                       env=os.environ.copy(), check=False)
+                                       env=job_environment, check=False)
         print(json.dumps({"harbor_exit_code": completed.returncode,
                           "log": str(dest / f'{args.mode}.log')}), flush=True)
         return completed.returncode
@@ -201,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     finally:
         if gateway is not None:
+            if gateway_telemetry is not None and dest is not None and dest.exists():
+                stats = {k:v for k,v in gateway_telemetry.items() if k != "lock"}
+                (dest / "gateway-telemetry.json").write_text(json.dumps(stats, indent=2)+"\n")
             gateway.shutdown()
             gateway.server_close()
             if gateway_thread is not None:

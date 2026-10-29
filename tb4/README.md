@@ -143,3 +143,52 @@ native-function-call gate. Do not route official tool-dependent Pi trials to it
 until its model and serving template are validated. `joyner` had very little
 free system RAM and full swap at inspection; do not launch new large models
 without checking both host RAM and dedicated GPU memory first.
+
+## Bounded-history gateway and device attribution (October 28, 2026)
+
+The default Pi agent may exceed small self-hosted context windows even when
+individual native tool calls work. For an endpoint with an **actual** 8,192-token
+window, use `--gateway-context-window 8192 --gateway-max-output-tokens 512`
+and `--guarded-pi` for diagnostic canaries. The runner creates a fresh random
+Bearer token per trial for the Docker-bridge gateway; the upstream endpoint
+credential, if needed, remains separate (`--gateway-forward-auth`). Gateway
+telemetry records only aggregate counts, never raw prompts, tool output, or keys.
+
+The bounded-context mode conservatively budgets message JSON length and tool
+schemas, abbreviates old tool outputs when necessary, then drops complete old
+assistant/tool response groups while retaining original system/developer/user
+instructions and the most recent tool-call linkage. Even a recent oversized
+tool result may be abbreviated rather than rejected. If immutable instructions
+cannot fit, the gateway fails closed. This is approximate token budgeting,
+not true tokenizer-equivalent context counting; the model can lose old details.
+It does not alter the official benchmark task, evaluator, or verifier.
+
+**Physical GPU audit:** the existing `joyner-toolcall` and `joyner-ling`
+servers run with llama.cpp's default `Vulkan0`, identified on Joyner as
+*Ryzen 5 7600X RADV RAPHAEL_MENDOCINO integrated GPU*. `Vulkan1` is the
+*AMD Radeon RADV GFX1201 with 32 GiB*, the actual dedicated R9700. The
+existing keyed LFM3 research server explicitly sets `--device Vulkan1`, but
+its context is only 2,048 tokens. The paired Ling TB4 tests on Joyner below
+therefore used the **integrated GPU, not the R9700**. This corrects the
+misleading historical filenames `r9700-guarded-*` in this PR; do not attribute
+those earlier trials to dedicated R9700 compute. Deathstar's Ling server
+runs the **8 GiB RX 480** with Vulkan GPU layers and observed 100% GPU busy
+under the benchmark. Check available **system RAM**, not only GPU VRAM,
+before starting a new server: Joyner was under 1 GiB available and swap-full.
+
+A matched run of `legacy-utility-triage` (Harbor TB4 v4.0.0, guarded Pi 0.85.1,
+28-turn budget, thinking disabled) compared Joyner's integrated-GPU Ling and
+Deathstar's RX480 Ling:
+
+| Endpoint/device | History mode | Model turn events | Failure reason | Official reward |
+| --- | --- | ---: | --- | ---: |
+| Joyner integrated GPU, Ling | Unbounded | 4 | 8,192-token context overflow | 0.0 |
+| Deathstar RX480, Ling | Unbounded | 5 | 8,192-token context overflow | 0.0 |
+| Joyner integrated GPU, Ling | Bounded | 29 (28 budget + abort) | Expected turn limit | 0.0 |
+| Deathstar RX480, Ling | Bounded | 29 (28 budget + abort) | Expected turn limit | 0.0 |
+
+These results demonstrate that context management prevents *this* specific
+premature context overflow, but **not** improved TB4 task success. Source
+records and numeric context telemetry are in `tb4/evidence/`. A dedicated
+R9700 head-to-head official run remains outstanding; never launch a second
+large server under Joyner's observed RAM pressure without a capacity check.

@@ -45,3 +45,22 @@ six repeated failed commands; the model still failed task verification.
 The current EISDIR-memory improvement was added after those canary runs and
 is validated through deterministic extension event simulation, not another
 claim about changed benchmark success rate.
+
+### Physical-device correction and matched context-window experiment
+
+The two original `r9700-guarded-*` filenames above were created before checking
+Vulkan device numbering. On Joyner, the corresponding default `Vulkan0` is
+**integrated Ryzen graphics**, *not* the dedicated R9700 (which is `Vulkan1`).
+The corrected experimental evidence uses `joyner-igpu-*` filenames.
+
+Four official TB4 v4.0.0 records from `legacy-utility-triage` are saved as
+`joyner-igpu-ling-unbounded-triage-20261028.json`,
+`deathstar-rx480-ling-unbounded-triage-20261028.json`,
+`joyner-igpu-ling-bounded-triage-20261028.json`, and
+`deathstar-rx480-ling-bounded-triage-20261028.json`.
+The machine-readable matrix `paired-ling-context-results-20261028.json`
+retains original official rewards, Pi model-turn events, classified error
+kinds, and numeric history-compaction telemetry. The bounded runs reach their
+normal 28-turn budget, but all four official verifier rewards remain 0.0.
+No benchmark answer data, hidden verifier artifacts, inference credentials,
+or Tailscale IP addresses were added to the repository.
