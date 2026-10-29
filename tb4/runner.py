@@ -117,6 +117,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--disable-thinking-gateway", action="store_true",
                         help="Managed authenticated Docker-bridge gateway (no thinking)")
     parser.add_argument("--gateway-max-output-tokens", type=int, default=2048)
+    parser.add_argument("--probe-tools", action="store_true",
+                        help="Run a tiny synthetic native-tool API capability probe")
+    parser.add_argument("--require-tool-calls", action="store_true",
+                        help="Abort if the synthetic native tool-call probe fails")
     parser.add_argument("--gateway-forward-auth", action="store_true",
                         help="Pass the configured key to upstream when upstream requires it")
     args = parser.parse_args(argv)
@@ -133,6 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         if not os.environ.get(args.key_env):
             raise RuntimeError(f"Set {args.key_env} (use a dummy string only for no-auth local endpoints)")
         model_check = check_model(args.endpoint, args.model, args.key_env)
+        tool_check = None
+        if args.probe_tools or args.require_tool_calls:
+            from tb4.capabilities import probe_tool_call
+            tool_check = probe_tool_call(args.endpoint, args.model, args.key_env,
+                                         disable_thinking=args.disable_thinking_gateway)
+            if args.require_tool_calls and not tool_check["native_tool_call"]:
+                raise RuntimeError("Endpoint did not produce the required native tool call")
         disk = shutil.disk_usage(RESULTS_DIR.parent)
         free_gb = round(disk.free / (1024**3), 1)
         if args.mode == "run" and free_gb < args.min_free_gb:
@@ -170,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
                     "concurrency": args.concurrency, "max_turns": args.max_turns,
                     "pi_version": args.pi_version, "free_gib": free_gb,
                     "prompt_sha256": hashlib.sha256(PI_PROMPT.read_bytes()).hexdigest(),
-                    "model_check": model_check,
+                    "model_check": model_check, "synthetic_tool_probe": tool_check,
                     "command": ["<KEY_ENV_NAME>" if x == args.key_env else x for x in command]}
         (dest / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
         print(json.dumps({"ready": True, "mode": args.mode, "manifest": str(dest / 'manifest.json'),

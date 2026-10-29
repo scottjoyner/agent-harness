@@ -29,3 +29,8 @@ filter task run through the managed authenticated Docker-bridge thinking-off
 gateway. It completed with no infrastructure error but **reward 0.0**; do not
 count this as success. This confirms gateway lifecycle and streaming in Harbor,
 not task-solving reliability.
+
+`r9700-native-tool-probe-20261028.json` records a **synthetic** live tool-call
+preflight on the R9700. The test invokes a made-up `tb4_probe` function and
+checks its JSON arguments; it is not a Terminal-Bench score. The RX480's
+existing text endpoint did not emit a native call on the corresponding probe.

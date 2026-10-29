@@ -99,3 +99,19 @@ unsupported), `legacy-utility-triage` (no native calls in baseline), and
 produced tool calls instead of reasoning-only output. These four trials cannot
 be treated as a representative full-suite score or an unbiased improvement
 estimate; they are canary/diagnostic experiments.
+
+## Synthetic capability preflight
+
+Set `--probe-tools` to send a small synthetic diagnostic with a native function
+call and include its result in the job manifest. Set `--require-tool-calls` to
+reject endpoints that cannot emit a native function call. This **does not**
+solve or inspect benchmark tasks and is **not** a verifier pass. It can help
+avoid wasting GPU time on an endpoint that only produces prose.
+
+With a no-auth endpoint use both flags safely:
+
+```bash
+.venv/bin/python -m tb4.runner preflight --harbor .venv/bin/harbor \
+  --endpoint http://100.83.215.83:1234/v1 --model openai/joyner-toolcall \
+  --probe-tools --require-tool-calls --job-name tb4-tool-probe
+```

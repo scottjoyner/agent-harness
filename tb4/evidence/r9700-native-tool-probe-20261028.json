@@ -1,0 +1,17 @@
+{
+  "recorded_at": "2026-10-29T01:29:30.501107+00:00",
+  "source": "synthetic tool probe; not a TB4 task or verifier result",
+  "model": "openai/joyner-toolcall",
+  "probe": {
+    "native_tool_call": true,
+    "calls_returned": 1,
+    "response_finish_reason": "tool_calls",
+    "model": "joyner-toolcall",
+    "disable_thinking": false,
+    "elapsed_seconds": 0.673,
+    "input_tokens": 234,
+    "output_tokens": 48,
+    "content_length": 0,
+    "reasoning_length": 126
+  }
+}
