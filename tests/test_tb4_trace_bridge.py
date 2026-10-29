@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
-from tb4.trace_bridge import Reader, append_private, event_from_message, verifier_event
+from tb4.trace_bridge import Reader, append_private, event_from_message, verifier_event, digest
 
 class TraceBridgeTests(unittest.TestCase):
     def test_sanitized_one_event_per_completed_model_turn(self):
@@ -60,6 +60,29 @@ class TraceBridgeTests(unittest.TestCase):
             self.assertTrue(all(x['published_utc'] for x in events))
             self.assertNotIn(str(root),journal.read_text())
 
+    def test_identical_job_names_on_different_hosts_have_separate_ids(self):
+        with tempfile.TemporaryDirectory() as d:
+            a=Path(d)/'host-a'/'same-job'
+            b=Path(d)/'host-b'/'same-job'
+            for root in (a,b):
+                (root/'harbor'/'same-job'/'same-trial'/'agent').mkdir(parents=True)
+                (root/'harbor'/'same-job'/'same-trial'/'agent'/'pi.txt').write_text(
+                    json.dumps({'type':'message_end','message':{
+                        'role':'assistant','timestamp':1793241971877,'model':'test',
+                        'usage':{'input':1,'output':2,'totalTokens':3}}})+'\n')
+            readers=[Reader(a,'deathstar'),Reader(b,'joyner')]
+            paths=[Path(d)/'private-a',Path(d)/'private-b']
+            for x in paths:x.mkdir(mode=0o700)
+            records=[]
+            for reader,path in zip(readers,paths):
+                self.assertEqual(reader.export_to(path/'events.jsonl',publisher_state='active'),2)
+                records.append([json.loads(x) for x in (path/'events.jsonl').read_text().splitlines()])
+            assert all(len(x)==2 for x in records)
+            self.assertNotEqual(records[0][0]['session_id'],records[1][0]['session_id'])
+            self.assertNotEqual(records[0][0]['event_id'],records[1][0]['event_id'])
+            self.assertNotEqual(records[0][1]['session_id'],records[1][1]['session_id'])
+            self.assertNotEqual(records[0][1]['event_id'],records[1][1]['event_id'])
+
     def test_publisher_state_append_failure_restores_retry_identity(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/'heartbeat'
@@ -75,7 +98,7 @@ class TraceBridgeTests(unittest.TestCase):
             self.assertIsNone(reader.last_heartbeat_monotonic)
             self.assertEqual(reader.export_to(journal,publisher_state='active'),1)
             records=[json.loads(x) for x in journal.read_text().splitlines()]
-            self.assertEqual(records[0]['event_id'],__import__('tb4.trace_bridge',fromlist=['digest']).digest('publisher-state',root.name,1))
+            self.assertEqual(records[0]['event_id'],digest('publisher-state','deathstar',root.name,1))
             self.assertEqual(reader.export_to(journal,publisher_state='stopped'),1)
 
     def test_failed_journal_append_retries_same_event_and_verifier_ids(self):

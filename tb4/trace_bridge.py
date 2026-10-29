@@ -124,8 +124,8 @@ class Reader:
                 self.heartbeat_sequence += 1
                 records.append({
                     'schema': SCHEMA, 'event_type': 'publisher_state',
-                    'event_id': digest('publisher-state',self.job_dir.name,self.heartbeat_sequence),
-                    'session_id': digest('publisher-job',self.job_dir.name),
+                    'event_id': digest('publisher-state',self.host,self.job_dir.name,self.heartbeat_sequence),
+                    'session_id': digest('publisher-job',self.host,self.job_dir.name),
                     'source': 'terminal-bench', 'host': self.host,
                     'ts': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                     'status': publisher_state,
@@ -148,7 +148,7 @@ class Reader:
         for file in sorted(jobs.glob('*/agent/pi.txt')):
             if not file.is_file() or file.is_symlink():
                 continue
-            session_id = digest('job-session', self.job_dir.name, file.parent.parent.name)
+            session_id = digest('job-session', self.host, self.job_dir.name, file.parent.parent.name)
             offset, ordinal = self.state.get(file, (0, 0))
             if file.stat().st_size < offset:
                 raise RuntimeError('Pi log truncated during active run')

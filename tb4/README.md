@@ -270,3 +270,10 @@ write failure, just like Pi message offsets. It does not create a service,
 network port or proof of actual inference activity. A stale `active` state
 means the publisher stopped checking in; absence of a `stopped` event is not
 proof that a run succeeded or failed.
+
+**Cross-host identity hardening:** pseudonymous Pi trial IDs, producer job
+IDs, and heartbeat sequence IDs include the explicitly validated physical
+host label as a domain component. Two machines reusing the same job/trial
+name cannot generate identical events. Historical pre-change v1 journal
+records remain readable, but already-imported data cannot be silently
+rehashed in place. Hashes do not expose host paths or trial names.
