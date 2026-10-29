@@ -227,10 +227,10 @@ def main(argv: list[str] | None = None) -> int:
                                       env=job_environment) as process:
                     try:
                         while process.poll() is None:
-                            reader.export_to(args.trace_events_out)
+                            reader.export_to(args.trace_events_out, publisher_state='active')
                             time.sleep(2)
                     finally:
-                        reader.export_to(args.trace_events_out)
+                        reader.export_to(args.trace_events_out, publisher_state='stopped')
                     exit_code = process.wait()
             else:
                 exit_code = subprocess.run(command, stdout=logfile,

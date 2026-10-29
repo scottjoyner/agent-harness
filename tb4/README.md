@@ -255,3 +255,18 @@ The `Reader.export_to()` path checkpoints log/verifier cursors until the private
 For Trace Viewer integration, every newly appended `tb4.telemetry.v1` event carries a `published_utc` UTC publisher wall-clock receipt distinct from Pi `ts` (source message creation) and Harbor verifier receipt. This supports observed publication-to-import age but **not** hardware inference latency; legacy journals missing this optional field remain valid.
 
 New `model_turn` events additionally record `total_origin`: `reported` for a positive native Pi `totalTokens`, `derived` if absent/zero and reconstructed from primary input+output (or cache-only fallback). Cache/reasoning token counters are not blindly summed a second time. Derived totals are estimates; downstream consumers keep legacy missing-origin records explicitly unknown.
+
+### Optional producer heartbeat (liveness metadata only)
+
+When `tb4.runner run` has `--trace-events-out` enabled, the Pi/Harbor
+publisher emits `publisher_state` metadata-only JSONL records: one `active`
+record at start, at most one additional `active` record every 30 seconds, and
+one `stopped` record on orderly publisher exit. Each contains only schema,
+event type, SHA-256 pseudonyms for event and job, operator-declared host,
+UTC producer time and state, plus the journal writer's `published_utc`. It has
+**no** prompts, requests, task names, tokens, API endpoint, GPU metrics or
+official verifier result. State and sequence counters roll back on journal
+write failure, just like Pi message offsets. It does not create a service,
+network port or proof of actual inference activity. A stale `active` state
+means the publisher stopped checking in; absence of a `stopped` event is not
+proof that a run succeeded or failed.

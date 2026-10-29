@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import time
 
 SCHEMA = 'tb4.telemetry.v1'
 EVENT_MAX_BYTES = 2048
@@ -94,22 +95,50 @@ class Reader:
         self.host = host
         self.state: dict[Path, tuple[int, int]] = {}
         self.verifiers: set[str] = set()
+        self.heartbeat_sequence = 0
+        self.last_heartbeat_monotonic: float | None = None
 
-    def export_to(self, path: Path) -> int:
+    def export_to(self, path: Path, *, publisher_state: str | None = None) -> int:
         """Poll and journal as one retryable unit.
 
         Reader cursors must never acknowledge records that failed to reach the
         private journal. Re-reading after a failed append reproduces the same
         deterministic event IDs; the downstream importer deduplicates replay.
         """
+        if publisher_state not in (None, 'active', 'stopped'):
+            raise ValueError('invalid publisher state')
         previous_state = dict(self.state)
         previous_verifiers = set(self.verifiers)
+        prior_sequence = self.heartbeat_sequence
+        prior_heartbeat = self.last_heartbeat_monotonic
         try:
             records = self.poll()
-            return append_private(path, records)
+            now = time.monotonic()
+            # A producer heartbeat is NOT a model request nor a verifier
+            # outcome. Emit one immediately, every 30s while running, and
+            # unconditionally on graceful stop. No additional network port.
+            due = publisher_state == 'stopped' or (
+                publisher_state == 'active' and (
+                    prior_heartbeat is None or now - prior_heartbeat >= 30))
+            if due:
+                self.heartbeat_sequence += 1
+                records.append({
+                    'schema': SCHEMA, 'event_type': 'publisher_state',
+                    'event_id': digest('publisher-state',self.job_dir.name,self.heartbeat_sequence),
+                    'session_id': digest('publisher-job',self.job_dir.name),
+                    'source': 'terminal-bench', 'host': self.host,
+                    'ts': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'status': publisher_state,
+                })
+            result = append_private(path, records)
+            if due:
+                self.last_heartbeat_monotonic = now
+            return result
         except Exception:
             self.state = previous_state
             self.verifiers = previous_verifiers
+            self.heartbeat_sequence = prior_sequence
+            self.last_heartbeat_monotonic = prior_heartbeat
             raise
 
     def poll(self) -> list[dict]:

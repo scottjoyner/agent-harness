@@ -39,6 +39,45 @@ class TraceBridgeTests(unittest.TestCase):
             self.assertEqual(reader.poll()[0]['status'],'passed')
             self.assertEqual(reader.poll(),[])
 
+    def test_publisher_heartbeats_mark_active_and_stopped_without_model_turns(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'heartbeat-only'
+            root.mkdir(mode=0o700)
+            private=Path(d)/'private'
+            private.mkdir(mode=0o700)
+            journal=private/'events.jsonl'
+            reader=Reader(root,'deathstar')
+            self.assertEqual(reader.export_to(journal,publisher_state='active'),1)
+            self.assertEqual(reader.export_to(journal,publisher_state='active'),0)
+            self.assertEqual(reader.heartbeat_sequence,1)
+            reader.last_heartbeat_monotonic-=31
+            self.assertEqual(reader.export_to(journal,publisher_state='active'),1)
+            self.assertEqual(reader.export_to(journal,publisher_state='stopped'),1)
+            events=[json.loads(x) for x in journal.read_text().splitlines()]
+            self.assertEqual([x['status'] for x in events],['active','active','stopped'])
+            self.assertTrue(all(x['event_type']=='publisher_state' for x in events))
+            self.assertEqual(len({x['event_id'] for x in events}),3)
+            self.assertTrue(all(x['published_utc'] for x in events))
+            self.assertNotIn(str(root),journal.read_text())
+
+    def test_publisher_state_append_failure_restores_retry_identity(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'heartbeat'
+            root.mkdir(mode=0o700)
+            private=Path(d)/'private'
+            private.mkdir(mode=0o700)
+            journal=private/'events.jsonl'
+            reader=Reader(root,'deathstar')
+            with patch('tb4.trace_bridge.append_private',side_effect=OSError('disk full')):
+                with self.assertRaisesRegex(OSError,'disk full'):
+                    reader.export_to(journal,publisher_state='active')
+            self.assertEqual(reader.heartbeat_sequence,0)
+            self.assertIsNone(reader.last_heartbeat_monotonic)
+            self.assertEqual(reader.export_to(journal,publisher_state='active'),1)
+            records=[json.loads(x) for x in journal.read_text().splitlines()]
+            self.assertEqual(records[0]['event_id'],__import__('tb4.trace_bridge',fromlist=['digest']).digest('publisher-state',root.name,1))
+            self.assertEqual(reader.export_to(journal,publisher_state='stopped'),1)
+
     def test_failed_journal_append_retries_same_event_and_verifier_ids(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d)/'job-safe'

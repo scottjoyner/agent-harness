@@ -102,3 +102,15 @@ this isolated same-host replay: **not** a measured GPU request duration or a
 production end-to-end latency SLA. The synthetic fixture source was never
 modified; no new model inference was run. No raw requests, transcripts,
 credentials or trial names are stored in this receipt.
+
+### Producer heartbeat replay (October 29)
+
+`trace-viewer-producer-heartbeat-replay-20261029.json` replays the **saved**
+real RX480 Harbor/Pi 10-turn archive into an empty synthetic-source private
+index using the new heartbeat-enabled exporter. It contains one `active` and
+one `stopped` control-plane record, 10 distinct Pi model requests totaling
+34,348 source-reported tokens, and the unchanged official verifier failure
+(reward 0.0). No new inference was performed; no original trace archive was
+modified. Heartbeats do not create model or session records. A second import
+created no duplicates. The receipt contains only aggregate evidence, never
+raw prompts, private command lines or user trial names.
