@@ -102,6 +102,71 @@ def check_model(endpoint: str, model: str, key_env: str, *, timeout: float = 5.0
     return {"model_available": True, "catalog_size": len(names)}
 
 
+def trace_output_preflight(events: Path, min_free_gb: int) -> dict:
+    """Fail before starting Harbor if the selected telemetry volume is unsafe.
+
+    Never replace, rename or truncate an existing journal. The importer owns
+    its inode/offset and may already have recorded it as the current source.
+    """
+    from tb4.trace_bridge import EVENT_MAX_BYTES
+
+    if not 5 <= min_free_gb <= 1000:
+        raise ValueError('traced run needs a 5-1000 GiB free-space threshold')
+    if not events.is_absolute() or events.is_symlink() or events.exists() and not events.is_file():
+        raise ValueError('telemetry output must be an absolute nonsymlink regular-file path')
+    directory = events.parent
+    if not directory.is_dir() or directory.is_symlink():
+        raise ValueError('preexisting private telemetry directory required')
+    if directory.stat().st_mode & 0o077:
+        raise ValueError('telemetry directory must be mode 0700')
+    if events.exists():
+        st = events.stat()
+        if st.st_mode & 0o077:
+            raise ValueError('telemetry file must be mode 0600')
+        size = st.st_size
+    else:
+        size = 0
+    # At least 1 MiB of journal headroom: avoid launching a long job that is
+    # already within one modest polling burst of the hard 32 MiB cap.
+    cap = 32 * 1024 * 1024
+    if size > cap - 1024 * 1024:
+        raise RuntimeError('telemetry journal approaching its hard capacity; stop and archive safely')
+    free = shutil.disk_usage(directory).free
+    required = max(min_free_gb * 1024**3, cap + EVENT_MAX_BYTES)
+    if free < required:
+        raise RuntimeError('insufficient telemetry filesystem capacity to start traced benchmark')
+    return {'journal_remaining_bytes': cap-size, 'telemetry_volume_free_gib': round(free / 1024**3, 1)}
+
+
+def run_with_trace(command: list[str], logfile, environment: dict,
+                   reader, journal: Path) -> int:
+    """Fail closed when telemetry publication breaks; no unobserved Harbor run.
+
+    This terminates the Harbor *launcher* and reaps it, not arbitrary Docker
+    containers or unrelated fleet models. Container cleanup is a separate
+    reviewed operational gate.
+    """
+    with subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT,
+                          env=environment) as process:
+        try:
+            while process.poll() is None:
+                reader.export_to(journal, publisher_state='active')
+                time.sleep(2)
+            reader.export_to(journal, publisher_state='stopped')
+            return process.wait()
+        except BaseException:
+            # Do not emit a dishonest 'stopped' heartbeat on publisher error;
+            # the last active marker will age into STALE in Trace Viewer.
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=5)
+            raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Guarded Harbor / official TB4 / Pi runs")
     parser.add_argument("mode", choices=["preflight", "run"])
@@ -176,6 +241,9 @@ def main(argv: list[str] | None = None) -> int:
         dest = RESULTS_DIR / args.job_name
         if dest.exists() and args.mode == "run":
             raise RuntimeError("Run directory already exists; use a unique job name")
+        trace_preflight = None
+        if args.mode == "run" and args.trace_events_out is not None:
+            trace_preflight = trace_output_preflight(args.trace_events_out,args.min_free_gb)
         if (args.disable_thinking_gateway or args.gateway_context_window) and args.mode == "run":
             from tb4.gateway import make_handler
             from threading import Lock
@@ -213,6 +281,7 @@ def main(argv: list[str] | None = None) -> int:
                     "pi_version": args.pi_version, "free_gib": free_gb,
                     "trace_metadata_export_enabled": bool(args.trace_events_out),
                     "trace_host": args.trace_host if args.trace_events_out else None,
+                    "trace_preflight": trace_preflight,
                     "prompt_sha256": hashlib.sha256(PI_PROMPT.read_bytes()).hexdigest(),
                     "model_check": model_check, "synthetic_tool_probe": tool_check,
                     "command": ["<KEY_ENV_NAME>" if x == args.key_env else x for x in command]}
@@ -223,15 +292,8 @@ def main(argv: list[str] | None = None) -> int:
             if args.mode == "run" and args.trace_events_out is not None:
                 from tb4.trace_bridge import Reader
                 reader = Reader(dest, args.trace_host)
-                with subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT,
-                                      env=job_environment) as process:
-                    try:
-                        while process.poll() is None:
-                            reader.export_to(args.trace_events_out, publisher_state='active')
-                            time.sleep(2)
-                    finally:
-                        reader.export_to(args.trace_events_out, publisher_state='stopped')
-                    exit_code = process.wait()
+                exit_code = run_with_trace(command,logfile,job_environment,
+                                           reader,args.trace_events_out)
             else:
                 exit_code = subprocess.run(command, stdout=logfile,
                                            stderr=subprocess.STDOUT,

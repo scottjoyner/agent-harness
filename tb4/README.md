@@ -277,3 +277,32 @@ host label as a domain component. Two machines reusing the same job/trial
 name cannot generate identical events. Historical pre-change v1 journal
 records remain readable, but already-imported data cannot be silently
 rehashed in place. Hashes do not expose host paths or trial names.
+
+### Journal capacity and supervised fail-closed behavior
+
+The opt-in `--trace-events-out` path now **must** point into an existing
+owner-only (`0700`) local directory; an existing journal must be owner-only
+(`0600`) and nonsymlink. Immediately before launching Harbor, the runner
+checks the *telemetry* filesystem's free space independently of the result
+filesystem, enforces `--min-free-gb` between 5 and 1,000 (20 GiB by default),
+and requires at least 1 MiB remaining under the hard 32 MiB JSONL cap.
+This prevents launching a benchmark when the journal is already near full;
+it does not grant automatic retention or permission to discard entries.
+
+If a locked JSONL publication fails during the run (including ENOSPC,
+privacy/permissions errors, or the journal cap), the runner **terminates and
+reaps its Harbor launcher**: SIGTERM with a bounded 10-second wait, then
+SIGKILL with a bounded 5-second wait if needed. It preserves the append
+failure as a nonzero run result and does **not** emit a fake graceful
+`stopped` heartbeat after a failed publication. The last `active` heartbeat
+ages to `stale` in the Viewer. A successful, orderly Harbor exit still
+emits `stopped`. These safeguards were tested with both fake processes and
+a real disposable Python child killed after a synthetic append failure.
+
+**Scope limitation:** stopping the Harbor *launcher* does not independently
+certify that Harbor cleaned up Docker containers or remote inference tasks.
+A failed run still requires an operator to inspect leftover workloads and
+verify the archive/index acknowledgment; the producer must not continue as
+an apparently fully observed successful task. Do not truncate, rename, or
+auto-delete a journal simply to clear the 32 MiB bound. A fully acknowledged,
+restart-safe rollover with durable archival is a separate release gate.
