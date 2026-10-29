@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from tb4.trace_bridge import Reader, append_private, event_from_message, verifier_event
 
 class TraceBridgeTests(unittest.TestCase):
@@ -36,6 +37,57 @@ class TraceBridgeTests(unittest.TestCase):
             (trial/'result.json').write_text(json.dumps({'verifier_result':{'rewards':{'reward':1.0}}}))
             self.assertEqual(reader.poll()[0]['status'],'passed')
             self.assertEqual(reader.poll(),[])
+
+    def test_failed_journal_append_retries_same_event_and_verifier_ids(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)/'job-safe'
+            trial=root/'harbor'/'job-safe'/'trial-safe'
+            (trial/'agent').mkdir(parents=True)
+            message={'type':'message_end','message':{'role':'assistant',
+                'model':'good','timestamp':1793241971877,
+                'usage':{'input':1,'output':2,'totalTokens':3},
+                'content':'PRIVATE BENCHMARK PROMPT NOT EXPORTED'}}
+            (trial/'agent'/'pi.txt').write_text(json.dumps(message)+'\n')
+            (trial/'result.json').write_text(json.dumps({'verifier_result':
+                {'rewards':{'reward':0.0}}}))
+            out=Path(d)/'private'/'events.jsonl'
+            out.parent.mkdir(mode=0o700)
+            reader=Reader(root,'deathstar')
+            with patch('tb4.trace_bridge.append_private',side_effect=OSError('disk full')):
+                with self.assertRaisesRegex(OSError,'disk full'):
+                    reader.export_to(out)
+            self.assertEqual(reader.state,{})
+            self.assertEqual(reader.verifiers,set())
+            self.assertEqual(reader.export_to(out),2)
+            rows=[json.loads(line) for line in out.read_text().splitlines()]
+            self.assertEqual([e['event_type'] for e in rows],
+                             ['model_turn','trial_verified'])
+            self.assertEqual(reader.export_to(out),0)
+            self.assertEqual(len(out.read_text().splitlines()),2)
+            self.assertNotIn('PRIVATE BENCHMARK PROMPT',out.read_text())
+            self.assertEqual(rows[-1]['official_reward'],0.0)
+
+    def test_partial_disk_write_is_rolled_back_before_retry(self):
+        with tempfile.TemporaryDirectory() as d:
+            path=Path(d)/'private'/'events.jsonl'
+            path.parent.mkdir(mode=0o700)
+            event={'schema':'tb4.telemetry.v1','event_type':'model_turn',
+                   'event_id':'e'*64}
+            self.assertEqual(append_private(path,[event]),1)
+            prior=path.read_bytes()
+            original_write=os.write
+            calls=[0]
+            def partial_then_error(fd,data):
+                calls[0]+=1
+                if calls[0]==1:
+                    return original_write(fd,data[:max(1,len(data)//2)])
+                raise OSError('ENOSPC synthetic')
+            with patch('tb4.trace_bridge.os.write',side_effect=partial_then_error):
+                with self.assertRaisesRegex(OSError,'ENOSPC'):
+                    append_private(path,[event])
+            self.assertEqual(path.read_bytes(),prior)
+            self.assertEqual(append_private(path,[event]),1)
+            self.assertEqual(len(path.read_text().splitlines()),2)
 
     def test_private_output_and_symlink_rejected(self):
         with tempfile.TemporaryDirectory() as d:

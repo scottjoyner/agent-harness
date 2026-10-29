@@ -90,6 +90,23 @@ class Reader:
         self.state: dict[Path, tuple[int, int]] = {}
         self.verifiers: set[str] = set()
 
+    def export_to(self, path: Path) -> int:
+        """Poll and journal as one retryable unit.
+
+        Reader cursors must never acknowledge records that failed to reach the
+        private journal. Re-reading after a failed append reproduces the same
+        deterministic event IDs; the downstream importer deduplicates replay.
+        """
+        previous_state = dict(self.state)
+        previous_verifiers = set(self.verifiers)
+        try:
+            records = self.poll()
+            return append_private(path, records)
+        except Exception:
+            self.state = previous_state
+            self.verifiers = previous_verifiers
+            raise
+
     def poll(self) -> list[dict]:
         output = []
         # Only one task directory per Pi trial, but job may contain many trials.
@@ -167,10 +184,24 @@ def append_private(path: Path, events: list[dict]) -> int:
             buf += line
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
-            if os.fstat(fd).st_size + len(buf) > 32 * 1024 * 1024:
+            original_size = os.fstat(fd).st_size
+            if original_size + len(buf) > 32 * 1024 * 1024:
                 raise ValueError('telemetry output capacity exceeded')
-            with os.fdopen(os.dup(fd), 'ab', buffering=0) as stream:
-                stream.write(buf)
+            # An unbuffered write may be short even without an exception.
+            # Preserve complete JSONL records (or roll back the whole batch),
+            # so a partial disk-full write cannot corrupt the next scan.
+            written = 0
+            try:
+                while written < len(buf):
+                    n = os.write(fd, buf[written:])
+                    if n <= 0:
+                        raise OSError('telemetry append made no progress')
+                    written += n
+                os.fsync(fd)
+            except BaseException:
+                os.ftruncate(fd, original_size)
+                os.fsync(fd)
+                raise
         finally:
             fcntl.flock(fd, fcntl.LOCK_UN)
         return len(events)

@@ -249,3 +249,5 @@ trials remain unverified. Public deployment, unprotected live interfaces,
 production index mutations, and model changes are not authorized by the
 integration. Consult the viewer's `docs/TB4_REALTIME_INTEGRATION.md` for the
 privacy, partial-coverage, and journal-rotation rules.
+
+The `Reader.export_to()` path checkpoints log/verifier cursors until the private JSONL append succeeds; a failed/short append is rolled back under a journal lock and retried with deterministic event IDs. The end-to-end field dictionary, unknown-vs-zero semantics and current deployment limitations are documented in Trace Viewer `docs/TB4_TELEMETRY_FIELD_CONTRACT.md`.

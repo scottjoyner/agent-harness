@@ -221,16 +221,16 @@ def main(argv: list[str] | None = None) -> int:
                           "model": args.model, "disk_free_gib": free_gb}), flush=True)
         with (dest / f"{args.mode}.log").open("w") as logfile:
             if args.mode == "run" and args.trace_events_out is not None:
-                from tb4.trace_bridge import Reader, append_private
+                from tb4.trace_bridge import Reader
                 reader = Reader(dest, args.trace_host)
                 with subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT,
                                       env=job_environment) as process:
                     try:
                         while process.poll() is None:
-                            append_private(args.trace_events_out, reader.poll())
+                            reader.export_to(args.trace_events_out)
                             time.sleep(2)
                     finally:
-                        append_private(args.trace_events_out, reader.poll())
+                        reader.export_to(args.trace_events_out)
                     exit_code = process.wait()
             else:
                 exit_code = subprocess.run(command, stdout=logfile,
