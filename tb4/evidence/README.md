@@ -87,3 +87,18 @@ the official verifier event arrived, then recorded one verified failure
 (reward 0.0). The source trace DB in this isolated test was an empty synthetic
 SQLite fixture; no production trace source was changed. No raw task content,
 model outputs, tool arguments, credentials or session IDs were committed.
+
+### Publisher receipts and total-token provenance replay (October 29)
+
+`trace-viewer-publisher-receipt-replay-20261029.json` is an aggregate-only
+receipt from replaying an **already saved** real RX480 Harbor/Pi job through
+the current opt-in private JSONL exporter and Trace Viewer importer. All 11
+exported events (10 model turns plus one real official verifier) carried an
+owner-local publisher write time. All 10 model-turn totals were native Pi
+`totalTokens` rather than calculated fallbacks, totaling 34,348 tokens.
+The actual official verifier reward remained 0.0. A second index import added
+no events. The observed publication-to-import whole-second age was 0 s in
+this isolated same-host replay: **not** a measured GPU request duration or a
+production end-to-end latency SLA. The synthetic fixture source was never
+modified; no new model inference was run. No raw requests, transcripts,
+credentials or trial names are stored in this receipt.

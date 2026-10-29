@@ -55,13 +55,18 @@ def event_from_message(message: dict, *, session_id: str, ordinal: int, host: st
     cache_write = count(usage.get('cacheWrite'))
     if not (source_total or input_tokens or output_tokens or cache_read or cache_write):
         return None
+    # Cache counters may already be included in input, and reasoning may
+    # already be included in output. Only sum disjoint primary categories as
+    # a fallback; never silently describe derived totals as provider-reported.
+    derived_total = input_tokens + output_tokens or cache_read + cache_write
     return {
         'schema': SCHEMA, 'event_type': 'model_turn',
         'event_id': digest('pi', session_id, ordinal),
         'session_id': session_id, 'source': 'terminal-bench',
         'host': name(host), 'model': name(message.get('model')),
         'ts': when, 'input_tokens': input_tokens, 'output_tokens': output_tokens,
-        'total_tokens': source_total or input_tokens + output_tokens + cache_read + cache_write,
+        'total_tokens': source_total or derived_total,
+        'total_origin': 'reported' if source_total else 'derived',
         'reasoning_tokens': count(usage.get('reasoning')),
         'cache_read': cache_read, 'cache_write': cache_write,
         'status': 'error' if message.get('stopReason') == 'error' else 'completed',
@@ -175,10 +180,17 @@ def append_private(path: Path, events: list[dict]) -> int:
         if st.st_size >= 32 * 1024 * 1024:
             raise ValueError('telemetry file exceeds 32MiB; rotate manually')
         buf = b''
+        # The Pi message timestamp is the message's source time, not the
+        # moment the publisher observed the completed turn. Keep both clocks
+        # separate; this is a wall-clock receipt, not model inference latency.
+        published_utc = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         for event in events:
             if event.get('schema') != SCHEMA:
                 raise ValueError('invalid event schema')
-            line = (json.dumps(event, separators=(',', ':'), sort_keys=True) + '\n').encode()
+            # Never trust a caller-provided receipt timestamp: stamp only as
+            # the private publisher prepares the durable append.
+            record = {**event, 'published_utc': published_utc}
+            line = (json.dumps(record, separators=(',', ':'), sort_keys=True) + '\n').encode()
             if len(line) > EVENT_MAX_BYTES:
                 raise ValueError('oversized sanitized event')
             buf += line

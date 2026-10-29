@@ -251,3 +251,7 @@ integration. Consult the viewer's `docs/TB4_REALTIME_INTEGRATION.md` for the
 privacy, partial-coverage, and journal-rotation rules.
 
 The `Reader.export_to()` path checkpoints log/verifier cursors until the private JSONL append succeeds; a failed/short append is rolled back under a journal lock and retried with deterministic event IDs. The end-to-end field dictionary, unknown-vs-zero semantics and current deployment limitations are documented in Trace Viewer `docs/TB4_TELEMETRY_FIELD_CONTRACT.md`.
+
+For Trace Viewer integration, every newly appended `tb4.telemetry.v1` event carries a `published_utc` UTC publisher wall-clock receipt distinct from Pi `ts` (source message creation) and Harbor verifier receipt. This supports observed publication-to-import age but **not** hardware inference latency; legacy journals missing this optional field remain valid.
+
+New `model_turn` events additionally record `total_origin`: `reported` for a positive native Pi `totalTokens`, `derived` if absent/zero and reconstructed from primary input+output (or cache-only fallback). Cache/reasoning token counters are not blindly summed a second time. Derived totals are estimates; downstream consumers keep legacy missing-origin records explicitly unknown.

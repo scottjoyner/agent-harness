@@ -14,6 +14,7 @@ class TraceBridgeTests(unittest.TestCase):
                         'cacheWrite':0,'totalTokens':2412,'reasoning':0}}
         event=event_from_message(msg,session_id='a'*64,ordinal=2,host='deathstar')
         self.assertEqual(event['total_tokens'],2412)
+        self.assertEqual(event['total_origin'],'reported')
         self.assertEqual(event['cache_read'],1510)
         self.assertEqual(event['source'],'terminal-bench')
         self.assertNotIn('secret',json.dumps(event))
@@ -66,6 +67,34 @@ class TraceBridgeTests(unittest.TestCase):
             self.assertEqual(len(out.read_text().splitlines()),2)
             self.assertNotIn('PRIVATE BENCHMARK PROMPT',out.read_text())
             self.assertEqual(rows[-1]['official_reward'],0.0)
+            self.assertRegex(rows[0]['published_utc'],r'^20\d\d-\d\d-\d\dT\d\d:\d\d:\d\dZ$')
+            self.assertEqual(rows[0]['published_utc'],rows[-1]['published_utc'])
+
+    def test_missing_total_is_marked_derived_and_does_not_double_count_cache(self):
+        message={'role':'assistant','model':'deathstar-ling-rx480',
+                 'timestamp':1793250191278,
+                 'usage':{'input':100,'output':40,'cacheRead':75,'cacheWrite':9,
+                          'reasoning':8}}
+        record=event_from_message(message,session_id='a'*64,ordinal=1,host='deathstar')
+        self.assertEqual(record['total_tokens'],140)
+        self.assertEqual(record['total_origin'],'derived')
+        self.assertEqual(record['cache_read'],75)
+        self.assertEqual(record['reasoning_tokens'],8)
+        message['usage']={'cacheRead':32,'cacheWrite':5}
+        record=event_from_message(message,session_id='a'*64,ordinal=2,host='deathstar')
+        self.assertEqual(record['total_tokens'],37)
+        self.assertEqual(record['total_origin'],'derived')
+
+    def test_publisher_receipt_replaces_caller_supplied_timestamp(self):
+        with tempfile.TemporaryDirectory() as root:
+            journal=Path(root)/'journal'/'events.jsonl'
+            journal.parent.mkdir(mode=0o700)
+            input_event={'schema':'tb4.telemetry.v1','event_type':'model_turn',
+                         'event_id':'e'*64,'published_utc':'2000-01-01T00:00:00Z'}
+            self.assertEqual(append_private(journal,[input_event]),1)
+            saved=json.loads(journal.read_text().splitlines()[0])
+            self.assertNotEqual(saved['published_utc'],input_event['published_utc'])
+            self.assertEqual(input_event['published_utc'],'2000-01-01T00:00:00Z')
 
     def test_partial_disk_write_is_rolled_back_before_retry(self):
         with tempfile.TemporaryDirectory() as d:
