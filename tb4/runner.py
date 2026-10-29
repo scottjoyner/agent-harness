@@ -16,6 +16,7 @@ import secrets
 import shutil
 import subprocess
 import sys
+import time
 from http.server import ThreadingHTTPServer
 from threading import Thread
 from urllib.parse import urlsplit
@@ -127,11 +128,21 @@ def main(argv: list[str] | None = None) -> int:
                         help="Run a tiny synthetic native-tool API capability probe")
     parser.add_argument("--require-tool-calls", action="store_true",
                         help="Abort if the synthetic native tool-call probe fails")
+    parser.add_argument("--trace-events-out", type=Path, default=None,
+                        help="Opt-in append-only private JSONL for Trace Viewer (absolute path)")
+    parser.add_argument("--trace-host", default=None,
+                        help="Physical inference host label for Trace Viewer metadata")
     parser.add_argument("--gateway-forward-auth", action="store_true",
                         help="Pass the configured key to upstream when upstream requires it")
     args = parser.parse_args(argv)
     if not args.model.startswith("openai/"):
         parser.error("For this OpenAI-compatible endpoint runner, use openai/<model-id>")
+    if args.trace_events_out is not None:
+        from tb4.trace_bridge import name
+        if (not args.trace_events_out.is_absolute()
+                or name(args.trace_host) != args.trace_host
+                or args.trace_host in (None, "unknown")):
+            parser.error("--trace-events-out requires an absolute path and --trace-host label")
     gateway = None
     gateway_thread = None
     gateway_telemetry = None
@@ -200,6 +211,8 @@ def main(argv: list[str] | None = None) -> int:
                     "tasks_limit": args.tasks, "attempts": args.attempts,
                     "concurrency": args.concurrency, "max_turns": args.max_turns,
                     "pi_version": args.pi_version, "free_gib": free_gb,
+                    "trace_metadata_export_enabled": bool(args.trace_events_out),
+                    "trace_host": args.trace_host if args.trace_events_out else None,
                     "prompt_sha256": hashlib.sha256(PI_PROMPT.read_bytes()).hexdigest(),
                     "model_check": model_check, "synthetic_tool_probe": tool_check,
                     "command": ["<KEY_ENV_NAME>" if x == args.key_env else x for x in command]}
@@ -207,11 +220,25 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"ready": True, "mode": args.mode, "manifest": str(dest / 'manifest.json'),
                           "model": args.model, "disk_free_gib": free_gb}), flush=True)
         with (dest / f"{args.mode}.log").open("w") as logfile:
-            completed = subprocess.run(command, stdout=logfile, stderr=subprocess.STDOUT,
-                                       env=job_environment, check=False)
-        print(json.dumps({"harbor_exit_code": completed.returncode,
+            if args.mode == "run" and args.trace_events_out is not None:
+                from tb4.trace_bridge import Reader, append_private
+                reader = Reader(dest, args.trace_host)
+                with subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT,
+                                      env=job_environment) as process:
+                    try:
+                        while process.poll() is None:
+                            append_private(args.trace_events_out, reader.poll())
+                            time.sleep(2)
+                    finally:
+                        append_private(args.trace_events_out, reader.poll())
+                    exit_code = process.wait()
+            else:
+                exit_code = subprocess.run(command, stdout=logfile,
+                                           stderr=subprocess.STDOUT,
+                                           env=job_environment, check=False).returncode
+        print(json.dumps({"harbor_exit_code": exit_code,
                           "log": str(dest / f'{args.mode}.log')}), flush=True)
-        return completed.returncode
+        return exit_code
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"Preflight failed: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2

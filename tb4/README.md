@@ -227,3 +227,25 @@ The dedicated R9700 has ~32 GiB nominal VRAM free but `joyner` had only
 ~0.3 GiB available host RAM with its 4 GiB swap full. Do not infer safe
 capacity for launching large additional model processes from VRAM alone.
 The RX480 service was measured without stopping or replacing active workloads.
+
+## Optional live Trace Viewer integration
+
+Use `--trace-events-out /absolute/private/path/events.jsonl --trace-host deathstar`
+(or the **actual inference machine**) with an ordinary `tb4.runner run` job.
+This enables a two-second local-only publisher that extracts completed Pi
+assistant *usage* records and final Harbor verifier outcomes into an
+owner-private append-only journal. It does not publish prompts, responses,
+tool arguments, original task/trial IDs, IP endpoints or credentials.
+The companion `scottjoyner/trace-viewer` isolated integration branch
+`feature/tb4-telemetry-bridge-20261029` implements `tools/import_harness.py`
+for a separate, source-identity-checked analytics index. It can run with
+`--watch --interval 5` under explicit operator supervision. The Trace Viewer
+Rust dashboard polls every 15s and displays session/token analytics with a
+separate official verified-trial pass count.
+
+This is opt-in: without the flags, old Harbor behavior is unchanged. A
+completed model turn is not an official benchmark pass, and non-verifiable
+trials remain unverified. Public deployment, unprotected live interfaces,
+production index mutations, and model changes are not authorized by the
+integration. Consult the viewer's `docs/TB4_REALTIME_INTEGRATION.md` for the
+privacy, partial-coverage, and journal-rotation rules.

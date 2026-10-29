@@ -77,3 +77,13 @@ bounded public eight-case runs of the RX480 Ling endpoint. Both are strict
 string-match synthetic instruction tests, **not** official Terminal-Bench.
 `synthetic-inference-matrix-20261029.json` is a normalized comparison without
 raw outputs, private cases, credential values, or full system prompts.
+
+### Live bridge canary into Trace Viewer (October 29)
+
+`trace-viewer-live-canary-20261029.json` records **actual** metadata-only
+streaming from a 10-turn Harbor/Pi run to the separate private SQLite projection
+of the Rust Trace Viewer. It saw 10 requests and 34,348 reported tokens before
+the official verifier event arrived, then recorded one verified failure
+(reward 0.0). The source trace DB in this isolated test was an empty synthetic
+SQLite fixture; no production trace source was changed. No raw task content,
+model outputs, tool arguments, credentials or session IDs were committed.
